@@ -1,3 +1,5 @@
-pub fn greet(name: &str) -> String {
-    format!("Hello, {name}!")
-}
+pub mod dataset;
+pub mod workspace;
+
+pub use dataset::Dataset;
+pub use workspace::Workspace;
