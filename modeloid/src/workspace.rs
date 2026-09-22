@@ -1,7 +1,7 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::path::{self, PathBuf};
+use std::{error::Error, fs, path::{self, PathBuf}};
 
 fn default_version() -> u32 {
     1
@@ -34,5 +34,21 @@ impl Workspace {
 
     pub fn set_description(&mut self, description: String) {
         self.description = description;
+    }
+
+    pub fn save(&self) -> Result<(), Box<dyn Error>> {
+        // Create workspace folders
+        let root_dir = self.path.join(&self.name);
+        fs::create_dir(&root_dir)?;
+        fs::create_dir_all(root_dir.join(".cache").join("tmp"))?;
+        fs::create_dir(root_dir.join("datasets"))?;
+        fs::create_dir(root_dir.join("models"))?;
+        fs::create_dir(root_dir.join("evals"))?;
+
+
+        // Create workspace.toml
+        let contents = toml::to_string(self)?;
+        fs::write(root_dir.join("workspace.toml"), contents)?;
+        Ok(())
     }
 }
