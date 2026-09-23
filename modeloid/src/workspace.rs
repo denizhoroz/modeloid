@@ -36,10 +36,24 @@ impl Workspace {
         self.description = description;
     }
 
-    pub fn save(&self) -> Result<(), Box<dyn Error>> {
+    pub fn save_to_dir(&self) -> Result<(), Box<dyn Error>> {
         // Create workspace folders
         let root_dir = self.path.join(&self.name);
         fs::create_dir(&root_dir)?;
+        fs::create_dir_all(root_dir.join(".cache").join("tmp"))?;
+        fs::create_dir(root_dir.join("datasets"))?;
+        fs::create_dir(root_dir.join("models"))?;
+        fs::create_dir(root_dir.join("evals"))?;
+
+        // Create workspace.toml
+        let contents = toml::to_string(self)?;
+        fs::write(root_dir.join("workspace.toml"), contents)?;
+        Ok(())
+    }
+
+    pub fn make_to_dir(&self) -> Result<(), Box<dyn Error>> {
+        // Create workspace folders
+        let root_dir = &self.path;
         fs::create_dir_all(root_dir.join(".cache").join("tmp"))?;
         fs::create_dir(root_dir.join("datasets"))?;
         fs::create_dir(root_dir.join("models"))?;

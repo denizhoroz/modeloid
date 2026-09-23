@@ -1,8 +1,7 @@
-// use std::env;
-// use std::path::PathBuf;
-
 use clap::{ Parser, Subcommand };
+use std::error::Error;
 use std::path::PathBuf;
+use std::env;
 
 use modeloid::Workspace;
 use modeloid::Dataset;
@@ -22,31 +21,48 @@ enum Commands {
         name: String,
     },
     
-    /// Init workspace in current directory
+    /// Initialize workspace in current directory
     Init,
+}
+
+fn cmd_new(name: &String) -> Result<(), Box<dyn Error>> {
+    let ws = Workspace::new(String::from(name), PathBuf::from("."));
+    ws.save_to_dir()?;
+
+    Ok(())
+}
+
+fn cmd_init() -> Result<(), Box<dyn Error>> {
+    let ws = Workspace::new(get_dir_name()?, PathBuf::from("."));
+    ws.make_to_dir()?;
+
+    Ok(())
+}
+
+fn get_dir_name() -> Result<(String), Box<dyn Error>> {
+    let path = env::current_dir()?;
+    
+    let name = path
+                .file_name()
+                .ok_or("Current directory has no name")?
+                .to_string_lossy()
+                .into_owned();
+
+    Ok(name)
 }
 
 fn main() {
     let cli = Cli::parse();
-    let local_path = PathBuf::from(".");
 
-    match cli.command {
+    let result = match cli.command {
         Commands::New { name } => cmd_new(&name),
         Commands::Init => cmd_init(),
+    };
+
+    if let Err(e) = result {
+        eprintln!("Error: {e}");
+        std::process::exit(1);
     }
-
-    // let mut ws = Workspace::new(String::from("New Workspace"), PathBuf::from("."));
-
-    // println!("{new_ws:?}");
-    // new_ws.set_description(String::from("A new workspace"));
-    // println!("{new_ws:?}");
 }   
 
-fn cmd_new(name: &String) {
-    let mut ws = Workspace::new(String::from(name), PathBuf::from("."));
-    ws.save();
-}
 
-fn cmd_init() {
-
-}
