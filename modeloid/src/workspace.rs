@@ -1,7 +1,7 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::{error::Error, fs, path::{self, PathBuf}};
+use std::{error::Error, fs, path::PathBuf};
 
 fn default_version() -> u32 {
     1
@@ -44,7 +44,6 @@ impl Workspace {
         fs::create_dir(root_dir.join("datasets"))?;
         fs::create_dir(root_dir.join("models"))?;
         fs::create_dir(root_dir.join("evals"))?;
-
 
         // Create workspace.toml
         let contents = toml::to_string(self)?;
