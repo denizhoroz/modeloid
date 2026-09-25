@@ -28,6 +28,12 @@ enum Commands {
 
     /// Get current workspace information
     Info,
+
+    /// Download a dataset using a link
+    Download {
+        /// URL
+        link: String,
+    }
 }
 
 pub struct Cli {
@@ -45,6 +51,7 @@ impl Cli {
             Commands::New { name } => cmd_new(&name),
             Commands::Init => cmd_init(),
             Commands::Info => cmd_info(),
+            Commands::Download { link } => cmd_download(&link),
         };
 
         if let Err(e) = result {
@@ -62,20 +69,28 @@ fn cmd_new(name: &String) -> Result<(), Box<dyn Error>> {
 }
 
 fn cmd_init() -> Result<(), Box<dyn Error>> {
-    let ws = Workspace::new(get_dir_name()?, PathBuf::from("."));
+    let ws = Workspace::new(_get_dir_name()?, PathBuf::from("."));
     ws.make_to_dir()?;
 
     Ok(())
 }
 
 fn cmd_info() -> Result<(), Box<dyn Error>> {
-    let ws = Workspace::load_from_dir(&PathBuf::from("."))?;
+    let ws = _get_workspace()?;
     ws.display_info()?;
 
     Ok(())
 }
 
-fn get_dir_name() -> Result<(String), Box<dyn Error>> {
+fn cmd_download(link: &String) -> Result<(), Box<dyn Error>> {
+    let ws = _get_workspace()?;
+    ws.download(link)?;
+
+    Ok(())
+}
+
+
+fn _get_dir_name() -> Result<(String), Box<dyn Error>> {
     let path = env::current_dir()?;
     
     let name = path
@@ -85,4 +100,8 @@ fn get_dir_name() -> Result<(String), Box<dyn Error>> {
                 .into_owned();
 
     Ok(name)
+}
+
+fn _get_workspace() -> Result<(Workspace), Box<dyn Error>> {
+    Ok(Workspace::load_from_dir(&PathBuf::from("."))?)
 }

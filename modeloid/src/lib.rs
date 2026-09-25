@@ -1,5 +1,6 @@
-pub mod dataset;
-pub mod workspace;
+pub mod models;
+pub mod core;
 
-pub use dataset::Dataset;
-pub use workspace::Workspace;
+pub use models::dataset::Dataset;
+pub use models::workspace::Workspace;
+// pub use core::download::Downloader;

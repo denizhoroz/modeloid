@@ -54,7 +54,7 @@ impl Workspace {
         fs::create_dir(root_dir.join("evals"))?;
 
         // Create workspace.toml
-        self.create_workspace_file(root_dir)?;
+        self._create_workspace_file(root_dir)?;
         Ok(())
     }
 
@@ -67,7 +67,7 @@ impl Workspace {
         fs::create_dir(root_dir.join("evals"))?;
 
         // Create workspace.toml
-        self.create_workspace_file(root_dir)?;
+        self._create_workspace_file(root_dir)?;
         Ok(())
     }
 
@@ -87,10 +87,16 @@ impl Workspace {
         Ok(())
     }
 
-    fn create_workspace_file(&self, root_dir: &PathBuf) -> Result<(), Box<dyn Error>> {
+    fn _create_workspace_file(&self, root_dir: &PathBuf) -> Result<(), Box<dyn Error>> {
         let file = &WorkspaceFile { workspace: self };
         let contents = toml::to_string(file)?;
         fs::write(root_dir.join("workspace.toml"), contents)?;  
+
+        Ok(())
+    }
+
+    pub fn download(&self, link: &String) -> Result<(), Box<dyn Error>> {
+        let datasets_dir = self.path.join("datasets");
 
         Ok(())
     }
