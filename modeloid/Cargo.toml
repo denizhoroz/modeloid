@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-chrono = "0.4.45"
+chrono = { version = "0.4.45", features = ["serde"] }
 futures-util = "0.3.34"
 reqwest = { version = "0.13.5", features = ["json", "query", "stream"] }
 serde = { version = "1.0.229", features = ["derive"]}

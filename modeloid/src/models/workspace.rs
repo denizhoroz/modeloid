@@ -4,9 +4,11 @@ use serde::{Deserialize, Serialize};
 use std::{error::Error, fs, path::{Path, PathBuf}};
 
 use crate::core::{
-    download::{DownloadOptions, Downloader, Source},
+    download::{DownloadOptions, Downloader, Source, SourceInfo},
     io,
+    scan::scan_dataset,
 };
+use crate::models::dataset::{DATASET_FILE, Dataset};
 
 
 #[derive(Serialize, Deserialize)]
@@ -100,12 +102,67 @@ impl Workspace {
         Ok(())
     }
 
+    pub fn datasets_dir(&self) -> PathBuf {
+        self.path.join("datasets")
+    }
+
+    /// Datasets that have a dataset.toml, ordered by id.
+    pub fn list_datasets(&self) -> Result<Vec<(PathBuf, Dataset)>, Box<dyn Error>> {
+        let mut datasets = Vec::new();
+        for dir in self.dataset_dirs()? {
+            if dir.join(DATASET_FILE).is_file() {
+                let dataset = Dataset::load_from_dir(&dir)?;
+                datasets.push((dir, dataset));
+            }
+        }
+        datasets.sort_by_key(|(_, d)| d.id());
+        Ok(datasets)
+    }
+
+    pub fn next_dataset_id(&self) -> Result<u32, Box<dyn Error>> {
+        let max = self.list_datasets()?.iter().map(|(_, d)| d.id()).max();
+        Ok(max.map_or(1, |id| id + 1))
+    }
+
+    /// Writes a dataset.toml for every dataset folder that is missing one.
+    pub fn scan_datasets(&self) -> Result<Vec<Dataset>, Box<dyn Error>> {
+        let mut next_id = self.next_dataset_id()?;
+        let mut added = Vec::new();
+
+        for dir in self.dataset_dirs()? {
+            if dir.join(DATASET_FILE).exists() {
+                continue;
+            }
+            let name = dir.file_name().ok_or("dataset folder has no name")?.to_string_lossy().into_owned();
+            let dataset = Dataset::from_stats(next_id, name, scan_dataset(&dir)?);
+            dataset.save_to_dir(&dir)?;
+            next_id += 1;
+            added.push(dataset);
+        }
+        Ok(added)
+    }
+
+    fn dataset_dirs(&self) -> Result<Vec<PathBuf>, Box<dyn Error>> {
+        let datasets_dir = self.datasets_dir();
+        let mut dirs = Vec::new();
+        for entry in fs::read_dir(&datasets_dir)
+            .map_err(|e| format!("cannot read {}: {e}", datasets_dir.display()))?
+        {
+            let entry = entry?;
+            if entry.file_type()?.is_dir() {
+                dirs.push(entry.path());
+            }
+        }
+        dirs.sort();
+        Ok(dirs)
+    }
+
     pub async fn download(&self, link: &str, opts: &DownloadOptions) -> Result<PathBuf, Box<dyn Error>> {
         let downloader = Downloader::new()?;
-        let source = downloader.pin_version(Source::from_link(link)?, opts).await?;
+        let (source, info) = downloader.inspect(Source::from_link(link)?, opts).await?;
         let name = source.name(opts);
 
-        let final_dir = self.path.join("datasets").join(&name);
+        let final_dir = self.datasets_dir().join(&name);
         if final_dir.exists() {
             return Err(format!("dataset already exists: {}", final_dir.display()).into());
         }
@@ -115,7 +172,12 @@ impl Workspace {
         let archive = tmp_dir.join(format!("{name}.zip"));
         let extract_dir = tmp_dir.join(&name);
 
-        let result = Self::fetch_into(&downloader, &source, opts, &archive, &extract_dir, &final_dir).await;
+        let result: Result<(), Box<dyn Error>> = async {
+            Self::fetch_into(&downloader, &source, opts, &archive, &extract_dir).await?;
+            self.describe_download(&extract_dir, &name, link, &info, opts).await?;
+            io::move_dir(&extract_dir, &final_dir).await
+        }
+        .await;
 
         let _ = tokio::fs::remove_file(&archive).await;
         let _ = tokio::fs::remove_file(archive.with_extension("part")).await;
@@ -132,13 +194,33 @@ impl Workspace {
         opts: &DownloadOptions,
         archive: &Path,
         extract_dir: &Path,
-        final_dir: &Path,
     ) -> Result<(), Box<dyn Error>> {
         let url = downloader.resolve(source, opts).await?;
         downloader.download_file(&url, archive).await?;
         io::extract_zip(archive, extract_dir).await?;
-        io::move_dir(extract_dir, final_dir).await?;
         Ok(())
     }
 
+    // Written before the folder moves into datasets/, so it never appears there without a toml.
+    async fn describe_download(
+        &self,
+        dir: &Path,
+        name: &str,
+        link: &str,
+        info: &SourceInfo,
+        opts: &DownloadOptions,
+    ) -> Result<Dataset, Box<dyn Error>> {
+        let scan_dir = dir.to_path_buf();
+        let stats = tokio::task::spawn_blocking(move || scan_dataset(&scan_dir)).await??;
+
+        let mut dataset = Dataset::from_stats(self.next_dataset_id()?, name.to_string(), stats);
+        dataset.set_annotation_format(opts.format.clone());
+        if !info.dataset_type.is_empty() {
+            dataset.set_dataset_type(info.dataset_type.clone());
+        }
+        dataset.set_license(info.license.clone());
+        dataset.set_dataset_link(link.to_string());
+        dataset.save_to_dir(dir)?;
+        Ok(dataset)
+    }
 }

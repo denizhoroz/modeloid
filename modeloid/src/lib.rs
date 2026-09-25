@@ -3,4 +3,5 @@ pub mod core;
 
 pub use models::dataset::Dataset;
 pub use models::workspace::Workspace;
-pub use core::download::{DownloadOptions, Downloader, Source};
+pub use core::download::{DownloadOptions, Downloader, Source, SourceInfo};
+pub use core::scan::{DatasetStats, scan_dataset};

@@ -19,7 +19,7 @@ pub struct DownloadOptions {
     Roboflow {
         workspace: String,
         project: String,
-        /// `None` means the latest version, resolved by `Downloader::pin_version`.
+        /// `None` means the latest version, resolved by `Downloader::inspect`.
         version: Option<u32>,
     },
 }
@@ -67,6 +67,13 @@ impl Source {
     }
 }
 
+/// Metadata the source reports about a dataset; empty strings when unknown.
+#[derive(Debug, Default, PartialEq)]
+pub struct SourceInfo {
+    pub dataset_type: String,
+    pub license: String,
+}
+
 pub struct Downloader {
     client: reqwest::Client,
 }
@@ -80,19 +87,26 @@ impl Downloader {
         Ok(Downloader { client })
     }
 
-    /// Replaces an unspecified version with the latest one available.
-    pub async fn pin_version(&self, source: Source, opts: &DownloadOptions) -> Result<Source, Box<dyn Error>> {
+    /// Fetches project metadata and replaces an unspecified version with the latest one available.
+    pub async fn inspect(&self, source: Source, opts: &DownloadOptions) -> Result<(Source, SourceInfo), Box<dyn Error>> {
         match source {
-            Source::Roboflow { workspace, project, version: None } => {
+            Source::Roboflow { workspace, project, version } => {
                 let api_key = roboflow_api_key(opts)?;
                 let url = format!("{ROBOFLOW_API}/{workspace}/{project}");
                 let body = self.roboflow_get(&url, &api_key).await?;
-                let latest = latest_roboflow_version(&body)
-                    .ok_or_else(|| format!("Roboflow project {workspace}/{project} has no versions"))?;
-                eprintln!("Using latest version: {latest}");
-                Ok(Source::Roboflow { workspace, project, version: Some(latest) })
+
+                let version = match version {
+                    Some(v) => v,
+                    None => {
+                        let latest = latest_roboflow_version(&body)
+                            .ok_or_else(|| format!("Roboflow project {workspace}/{project} has no versions"))?;
+                        eprintln!("Using latest version: {latest}");
+                        latest
+                    }
+                };
+                let info = roboflow_info(&body);
+                Ok((Source::Roboflow { workspace, project, version: Some(version) }, info))
             }
-            pinned => Ok(pinned),
         }
     }
 
@@ -100,7 +114,7 @@ impl Downloader {
     pub async fn resolve(&self, source: &Source, opts: &DownloadOptions) -> Result<String, Box<dyn Error>> {
         match source {
             Source::Roboflow { workspace, project, version } => {
-                let version = version.ok_or("Roboflow version not resolved, call pin_version first")?;
+                let version = version.ok_or("Roboflow version not resolved, call inspect first")?;
                 let api_key = roboflow_api_key(opts)?;
                 let url = format!("{ROBOFLOW_API}/{workspace}/{project}/{version}/{}", opts.format);
                 self.roboflow_export_link(&url, &api_key).await
@@ -151,6 +165,14 @@ fn roboflow_api_key(opts: &DownloadOptions) -> Result<String, Box<dyn Error>> {
         Some(key) => Ok(key.clone()),
         None => env::var(ROBOFLOW_KEY_ENV)
             .map_err(|_| format!("Roboflow API key missing: pass --api-key or set {ROBOFLOW_KEY_ENV}").into()),
+    }
+}
+
+fn roboflow_info(body: &Value) -> SourceInfo {
+    let text = |v: &Value| v.as_str().unwrap_or_default().to_string();
+    SourceInfo {
+        dataset_type: text(&body["project"]["type"]),
+        license: text(&body["project"]["license"]),
     }
 }
 
@@ -232,5 +254,14 @@ mod tests {
 
         let body = serde_json::json!({ "project": { "versions": 0 }, "versions": [] });
         assert_eq!(latest_roboflow_version(&body), None);
+    }
+
+    #[test]
+    fn reads_project_info() {
+        let body = serde_json::json!({ "project": { "type": "object-detection", "license": "CC BY 4.0" } });
+        let info = roboflow_info(&body);
+        assert_eq!(info.dataset_type, "object-detection");
+        assert_eq!(info.license, "CC BY 4.0");
+        assert_eq!(roboflow_info(&serde_json::json!({})), SourceInfo::default());
     }
 }

@@ -42,7 +42,19 @@ enum Commands {
         /// Export format (e.g. coco, yolov8, voc)
         #[arg(long, default_value = "coco")]
         format: String,
-    }
+    },
+
+    /// Manage datasets in the workspace
+    Dataset {
+        #[command(subcommand)]
+        command: DatasetCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum DatasetCommands {
+    /// Create dataset.toml for dataset folders that don't have one
+    Scan,
 }
 
 pub struct Cli {
@@ -63,6 +75,7 @@ impl Cli {
             Commands::Download { link, api_key, format } => {
                 cmd_download(&link, DownloadOptions { api_key, format }).await
             }
+            Commands::Dataset { command: DatasetCommands::Scan } => cmd_dataset_scan(),
         };
 
         if let Err(e) = result {
@@ -97,6 +110,20 @@ async fn cmd_download(link: &str, opts: DownloadOptions) -> Result<(), Box<dyn E
     let ws = _get_workspace()?;
     let dir = ws.download(link, &opts).await?;
     println!("Dataset saved to {}", dir.display());
+
+    Ok(())
+}
+
+fn cmd_dataset_scan() -> Result<(), Box<dyn Error>> {
+    let ws = _get_workspace()?;
+    let added: Vec<Dataset> = ws.scan_datasets()?;
+
+    if added.is_empty() {
+        println!("All datasets already have dataset.toml");
+    }
+    for d in &added {
+        println!("Added #{} {} ({} images, {} labels)", d.id(), d.name(), d.image_count(), d.label_count());
+    }
 
     Ok(())
 }
