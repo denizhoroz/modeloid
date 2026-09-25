@@ -6,6 +6,7 @@ use clap::{ Parser, Subcommand };
 
 use modeloid::Workspace;
 use modeloid::Dataset;
+use modeloid::DownloadOptions;
 
 
 #[derive(Parser)]
@@ -33,6 +34,14 @@ enum Commands {
     Download {
         /// URL
         link: String,
+
+        /// API key for the source (falls back to ROBOFLOW_API_KEY)
+        #[arg(long)]
+        api_key: Option<String>,
+
+        /// Export format (e.g. coco, yolov8, voc)
+        #[arg(long, default_value = "coco")]
+        format: String,
     }
 }
 
@@ -44,14 +53,16 @@ impl Cli {
         Cli {}
     }
 
-    pub fn collect(&self) {
+    pub async fn collect(&self) {
         let args = Args::parse();
 
         let result = match args.command {
             Commands::New { name } => cmd_new(&name),
             Commands::Init => cmd_init(),
             Commands::Info => cmd_info(),
-            Commands::Download { link } => cmd_download(&link),
+            Commands::Download { link, api_key, format } => {
+                cmd_download(&link, DownloadOptions { api_key, format }).await
+            }
         };
 
         if let Err(e) = result {
@@ -82,9 +93,10 @@ fn cmd_info() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn cmd_download(link: &String) -> Result<(), Box<dyn Error>> {
+async fn cmd_download(link: &str, opts: DownloadOptions) -> Result<(), Box<dyn Error>> {
     let ws = _get_workspace()?;
-    ws.download(link)?;
+    let dir = ws.download(link, &opts).await?;
+    println!("Dataset saved to {}", dir.display());
 
     Ok(())
 }

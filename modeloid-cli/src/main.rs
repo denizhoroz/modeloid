@@ -1,9 +1,10 @@
 use modeloid_cli::cli::Cli;
 
+// Load .env before the tokio runtime starts: setting env vars while other threads run is unsound.
 fn main() {
-    let cli = Cli::new();
+    dotenvy::dotenv().ok();
 
-    let _ = cli.collect();
-}   
-
-
+    tokio::runtime::Runtime::new()
+        .expect("failed to start tokio runtime")
+        .block_on(Cli::new().collect());
+}

@@ -3,6 +3,11 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::{error::Error, fs, path::{Path, PathBuf}};
 
+use crate::core::{
+    download::{DownloadOptions, Downloader, Source},
+    io,
+};
+
 
 #[derive(Serialize, Deserialize)]
 struct WorkspaceFile<T> {
@@ -95,9 +100,44 @@ impl Workspace {
         Ok(())
     }
 
-    pub fn download(&self, link: &String) -> Result<(), Box<dyn Error>> {
-        let datasets_dir = self.path.join("datasets");
+    pub async fn download(&self, link: &str, opts: &DownloadOptions) -> Result<PathBuf, Box<dyn Error>> {
+        let downloader = Downloader::new()?;
+        let source = downloader.pin_version(Source::from_link(link)?, opts).await?;
+        let name = source.name(opts);
 
+        let final_dir = self.path.join("datasets").join(&name);
+        if final_dir.exists() {
+            return Err(format!("dataset already exists: {}", final_dir.display()).into());
+        }
+
+        let tmp_dir = self.path.join(".cache").join("tmp");
+        tokio::fs::create_dir_all(&tmp_dir).await?;
+        let archive = tmp_dir.join(format!("{name}.zip"));
+        let extract_dir = tmp_dir.join(&name);
+
+        let result = Self::fetch_into(&downloader, &source, opts, &archive, &extract_dir, &final_dir).await;
+
+        let _ = tokio::fs::remove_file(&archive).await;
+        let _ = tokio::fs::remove_file(archive.with_extension("part")).await;
+        if result.is_err() {
+            let _ = tokio::fs::remove_dir_all(&extract_dir).await;
+        }
+
+        result.map(|_| final_dir)
+    }
+
+    async fn fetch_into(
+        downloader: &Downloader,
+        source: &Source,
+        opts: &DownloadOptions,
+        archive: &Path,
+        extract_dir: &Path,
+        final_dir: &Path,
+    ) -> Result<(), Box<dyn Error>> {
+        let url = downloader.resolve(source, opts).await?;
+        downloader.download_file(&url, archive).await?;
+        io::extract_zip(archive, extract_dir).await?;
+        io::move_dir(extract_dir, final_dir).await?;
         Ok(())
     }
 

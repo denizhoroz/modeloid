@@ -1,6 +1,0 @@
-[workspace]
-name = "example-ws"
-path = "."
-format_version = 1
-seed = 42
-description = ""
