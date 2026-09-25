@@ -25,6 +25,9 @@ enum Commands {
     
     /// Initialize workspace in current directory
     Init,
+
+    /// Get current workspace information
+    Info,
 }
 
 pub struct Cli {
@@ -41,6 +44,7 @@ impl Cli {
         let result = match args.command {
             Commands::New { name } => cmd_new(&name),
             Commands::Init => cmd_init(),
+            Commands::Info => cmd_info(),
         };
 
         if let Err(e) = result {
@@ -60,6 +64,13 @@ fn cmd_new(name: &String) -> Result<(), Box<dyn Error>> {
 fn cmd_init() -> Result<(), Box<dyn Error>> {
     let ws = Workspace::new(get_dir_name()?, PathBuf::from("."));
     ws.make_to_dir()?;
+
+    Ok(())
+}
+
+fn cmd_info() -> Result<(), Box<dyn Error>> {
+    let ws = Workspace::load_from_dir(&PathBuf::from("."))?;
+    ws.display_info()?;
 
     Ok(())
 }
