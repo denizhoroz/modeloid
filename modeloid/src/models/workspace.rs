@@ -1,11 +1,12 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::{error::Error, fs, path::{Path, PathBuf}};
+use std::{error::Error, fs, path::{Path, PathBuf}, sync::Arc};
 
 use crate::core::{
     download::{DownloadOptions, Downloader, Source, SourceInfo},
     io,
+    progress::{Reporter, Unit},
     scan::scan_dataset,
 };
 use crate::models::dataset::{DATASET_FILE, Dataset};
@@ -125,7 +126,7 @@ impl Workspace {
     }
 
     /// Writes a dataset.toml for every dataset folder that is missing one.
-    pub fn scan_datasets(&self) -> Result<Vec<Dataset>, Box<dyn Error>> {
+    pub fn scan_datasets(&self, reporter: &dyn Reporter) -> Result<Vec<Dataset>, Box<dyn Error>> {
         let mut next_id = self.next_dataset_id()?;
         let mut added = Vec::new();
 
@@ -134,7 +135,10 @@ impl Workspace {
                 continue;
             }
             let name = dir.file_name().ok_or("dataset folder has no name")?.to_string_lossy().into_owned();
-            let dataset = Dataset::from_stats(next_id, name, scan_dataset(&dir)?);
+            let progress = reporter.start("Scanning", Unit::Files);
+            let stats = scan_dataset(&dir, progress.as_ref());
+            progress.finish();
+            let dataset = Dataset::from_stats(next_id, name, stats?);
             dataset.save_to_dir(&dir)?;
             next_id += 1;
             added.push(dataset);
@@ -157,8 +161,13 @@ impl Workspace {
         Ok(dirs)
     }
 
-    pub async fn download(&self, link: &str, opts: &DownloadOptions) -> Result<PathBuf, Box<dyn Error>> {
-        let downloader = Downloader::new()?;
+    pub async fn download(
+        &self,
+        link: &str,
+        opts: &DownloadOptions,
+        reporter: Arc<dyn Reporter>,
+    ) -> Result<PathBuf, Box<dyn Error>> {
+        let downloader = Downloader::new(reporter.clone())?;
         let (source, info) = downloader.inspect(Source::from_link(link)?, opts).await?;
         let name = source.name(opts);
 
@@ -173,9 +182,9 @@ impl Workspace {
         let extract_dir = tmp_dir.join(&name);
 
         let result: Result<(), Box<dyn Error>> = async {
-            Self::fetch_into(&downloader, &source, opts, &archive, &extract_dir).await?;
-            self.describe_download(&extract_dir, &name, link, &info, opts).await?;
-            io::move_dir(&extract_dir, &final_dir).await
+            Self::fetch_into(&downloader, &source, opts, &archive, &extract_dir, reporter.as_ref()).await?;
+            self.describe_download(&extract_dir, &name, link, &info, opts, reporter.as_ref()).await?;
+            io::move_dir(&extract_dir, &final_dir, reporter.clone()).await
         }
         .await;
 
@@ -194,10 +203,11 @@ impl Workspace {
         opts: &DownloadOptions,
         archive: &Path,
         extract_dir: &Path,
+        reporter: &dyn Reporter,
     ) -> Result<(), Box<dyn Error>> {
         let url = downloader.resolve(source, opts).await?;
         downloader.download_file(&url, archive).await?;
-        io::extract_zip(archive, extract_dir).await?;
+        io::extract_zip(archive, extract_dir, reporter).await?;
         Ok(())
     }
 
@@ -209,9 +219,16 @@ impl Workspace {
         link: &str,
         info: &SourceInfo,
         opts: &DownloadOptions,
+        reporter: &dyn Reporter,
     ) -> Result<Dataset, Box<dyn Error>> {
         let scan_dir = dir.to_path_buf();
-        let stats = tokio::task::spawn_blocking(move || scan_dataset(&scan_dir)).await??;
+        let progress = reporter.start("Scanning", Unit::Files);
+        let stats = tokio::task::spawn_blocking(move || {
+            let stats = scan_dataset(&scan_dir, progress.as_ref());
+            progress.finish();
+            stats
+        })
+        .await??;
 
         let mut dataset = Dataset::from_stats(self.next_dataset_id()?, name.to_string(), stats);
         dataset.set_annotation_format(opts.format.clone());

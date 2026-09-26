@@ -1,9 +1,12 @@
-use std::{env, error::Error, path::Path, time::Duration};
+use std::{env, error::Error, path::Path, sync::Arc, time::Duration};
 
 use serde_json::Value;
 use url::Url;
 
-use crate::core::io;
+use crate::core::{
+    io,
+    progress::{Reporter, Unit},
+};
 
 const ROBOFLOW_API: &str = "https://api.roboflow.com";
 const ROBOFLOW_KEY_ENV: &str = "ROBOFLOW_API_KEY";
@@ -76,15 +79,16 @@ pub struct SourceInfo {
 
 pub struct Downloader {
     client: reqwest::Client,
+    reporter: Arc<dyn Reporter>,
 }
 
 impl Downloader {
-    pub fn new() -> Result<Self, Box<dyn Error>> {
+    pub fn new(reporter: Arc<dyn Reporter>) -> Result<Self, Box<dyn Error>> {
         let client = reqwest::Client::builder()
             .user_agent(concat!("modeloid/", env!("CARGO_PKG_VERSION")))
             .connect_timeout(Duration::from_secs(15))
             .build()?;
-        Ok(Downloader { client })
+        Ok(Downloader { client, reporter })
     }
 
     /// Fetches project metadata and replaces an unspecified version with the latest one available.
@@ -100,7 +104,7 @@ impl Downloader {
                     None => {
                         let latest = latest_roboflow_version(&body)
                             .ok_or_else(|| format!("Roboflow project {workspace}/{project} has no versions"))?;
-                        eprintln!("Using latest version: {latest}");
+                        self.reporter.message(&format!("Using latest version: {latest}"));
                         latest
                     }
                 };
@@ -140,22 +144,38 @@ impl Downloader {
 
     // Roboflow generates exports on demand, so the link may not exist on the first request.
     async fn roboflow_export_link(&self, url: &str, api_key: &str) -> Result<String, Box<dyn Error>> {
-        for attempt in 1..=EXPORT_POLL_ATTEMPTS {
-            let body = self.roboflow_get(url, api_key).await?;
+        // Started lazily so a ready export shows no progress at all.
+        let mut progress = None;
+        let result = async {
+            for _ in 0..EXPORT_POLL_ATTEMPTS {
+                let body = self.roboflow_get(url, api_key).await?;
 
-            if let Some(link) = body["export"]["link"].as_str() {
-                return Ok(link.to_string());
+                if let Some(link) = body["export"]["link"].as_str() {
+                    return Ok(link.to_string());
+                }
+
+                progress
+                    .get_or_insert_with(|| {
+                        let p = self.reporter.start("Exporting", Unit::Steps);
+                        p.set_total(u64::from(EXPORT_POLL_ATTEMPTS));
+                        p
+                    })
+                    .add(1);
+                tokio::time::sleep(EXPORT_POLL_INTERVAL).await;
             }
-
-            eprintln!("Waiting for Roboflow export ({attempt}/{EXPORT_POLL_ATTEMPTS})...");
-            tokio::time::sleep(EXPORT_POLL_INTERVAL).await;
+            Err("Roboflow export was not ready in time, try again later".into())
         }
-        Err("Roboflow export was not ready in time, try again later".into())
+        .await;
+
+        if let Some(p) = progress {
+            p.finish();
+        }
+        result
     }
 
     /// Downloads `url` to `dest`, writing to `dest.part` until complete.
     pub async fn download_file(&self, url: &str, dest: &Path) -> Result<(), Box<dyn Error>> {
-        io::download(&self.client, url, dest).await?;
+        io::download(&self.client, url, dest, self.reporter.as_ref()).await?;
         Ok(())
     }
 }

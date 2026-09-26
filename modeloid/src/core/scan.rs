@@ -6,7 +6,7 @@ use std::{
 
 use serde_json::Value;
 
-use crate::models::dataset::DATASET_FILE;
+use crate::{core::progress::Progress, models::dataset::DATASET_FILE};
 
 const IMAGE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "bmp", "webp", "tif", "tiff"];
 
@@ -33,8 +33,9 @@ struct Annotations {
     voc: Vec<PathBuf>,
 }
 
-/// Walks `dir` and collects image, split, annotation and class statistics.
-pub fn scan_dataset(dir: &Path) -> io::Result<DatasetStats> {
+/// Walks `dir` and collects image, split, annotation and class statistics,
+/// counting each visited file on `progress`.
+pub fn scan_dataset(dir: &Path, progress: &dyn Progress) -> io::Result<DatasetStats> {
     let mut stats = DatasetStats::default();
     let mut image_formats = BTreeSet::new();
     let mut found = Annotations::default();
@@ -53,6 +54,7 @@ pub fn scan_dataset(dir: &Path) -> io::Result<DatasetStats> {
                 continue;
             }
             stats.size_bytes += meta.len();
+            progress.add(1);
 
             let rel = path.strip_prefix(dir).unwrap_or(&path);
             let ext = extension(&path);
@@ -286,6 +288,7 @@ impl ClassNames {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::progress::Silent;
 
     struct TempDir(PathBuf);
 
@@ -322,7 +325,7 @@ mod tests {
         tmp.write("valid/labels/c.txt", "1 0.5 0.5 0.1 0.1\n");
         tmp.write("dataset.toml", "ignored");
 
-        let stats = scan_dataset(&tmp.0).unwrap();
+        let stats = scan_dataset(&tmp.0, &Silent).unwrap();
         assert_eq!(stats.annotation_format, "yolo");
         assert_eq!(stats.dataset_type, "object-detection");
         assert_eq!(stats.image_format, "jpg,png");
@@ -353,7 +356,7 @@ mod tests {
         tmp.write("train/b.jpg", "img");
         tmp.write("test/c.jpg", "img");
 
-        let stats = scan_dataset(&tmp.0).unwrap();
+        let stats = scan_dataset(&tmp.0, &Silent).unwrap();
         assert_eq!(stats.annotation_format, "coco");
         assert_eq!(stats.dataset_type, "instance-segmentation");
         assert_eq!((stats.image_count, stats.train_count, stats.test_count), (3, 2, 1));
@@ -370,7 +373,7 @@ mod tests {
         );
         tmp.write("train/a.jpg", "img");
 
-        let stats = scan_dataset(&tmp.0).unwrap();
+        let stats = scan_dataset(&tmp.0, &Silent).unwrap();
         assert_eq!(stats.annotation_format, "voc");
         assert_eq!(stats.label_count, 2);
         assert_eq!(stats.class_names, ["cat", "dog"]);

@@ -2,11 +2,14 @@
 use std::env;
 use std::error::Error;
 use std::path::PathBuf;
+use std::sync::Arc;
 use clap::{ Parser, Subcommand };
 
 use modeloid::Workspace;
 use modeloid::Dataset;
 use modeloid::DownloadOptions;
+
+use crate::progress::TermReporter;
 
 
 #[derive(Parser)]
@@ -108,7 +111,7 @@ fn cmd_info() -> Result<(), Box<dyn Error>> {
 
 async fn cmd_download(link: &str, opts: DownloadOptions) -> Result<(), Box<dyn Error>> {
     let ws = _get_workspace()?;
-    let dir = ws.download(link, &opts).await?;
+    let dir = ws.download(link, &opts, Arc::new(TermReporter::new())).await?;
     println!("Dataset saved to {}", dir.display());
 
     Ok(())
@@ -116,7 +119,7 @@ async fn cmd_download(link: &str, opts: DownloadOptions) -> Result<(), Box<dyn E
 
 fn cmd_dataset_scan() -> Result<(), Box<dyn Error>> {
     let ws = _get_workspace()?;
-    let added: Vec<Dataset> = ws.scan_datasets()?;
+    let added: Vec<Dataset> = ws.scan_datasets(&TermReporter::new())?;
 
     if added.is_empty() {
         println!("All datasets already have dataset.toml");

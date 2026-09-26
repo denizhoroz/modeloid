@@ -5,17 +5,18 @@ use std::{
     io::{self, BufWriter, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
     sync::{
-        Mutex,
-        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering::Relaxed},
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed},
     },
     thread,
-    time::{Duration, Instant},
 };
 
 use futures_util::{StreamExt, future::try_join_all};
 use reqwest::{StatusCode, header};
 use tokio::sync::mpsc;
 use zip::ZipArchive;
+
+use crate::core::progress::{Progress, Reporter, Unit};
 
 /// Files at least this large are fetched over several connections when the server supports ranges.
 const PARALLEL_THRESHOLD: u64 = 16 * 1024 * 1024;
@@ -24,7 +25,6 @@ const MAX_CONNECTIONS: usize = 8;
 const WRITE_BUF: usize = 1024 * 1024;
 const FILE_BUF: usize = 256 * 1024;
 const CHANNEL_CAP: usize = 64;
-const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
 
 type SendError = Box<dyn Error + Send + Sync>;
 
@@ -32,11 +32,16 @@ type SendError = Box<dyn Error + Send + Sync>;
 ///
 /// Network reads stay on the async runtime while disk writes run on dedicated blocking
 /// threads, and large files are split across parallel range requests.
-pub async fn download(client: &reqwest::Client, url: &str, dest: &Path) -> Result<u64, Box<dyn Error>> {
+pub async fn download(
+    client: &reqwest::Client,
+    url: &str,
+    dest: &Path,
+    reporter: &dyn Reporter,
+) -> Result<u64, Box<dyn Error>> {
     let part = dest.with_extension("part");
-    let progress = Progress::new("Downloading", Unit::Bytes);
+    let progress = reporter.start("Downloading", Unit::Bytes);
 
-    let result = download_to(client, url, &part, &progress).await;
+    let result = download_to(client, url, &part, progress.as_ref()).await;
     progress.finish();
 
     match result {
@@ -51,7 +56,7 @@ pub async fn download(client: &reqwest::Client, url: &str, dest: &Path) -> Resul
     }
 }
 
-async fn download_to(client: &reqwest::Client, url: &str, part: &Path, progress: &Progress) -> Result<u64, Box<dyn Error>> {
+async fn download_to(client: &reqwest::Client, url: &str, part: &Path, progress: &dyn Progress) -> Result<u64, Box<dyn Error>> {
     // Probe with a 1-byte range: a 206 reveals the size and range support, a 200 is the full body.
     let probe = client
         .get(url)
@@ -87,7 +92,7 @@ async fn download_ranged(
     url: &str,
     part: &Path,
     total: u64,
-    progress: &Progress,
+    progress: &dyn Progress,
 ) -> Result<u64, Box<dyn Error>> {
     File::create(part)?.set_len(total)?;
 
@@ -118,7 +123,7 @@ async fn stream_to_file(
     resp: reqwest::Response,
     file: File,
     expected: Option<u64>,
-    progress: &Progress,
+    progress: &dyn Progress,
 ) -> Result<u64, Box<dyn Error>> {
     let (tx, rx) = mpsc::channel(CHANNEL_CAP);
     let writer = tokio::task::spawn_blocking(move || write_chunks(rx, file));
@@ -158,14 +163,19 @@ fn write_chunks<B: AsRef<[u8]>>(mut rx: mpsc::Receiver<B>, file: File) -> io::Re
 }
 
 /// Extracts `archive` into `out` using one worker thread per CPU core.
-pub async fn extract_zip(archive: &Path, out: &Path) -> Result<(), Box<dyn Error>> {
+pub async fn extract_zip(archive: &Path, out: &Path, reporter: &dyn Reporter) -> Result<(), Box<dyn Error>> {
     let (archive, out) = (archive.to_path_buf(), out.to_path_buf());
-    tokio::task::spawn_blocking(move || extract_zip_blocking(&archive, &out))
+    let progress = reporter.start("Extracting", Unit::Files);
+    tokio::task::spawn_blocking(move || {
+        let result = extract_zip_blocking(&archive, &out, progress.as_ref());
+        progress.finish();
+        result
+    })
         .await?
         .map_err(unsend)
 }
 
-fn extract_zip_blocking(archive: &Path, out: &Path) -> Result<(), SendError> {
+fn extract_zip_blocking(archive: &Path, out: &Path, progress: &dyn Progress) -> Result<(), SendError> {
     // Create the whole directory tree up front so workers only ever create files.
     let mut zip = ZipArchive::new(File::open(archive)?)?;
     let mut dirs = HashSet::new();
@@ -188,11 +198,10 @@ fn extract_zip_blocking(archive: &Path, out: &Path) -> Result<(), SendError> {
     }
     drop(zip);
 
-    let progress = Progress::new("Extracting", Unit::Files);
     progress.set_total(files.len() as u64);
-    let result = run_parallel(
+    run_parallel(
         &files,
-        &progress,
+        progress,
         || Ok(ZipArchive::new(File::open(archive)?)?),
         |zip, (index, path)| {
             let mut entry = zip.by_index(*index)?;
@@ -201,27 +210,29 @@ fn extract_zip_blocking(archive: &Path, out: &Path) -> Result<(), SendError> {
             out.flush()?;
             Ok(())
         },
-    );
-    progress.finish();
-    result
+    )
 }
 
 /// Moves a directory, creating the destination's parent and copying across volumes if needed.
-pub async fn move_dir(src: &Path, dst: &Path) -> Result<(), Box<dyn Error>> {
+pub async fn move_dir(src: &Path, dst: &Path, reporter: Arc<dyn Reporter>) -> Result<(), Box<dyn Error>> {
     let (src, dst) = (src.to_path_buf(), dst.to_path_buf());
-    tokio::task::spawn_blocking(move || move_dir_blocking(&src, &dst))
+    tokio::task::spawn_blocking(move || move_dir_blocking(&src, &dst, reporter.as_ref()))
         .await?
         .map_err(unsend)
 }
 
-fn move_dir_blocking(src: &Path, dst: &Path) -> Result<(), SendError> {
+fn move_dir_blocking(src: &Path, dst: &Path, reporter: &dyn Reporter) -> Result<(), SendError> {
     if let Some(parent) = dst.parent() {
         fs::create_dir_all(parent)?;
     }
     match fs::rename(src, dst) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == io::ErrorKind::CrossesDevices => {
-            copy_dir_blocking(src, dst)?;
+            // Only a cross-volume move does real work, so only it gets a progress bar.
+            let progress = reporter.start("Copying", Unit::Files);
+            let result = copy_dir_blocking(src, dst, progress.as_ref());
+            progress.finish();
+            result?;
             fs::remove_dir_all(src)?;
             Ok(())
         }
@@ -229,7 +240,7 @@ fn move_dir_blocking(src: &Path, dst: &Path) -> Result<(), SendError> {
     }
 }
 
-fn copy_dir_blocking(src: &Path, dst: &Path) -> Result<(), SendError> {
+fn copy_dir_blocking(src: &Path, dst: &Path, progress: &dyn Progress) -> Result<(), SendError> {
     let mut files = Vec::new();
     let mut pending = vec![src.to_path_buf()];
     while let Some(dir) = pending.pop() {
@@ -245,21 +256,18 @@ fn copy_dir_blocking(src: &Path, dst: &Path) -> Result<(), SendError> {
         }
     }
 
-    let progress = Progress::new("Copying", Unit::Files);
     progress.set_total(files.len() as u64);
-    let result = run_parallel(&files, &progress, || Ok(()), |_, (from, to)| {
+    run_parallel(&files, progress, || Ok(()), |_, (from, to)| {
         fs::copy(from, to)?;
         Ok(())
-    });
-    progress.finish();
-    result
+    })
 }
 
 /// Runs `work` over `items` on one thread per core. Threads pull the next item from a shared
 /// counter, so large and small items balance out; the first error stops all workers.
 fn run_parallel<T, S>(
     items: &[T],
-    progress: &Progress,
+    progress: &dyn Progress,
     init: impl Fn() -> Result<S, SendError> + Sync,
     work: impl Fn(&mut S, &T) -> Result<(), SendError> + Sync,
 ) -> Result<(), SendError>
@@ -345,69 +353,10 @@ fn unsend(e: SendError) -> Box<dyn Error> {
     e
 }
 
-enum Unit {
-    Bytes,
-    Files,
-}
-
-/// Thread-safe progress line on stderr, redrawn at most every `PROGRESS_INTERVAL`.
-struct Progress {
-    label: &'static str,
-    unit: Unit,
-    done: AtomicU64,
-    total: AtomicU64,
-    last_draw: Mutex<Instant>,
-}
-
-impl Progress {
-    fn new(label: &'static str, unit: Unit) -> Self {
-        Progress {
-            label,
-            unit,
-            done: AtomicU64::new(0),
-            total: AtomicU64::new(0),
-            last_draw: Mutex::new(Instant::now()),
-        }
-    }
-
-    fn set_total(&self, total: u64) {
-        self.total.store(total, Relaxed);
-    }
-
-    fn add(&self, n: u64) {
-        let done = self.done.fetch_add(n, Relaxed) + n;
-        // try_lock: a busy lock means another thread is drawing right now.
-        if let Ok(mut last) = self.last_draw.try_lock()
-            && last.elapsed() >= PROGRESS_INTERVAL
-        {
-            *last = Instant::now();
-            self.draw(done);
-        }
-    }
-
-    fn finish(&self) {
-        self.draw(self.done.load(Relaxed));
-        eprintln!();
-    }
-
-    fn draw(&self, done: u64) {
-        let total = self.total.load(Relaxed);
-        let mb = |b: u64| b as f64 / 1_048_576.0;
-        let pct = |d: u64| d as f64 / total as f64 * 100.0;
-        let line = match (&self.unit, total) {
-            (Unit::Bytes, 0) => format!("{:.1} MB", mb(done)),
-            (Unit::Bytes, _) => format!("{:.1}/{:.1} MB ({:.0}%)", mb(done), mb(total), pct(done)),
-            (Unit::Files, 0) => format!("{done} files"),
-            (Unit::Files, _) => format!("{done}/{total} files ({:.0}%)", pct(done)),
-        };
-        eprint!("\r{} {line}", self.label);
-        let _ = io::stderr().flush();
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::progress::Silent;
     use zip::{ZipWriter, write::SimpleFileOptions};
 
     struct TempDir(PathBuf);
@@ -446,7 +395,7 @@ mod tests {
         write_zip(&archive, &entries);
 
         let out = tmp.0.join("out");
-        extract_zip_blocking(&archive, &out).unwrap();
+        extract_zip_blocking(&archive, &out, &Silent).unwrap();
 
         for (name, data) in &entries {
             assert_eq!(&fs::read(out.join(name)).unwrap(), data, "{name}");
@@ -459,7 +408,7 @@ mod tests {
         let archive = tmp.0.join("evil.zip");
         write_zip(&archive, &[("../evil.txt".into(), b"x".to_vec())]);
 
-        assert!(extract_zip_blocking(&archive, &tmp.0.join("out")).is_err());
+        assert!(extract_zip_blocking(&archive, &tmp.0.join("out"), &Silent).is_err());
         assert!(!tmp.0.join("evil.txt").exists());
     }
 
@@ -493,12 +442,12 @@ mod tests {
         fs::write(src.join("top.txt"), "top").unwrap();
 
         let copied = tmp.0.join("copy");
-        copy_dir_blocking(&src, &copied).unwrap();
+        copy_dir_blocking(&src, &copied, &Silent).unwrap();
         assert_eq!(fs::read_to_string(copied.join("a/b/f.txt")).unwrap(), "hi");
         assert_eq!(fs::read_to_string(copied.join("top.txt")).unwrap(), "top");
 
         let moved = tmp.0.join("missing/parent/dst");
-        move_dir_blocking(&src, &moved).unwrap();
+        move_dir_blocking(&src, &moved, &Silent).unwrap();
         assert!(!src.exists());
         assert_eq!(fs::read_to_string(moved.join("a/b/f.txt")).unwrap(), "hi");
     }
