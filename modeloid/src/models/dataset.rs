@@ -110,6 +110,26 @@ impl Dataset {
         self.label_count
     }
 
+    pub fn dataset_type(&self) -> &str {
+        &self.dataset_type
+    }
+
+    pub fn annotation_format(&self) -> &str {
+        &self.annotation_format
+    }
+
+    pub fn image_format(&self) -> &str {
+        &self.image_format
+    }
+
+    pub fn class_names(&self) -> &[String] {
+        &self.class_names
+    }
+
+    pub fn size_bytes(&self) -> u64 {
+        self.size_bytes
+    }
+
     pub fn set_dataset_type(&mut self, dataset_type: String) {
         self.dataset_type = dataset_type;
     }

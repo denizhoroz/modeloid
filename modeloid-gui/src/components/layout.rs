@@ -1,6 +1,6 @@
 use dioxus::prelude::*;
 
-use crate::components::{Icon, IconName, Sidebar};
+use crate::components::{DatasetsPanel, Icon, IconName, ResizeHandle, Sidebar};
 use crate::routes::Route;
 use crate::state::provide_workspace_state;
 
@@ -10,6 +10,9 @@ use crate::state::provide_workspace_state;
 pub fn AppLayout() -> Element {
     provide_workspace_state();
     let mut drawer_open = use_signal(|| false);
+    // Lives here so the panel keeps its width across dataset pages.
+    let panel_width = use_signal(|| 420.0);
+    let show_panel = matches!(use_route::<Route>(), Route::Tool { section, .. } if section == "dataset");
 
     rsx! {
         a { class: "skip-link", href: "#main", "Skip to content" }
@@ -47,8 +50,24 @@ pub fn AppLayout() -> Element {
                 }
             }
 
-            main { id: "main", class: "content", tabindex: "-1",
-                Outlet::<Route> {}
+            if show_panel {
+                div { class: "content content-split", style: "--panel-width: {panel_width}px",
+                    main { id: "main", class: "content-main", tabindex: "-1",
+                        Outlet::<Route> {}
+                    }
+                    ResizeHandle {
+                        width: panel_width,
+                        min: 260.0,
+                        max: 900.0,
+                        label: "Resize datasets panel",
+                        controls: "datasets-panel",
+                    }
+                    DatasetsPanel {}
+                }
+            } else {
+                main { id: "main", class: "content", tabindex: "-1",
+                    Outlet::<Route> {}
+                }
             }
         }
     }

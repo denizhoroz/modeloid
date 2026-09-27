@@ -2,6 +2,7 @@ use dioxus::prelude::*;
 
 use crate::api::download::{download_status, DownloadItem, DownloadJob, ItemStatus, ProgressUnit, Stage};
 use crate::api::error_message;
+use crate::state::use_datasets_version;
 use crate::util::{format_bytes, plural};
 
 /// Latest download job, kept fresh by long-polling the server.
@@ -9,13 +10,21 @@ use crate::util::{format_bytes, plural};
 pub fn use_download_job() -> (Signal<Option<DownloadJob>>, Signal<Option<String>>) {
     let job = use_signal(|| None::<DownloadJob>);
     let mut error = use_signal(|| None::<String>);
+    let mut datasets_version = use_datasets_version();
 
     use_future(move || async move {
         let mut since = 0;
+        let mut done_seen = 0;
         loop {
             match download_status(since).await {
                 Ok(Some(latest)) => {
                     since = latest.version;
+                    // A finished download adds a dataset: refresh the datasets panel.
+                    let done = latest.items.iter().filter(|i| i.status == ItemStatus::Done).count();
+                    if done != done_seen {
+                        done_seen = done;
+                        *datasets_version.write() += 1;
+                    }
                     set_if_newer(job, latest);
                 }
                 Ok(None) => {} // no download yet; the server already waited

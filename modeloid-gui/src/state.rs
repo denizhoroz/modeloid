@@ -11,6 +11,8 @@ use crate::api::workspace::{current_workspace, WorkspaceInfo};
 pub struct WorkspaceState {
     pub workspace: Signal<Option<WorkspaceInfo>>,
     pub checked: Signal<bool>,
+    /// Bumped when the workspace's datasets change (e.g. a download finished).
+    pub datasets_version: Signal<u64>,
 }
 
 /// Call once near the root. Asks the server which workspace is open,
@@ -19,6 +21,7 @@ pub fn provide_workspace_state() {
     let state = use_context_provider(|| WorkspaceState {
         workspace: Signal::new(None),
         checked: Signal::new(false),
+        datasets_version: Signal::new(0),
     });
     let (mut workspace, mut checked) = (state.workspace, state.checked);
 
@@ -32,6 +35,11 @@ pub fn provide_workspace_state() {
 
 pub fn use_workspace() -> Signal<Option<WorkspaceInfo>> {
     use_context::<WorkspaceState>().workspace
+}
+
+/// Read to re-run when datasets change; bump with `*signal.write() += 1`.
+pub fn use_datasets_version() -> Signal<u64> {
+    use_context::<WorkspaceState>().datasets_version
 }
 
 /// Whether the open workspace has been fetched from the server yet.

@@ -16,6 +16,19 @@ pub fn format_bytes(bytes: u64) -> String {
     }
 }
 
+/// Number with thousands separators, e.g. `12,345`.
+pub fn format_count(n: impl Into<u64>) -> String {
+    let digits = n.into().to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
+}
+
 /// `1 link`, `3 links`.
 pub fn plural(count: usize, word: &str) -> String {
     if count == 1 {
@@ -34,6 +47,13 @@ mod tests {
         assert_eq!(format_bytes(512), "512 B");
         assert_eq!(format_bytes(1536), "1.5 KB");
         assert_eq!(format_bytes(5 * 1024 * 1024 * 1024), "5.0 GB");
+    }
+
+    #[test]
+    fn formats_counts() {
+        assert_eq!(format_count(7u32), "7");
+        assert_eq!(format_count(4267u32), "4,267");
+        assert_eq!(format_count(1234567u64), "1,234,567");
     }
 
     #[test]
