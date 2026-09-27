@@ -1,6 +1,8 @@
-# modeloid workspace manifest
-
 [workspace]
+members = [
+    "modeloid",
+    "modeloid-cli",
+    "modeloid-gui", "modeloid-gui",
+]
+default-members = ["modeloid-gui"]
 resolver = "3"
-members = ["modeloid", "modeloid-cli"]
-default-members = ["modeloid-cli"]
