@@ -1,0 +1,55 @@
+use dioxus::prelude::*;
+
+use crate::components::{Icon, IconName, Sidebar};
+use crate::routes::Route;
+use crate::state::provide_workspace_state;
+
+/// App shell: sidebar on the left, current page on the right.
+/// On narrow screens the sidebar becomes a drawer opened from the top bar.
+#[component]
+pub fn AppLayout() -> Element {
+    provide_workspace_state();
+    let mut drawer_open = use_signal(|| false);
+
+    rsx! {
+        a { class: "skip-link", href: "#main", "Skip to content" }
+        div {
+            class: "app-shell",
+            onkeydown: move |e| {
+                if e.key() == Key::Escape {
+                    drawer_open.set(false);
+                }
+            },
+
+            header { class: "topbar",
+                button {
+                    class: "icon-button",
+                    r#type: "button",
+                    aria_label: "Open navigation",
+                    aria_controls: "sidebar",
+                    aria_expanded: if drawer_open() { "true" } else { "false" },
+                    onclick: move |_| drawer_open.toggle(),
+                    Icon { name: IconName::Menu }
+                }
+                span { class: "topbar-title", "Modeloid" }
+            }
+
+            Sidebar {
+                open: drawer_open(),
+                on_navigate: move |_| drawer_open.set(false),
+            }
+
+            if drawer_open() {
+                div {
+                    class: "scrim",
+                    aria_hidden: "true",
+                    onclick: move |_| drawer_open.set(false),
+                }
+            }
+
+            main { id: "main", class: "content", tabindex: "-1",
+                Outlet::<Route> {}
+            }
+        }
+    }
+}

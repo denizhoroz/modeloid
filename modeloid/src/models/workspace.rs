@@ -84,8 +84,22 @@ impl Workspace {
         let contents = fs::read_to_string(dir.join("workspace.toml"))
             .map_err(|e| format!("cannot read workspace.toml in {}: {e}", dir.display()))?;
 
-        let file: WorkspaceFile<Workspace> = toml::from_str(&contents)?;
+        let mut file: WorkspaceFile<Workspace> = toml::from_str(&contents)?;
+        // The stored path can be relative (the CLI writes "."), so trust where it was loaded from.
+        file.workspace.path = dir.to_path_buf();
         Ok(file.workspace)
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn description(&self) -> &str {
+        &self.description
     }
 
     pub fn display_info(&self) -> Result<(), Box<dyn Error>> {
@@ -161,17 +175,30 @@ impl Workspace {
         Ok(dirs)
     }
 
+    /// Downloads a dataset into the workspace's `datasets/` folder.
     pub async fn download(
         &self,
         link: &str,
         opts: &DownloadOptions,
         reporter: Arc<dyn Reporter>,
     ) -> Result<PathBuf, Box<dyn Error>> {
+        self.download_to(link, opts, &self.datasets_dir(), reporter).await
+    }
+
+    /// Downloads a dataset into `target/<name>`. Staging still happens in the
+    /// workspace's `.cache/tmp`, and the dataset id comes from this workspace.
+    pub async fn download_to(
+        &self,
+        link: &str,
+        opts: &DownloadOptions,
+        target: &Path,
+        reporter: Arc<dyn Reporter>,
+    ) -> Result<PathBuf, Box<dyn Error>> {
         let downloader = Downloader::new(reporter.clone())?;
         let (source, info) = downloader.inspect(Source::from_link(link)?, opts).await?;
         let name = source.name(opts);
 
-        let final_dir = self.datasets_dir().join(&name);
+        let final_dir = target.join(&name);
         if final_dir.exists() {
             return Err(format!("dataset already exists: {}", final_dir.display()).into());
         }

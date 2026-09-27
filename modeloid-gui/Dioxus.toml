@@ -3,7 +3,7 @@
 [web.app]
 
 # HTML title tag content
-title = "modeloid-gui"
+title = "Modeloid"
 
 # include `assets` in web platform
 [web.resource]

@@ -1,0 +1,72 @@
+//! Sidebar navigation structure. Add, rename or reorder tools here;
+//! the sidebar and the tool pages both read from `NAV`.
+
+use crate::components::IconName;
+use crate::routes::Route;
+
+#[derive(Debug, PartialEq)]
+pub struct NavItem {
+    pub label: &'static str,
+    /// URL segment, e.g. `/dataset/download`.
+    pub slug: &'static str,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct NavCategory {
+    pub label: &'static str,
+    pub slug: &'static str,
+    pub icon: IconName,
+    pub items: &'static [NavItem],
+}
+
+impl NavCategory {
+    pub fn route(&self, item: &NavItem) -> Route {
+        Route::Tool {
+            section: self.slug.to_string(),
+            tool: item.slug.to_string(),
+        }
+    }
+}
+
+const fn item(label: &'static str, slug: &'static str) -> NavItem {
+    NavItem { label, slug }
+}
+
+pub const NAV: &[NavCategory] = &[
+    NavCategory {
+        label: "Dataset Manager",
+        slug: "dataset",
+        icon: IconName::Database,
+        items: &[
+            item("Download", "download"),
+            item("Edit Class", "edit-class"),
+            item("Merge", "merge"),
+            item("Convert to OD", "convert-to-od"),
+            item("Visualize", "visualize"),
+            item("Analyze", "analyze"),
+            item("Train Test Split", "train-test-split"),
+            item("Data Augmentation", "augmentation"),
+            item("Fix/Update", "fix-update"),
+            item("Downsample", "downsample"),
+        ],
+    },
+    NavCategory {
+        label: "Training",
+        slug: "training",
+        icon: IconName::Cpu,
+        items: &[
+            item("Train Model", "train"),
+            item("Test Model", "test"),
+            item("Visualize Results", "visualize-results"),
+            item("Tune Hyperparameters", "tune"),
+            item("Test Pretrained Models", "pretrained"),
+        ],
+    },
+];
+
+/// Finds the category and tool for a `/:section/:tool` route.
+pub fn find(section: &str, tool: &str) -> Option<(&'static NavCategory, &'static NavItem)> {
+    let category = NAV.iter().find(|c| c.slug == section)?;
+    let item = category.items.iter().find(|i| i.slug == tool)?;
+    Some((category, item))
+}
