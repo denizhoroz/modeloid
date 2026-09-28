@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::{error::Error, fs, path::Path};
+use std::{fs, path::Path};
 
 use crate::core::scan::DatasetStats;
 
@@ -43,6 +43,45 @@ pub struct Dataset {
     license: String,
     #[serde(default)]
     tags: Vec<String>,
+    /// How this dataset was made from others. `None` for downloads and imports.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    lineage: Option<Lineage>,
+}
+
+/// Where a dataset came from: the tool that made it, its inputs and settings.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Lineage {
+    /// Tool name, e.g. "merge", "split", "convert".
+    pub operation: String,
+    pub created_at: DateTime<Utc>,
+    /// Input datasets. Names are kept so the record still reads well if one is deleted.
+    #[serde(default)]
+    pub parents: Vec<ParentRef>,
+    /// Tool settings, e.g. `ratio = 0.8`.
+    #[serde(default)]
+    pub params: toml::Table,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ParentRef {
+    pub id: u32,
+    pub name: String,
+}
+
+impl Lineage {
+    pub fn new(operation: &str, parents: &[&Dataset]) -> Self {
+        Lineage {
+            operation: operation.to_string(),
+            created_at: Utc::now(),
+            parents: parents.iter().map(|d| ParentRef { id: d.id, name: d.name.clone() }).collect(),
+            params: toml::Table::new(),
+        }
+    }
+
+    pub fn with_param(mut self, key: &str, value: impl Into<toml::Value>) -> Self {
+        self.params.insert(key.to_string(), value.into());
+        self
+    }
 }
 
 impl Dataset {
@@ -68,10 +107,27 @@ impl Dataset {
             dataset_link: String::new(),
             license: String::new(),
             tags: Vec::new(),
+            lineage: None,
         }
     }
 
-    pub fn load_from_dir(dir: &Path) -> Result<Self, Box<dyn Error>> {
+    /// Replaces everything derived from files with fresh `stats` (after a tool
+    /// rewrote the folder), keeping id, name, description and the like.
+    pub fn refresh(&mut self, stats: DatasetStats) {
+        self.dataset_type = stats.dataset_type;
+        self.image_format = stats.image_format;
+        self.annotation_format = stats.annotation_format;
+        self.image_count = stats.image_count;
+        self.label_count = stats.label_count;
+        self.class_names = stats.class_names;
+        self.size_bytes = stats.size_bytes;
+        self.train_count = stats.train_count;
+        self.test_count = stats.test_count;
+        self.val_count = stats.val_count;
+        self.touch();
+    }
+
+    pub fn load_from_dir(dir: &Path) -> Result<Self, crate::Error> {
         let path = dir.join(DATASET_FILE);
         let contents = fs::read_to_string(&path)
             .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
@@ -81,7 +137,7 @@ impl Dataset {
         Ok(file.dataset)
     }
 
-    pub fn save_to_dir(&self, dir: &Path) -> Result<(), Box<dyn Error>> {
+    pub fn save_to_dir(&self, dir: &Path) -> Result<(), crate::Error> {
         let file = &DatasetFile { dataset: self };
         let contents = toml::to_string(file)?;
         fs::write(dir.join(DATASET_FILE), contents)?;
@@ -128,6 +184,18 @@ impl Dataset {
 
     pub fn size_bytes(&self) -> u64 {
         self.size_bytes
+    }
+
+    pub fn description(&self) -> &str {
+        &self.description
+    }
+
+    pub fn lineage(&self) -> Option<&Lineage> {
+        self.lineage.as_ref()
+    }
+
+    pub fn set_lineage(&mut self, lineage: Option<Lineage>) {
+        self.lineage = lineage;
     }
 
     pub fn set_dataset_type(&mut self, dataset_type: String) {
@@ -190,6 +258,21 @@ mod tests {
         assert_eq!(loaded.class_names, dataset.class_names);
         assert_eq!(loaded.tags, vec!["pets".to_string()]);
         assert_eq!(loaded.added_at, dataset.added_at);
+        assert_eq!(loaded.lineage, None);
+    }
+
+    #[test]
+    fn roundtrips_lineage() {
+        let parent = Dataset::from_stats(1, "cats".into(), stats());
+        let mut child = Dataset::from_stats(2, "cats-split".into(), stats());
+        child.set_lineage(Some(Lineage::new("split", &[&parent]).with_param("ratio", 0.8).with_param("seed", 42)));
+
+        let text = toml::to_string(&DatasetFile { dataset: &child }).unwrap();
+        let loaded: DatasetFile<Dataset> = toml::from_str(&text).unwrap();
+        let lineage = loaded.dataset.lineage.unwrap();
+        assert_eq!(lineage, child.lineage.unwrap());
+        assert_eq!(lineage.parents, [ParentRef { id: 1, name: "cats".into() }]);
+        assert_eq!(lineage.params["ratio"].as_float(), Some(0.8));
     }
 
     #[test]

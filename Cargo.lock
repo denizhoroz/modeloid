@@ -3042,6 +3042,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "imagesize"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "65b27460c2c92b037f3f94c538ed9a3342f3fdf923606781629ccb35f82d042a"
+
+[[package]]
 name = "imgref"
 version = "1.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3668,7 +3674,9 @@ name = "modeloid"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "dirs 7.0.0",
  "futures-util",
+ "imagesize",
  "reqwest 0.13.5",
  "serde",
  "serde_json",
@@ -3694,12 +3702,10 @@ name = "modeloid-gui"
 version = "0.1.0"
 dependencies = [
  "dioxus",
- "dirs 7.0.0",
  "modeloid",
  "rfd",
  "serde",
  "tokio",
- "toml 1.1.6+spec-1.1.0",
 ]
 
 [[package]]

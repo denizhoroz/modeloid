@@ -264,6 +264,28 @@ button {
     color: var(--color-fg-muted);
 }
 
+/* Name cell as a button while a DatasetPicker is on the page */
+.row-pick {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    overflow: hidden;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--color-accent);
+    font: inherit;
+    font-weight: 600;
+    text-align: left;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.row-pick:hover {
+    text-decoration: underline;
+}
+
 .data-table .name {
     max-width: 220px;
     overflow: hidden;
@@ -949,6 +971,49 @@ a.workspace-button {
     font-size: var(--text-xs);
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.choice.is-disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+}
+
+.choice.is-disabled:hover {
+    border-color: var(--color-border);
+}
+
+/* DatasetPicker: long lists scroll inside the card */
+.choice-list-scroll {
+    max-height: 320px;
+    overflow-y: auto;
+}
+
+.choice-order {
+    display: inline-grid;
+    place-items: center;
+    min-width: 16px;
+    height: 16px;
+    margin-right: var(--space-1);
+    border-radius: 8px;
+    background: var(--color-accent);
+    color: var(--color-bg);
+    font-size: 10px;
+    font-weight: 700;
+    vertical-align: 1px;
+}
+
+/* Checkbox with a sentence, e.g. overwrite confirmation */
+.check {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-2);
+    font-size: var(--text-sm);
+    cursor: pointer;
+}
+
+.check input {
+    margin: 2px 0 0;
+    accent-color: var(--color-accent);
 }
 
 .choice-detail.is-empty {

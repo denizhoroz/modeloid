@@ -6,9 +6,12 @@ use std::{
 
 use serde_json::Value;
 
-use crate::{core::progress::Progress, models::dataset::DATASET_FILE};
+use crate::{
+    core::{labels::Split, progress::Progress},
+    models::dataset::DATASET_FILE,
+};
 
-const IMAGE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "bmp", "webp", "tif", "tiff"];
+pub(crate) const IMAGE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "bmp", "webp", "tif", "tiff"];
 
 /// Everything about a dataset that can be derived from its files on disk.
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -60,7 +63,7 @@ pub fn scan_dataset(dir: &Path, progress: &dyn Progress) -> io::Result<DatasetSt
             let ext = extension(&path);
             if IMAGE_EXTENSIONS.contains(&ext.as_str()) {
                 stats.image_count += 1;
-                match split_of(rel) {
+                match Split::of_path(rel) {
                     Some(Split::Train) => stats.train_count += 1,
                     Some(Split::Val) => stats.val_count += 1,
                     Some(Split::Test) => stats.test_count += 1,
@@ -181,7 +184,7 @@ fn scan_voc(files: &[PathBuf], stats: &mut DatasetStats, classes: &mut ClassName
 }
 
 /// Reads the `names` key of a YOLO data.yaml: `[a, 'b']`, a `- a` list, or a `0: a` map.
-fn parse_yaml_names(text: &str) -> Vec<String> {
+pub(crate) fn parse_yaml_names(text: &str) -> Vec<String> {
     let mut lines = text.lines();
     while let Some(line) = lines.next() {
         let Some(rest) = line.strip_prefix("names:") else { continue };
@@ -228,7 +231,12 @@ fn unquote(value: &str) -> String {
     let value = value.trim();
     let quoted = value.len() >= 2
         && ((value.starts_with('\'') && value.ends_with('\'')) || (value.starts_with('"') && value.ends_with('"')));
-    if quoted { &value[1..value.len() - 1] } else { value }.to_string()
+    if !quoted {
+        return value.to_string();
+    }
+    let inner = &value[1..value.len() - 1];
+    // YAML escapes a quote inside single quotes by doubling it.
+    if value.starts_with('\'') { inner.replace("''", "'") } else { inner.to_string() }
 }
 
 fn xml_text<'a>(xml: &'a str, tag: &str) -> Option<&'a str> {
@@ -239,21 +247,6 @@ fn xml_text<'a>(xml: &'a str, tag: &str) -> Option<&'a str> {
 
 fn detection_type(segmentation: bool) -> String {
     if segmentation { "instance-segmentation" } else { "object-detection" }.into()
-}
-
-enum Split {
-    Train,
-    Val,
-    Test,
-}
-
-fn split_of(rel: &Path) -> Option<Split> {
-    rel.components().find_map(|c| match c.as_os_str().to_str()?.to_ascii_lowercase().as_str() {
-        "train" => Some(Split::Train),
-        "valid" | "val" | "validation" => Some(Split::Val),
-        "test" => Some(Split::Test),
-        _ => None,
-    })
 }
 
 fn has_component(rel: &Path, name: &str) -> bool {
@@ -387,5 +380,6 @@ mod tests {
         assert_eq!(parse_yaml_names("names:\n- a\n- b\n"), ["a", "b"]);
         assert_eq!(parse_yaml_names("names:\n  0: a\n  1: b\npath: x\n"), ["a", "b"]);
         assert!(parse_yaml_names("nc: 0\n").is_empty());
+        assert_eq!(parse_yaml_names("names: ['it''s']\n"), ["it's"]);
     }
 }

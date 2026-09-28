@@ -18,6 +18,36 @@ pub struct DatasetRow {
     pub size_bytes: u64,
 }
 
+/// Where a tool should put its result, as chosen in `OutputChoice`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum OutputTarget {
+    /// A new dataset with this folder name.
+    New { name: String },
+    /// Replace the (single) input dataset.
+    Overwrite,
+}
+
+/// Same rules as the core's `validate_dataset_name` (the core isn't built for
+/// the browser, so the form checks with this copy; the server checks again).
+pub fn validate_dataset_name(name: &str) -> Result<(), String> {
+    if name.trim() != name {
+        return Err("The name can't start or end with spaces.".into());
+    }
+    if name.is_empty() {
+        return Err("Enter a name.".into());
+    }
+    if name.chars().count() > 100 {
+        return Err("Keep the name under 100 characters.".into());
+    }
+    if let Some(c) = name.chars().find(|c| r#"<>:"/\|?*"#.contains(*c) || c.is_control()) {
+        return Err(format!("The name can't contain '{c}', it's used as a folder name."));
+    }
+    if name.ends_with('.') {
+        return Err("The name can't end with a dot.".into());
+    }
+    Ok(())
+}
+
 /// Datasets of the open workspace ordered by id; empty when none is open.
 #[get("/api/datasets")]
 pub async fn list_datasets() -> Result<Vec<DatasetRow>, ServerFnError> {
@@ -39,11 +69,28 @@ pub fn short_task(task: &str) -> &str {
 }
 
 #[cfg(feature = "server")]
-mod backend {
-    use modeloid::Workspace;
+#[allow(unused_imports)] // used by the tools still to come
+pub use backend::resolve_output;
 
-    use super::DatasetRow;
+#[cfg(feature = "server")]
+mod backend {
+    use modeloid::{Output, Workspace};
+
+    use super::{DatasetRow, OutputTarget};
     use crate::api::workspace;
+
+    /// Core `Output` for a tool run on `inputs`. Overwriting needs exactly one input.
+    #[allow(dead_code)] // used by the tools still to come
+    pub fn resolve_output(target: OutputTarget, inputs: &[u32]) -> Result<Output, String> {
+        match (target, inputs) {
+            (OutputTarget::New { name }, _) => {
+                modeloid::validate_dataset_name(&name)?;
+                Ok(Output::New { name })
+            }
+            (OutputTarget::Overwrite, &[id]) => Ok(Output::Overwrite { id }),
+            (OutputTarget::Overwrite, _) => Err("Overwriting works with exactly one input dataset.".into()),
+        }
+    }
 
     pub fn list() -> Result<Vec<DatasetRow>, String> {
         let Some(dir) = workspace::current_dir() else { return Ok(Vec::new()) };
@@ -63,5 +110,31 @@ mod backend {
                 size_bytes: d.size_bytes(),
             })
             .collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validates_dataset_names() {
+        assert!(validate_dataset_name("cats-v2").is_ok());
+        assert!(validate_dataset_name("").is_err());
+        assert!(validate_dataset_name("cats ").is_err());
+        assert!(validate_dataset_name("a:b").is_err());
+        assert!(validate_dataset_name("cats.").is_err());
+    }
+
+    #[cfg(feature = "server")]
+    #[test]
+    fn resolves_output() {
+        use modeloid::Output;
+
+        let new = OutputTarget::New { name: "cats".into() };
+        assert_eq!(resolve_output(new, &[1, 2]), Ok(Output::New { name: "cats".into() }));
+        assert_eq!(resolve_output(OutputTarget::Overwrite, &[3]), Ok(Output::Overwrite { id: 3 }));
+        assert!(resolve_output(OutputTarget::Overwrite, &[1, 2]).is_err());
+        assert!(resolve_output(OutputTarget::New { name: "a/b".into() }, &[1]).is_err());
     }
 }

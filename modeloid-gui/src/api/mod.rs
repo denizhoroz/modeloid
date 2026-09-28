@@ -3,6 +3,7 @@
 
 pub mod datasets;
 pub mod download;
+pub mod jobs;
 pub mod settings;
 pub mod workspace;
 

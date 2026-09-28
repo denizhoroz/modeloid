@@ -2,21 +2,20 @@
 
 mod formats;
 mod links;
-mod progress;
 
 use dioxus::prelude::*;
 
 use crate::api::download::start_download;
+use crate::api::jobs::JobKind;
 use crate::api::error_message;
 use crate::api::settings::{roboflow_key_status, KeyStatus};
-use crate::components::{FolderChoice, FolderSelect};
+use crate::components::{set_if_newer, use_job, FolderChoice, FolderSelect, JobProgress};
 use crate::routes::Route;
 use crate::state::{use_workspace, use_workspace_checked};
 use crate::util::plural;
 
 use formats::{FormatSection, DEFAULT_FORMAT, OTHER};
 use links::{collect_links, LinkMode, LinksSection};
-use progress::{set_if_newer, use_download_job, ProgressPanel};
 
 #[component]
 pub fn Download() -> Element {
@@ -24,10 +23,10 @@ pub fn Download() -> Element {
     let checked = use_workspace_checked();
 
     rsx! {
-        document::Title { "Download · Modeloid" }
+        document::Title { "Download & Import · Modeloid" }
         div { class: "page",
             p { class: "page-eyebrow", "Dataset Manager" }
-            h1 { "Download" }
+            h1 { "Download & Import" }
             p { class: "page-lead", "Download datasets from Roboflow into your workspace." }
 
             match workspace() {
@@ -57,7 +56,7 @@ fn DownloadForm(datasets_path: String) -> Element {
     let mut starting = use_signal(|| false);
     let mut form_error = use_signal(|| None::<String>);
 
-    let (job, poll_error) = use_download_job();
+    let (job, poll_error) = use_job(JobKind::Download);
     let key_status = use_resource(roboflow_key_status);
 
     let running = job.read().as_ref().is_some_and(|j| !j.finished);
@@ -143,7 +142,7 @@ fn DownloadForm(datasets_path: String) -> Element {
             p { class: "form-error", role: "alert", "Lost track of download progress: {message}. Reload the page." }
         }
         if let Some(current) = job() {
-            ProgressPanel { job: current }
+            JobProgress { job: current, title: "Downloads", noun: "dataset", verb: "downloaded" }
         }
     }
 }

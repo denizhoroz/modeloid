@@ -1,6 +1,5 @@
 use std::{
     collections::HashSet,
-    error::Error,
     fs::{self, File, OpenOptions},
     io::{self, BufWriter, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
@@ -26,8 +25,6 @@ const WRITE_BUF: usize = 1024 * 1024;
 const FILE_BUF: usize = 256 * 1024;
 const CHANNEL_CAP: usize = 64;
 
-type SendError = Box<dyn Error + Send + Sync>;
-
 /// Downloads `url` to `dest` through `dest.part`, returning the number of bytes written.
 ///
 /// Network reads stay on the async runtime while disk writes run on dedicated blocking
@@ -37,7 +34,7 @@ pub async fn download(
     url: &str,
     dest: &Path,
     reporter: &dyn Reporter,
-) -> Result<u64, Box<dyn Error>> {
+) -> Result<u64, crate::Error> {
     let part = dest.with_extension("part");
     let progress = reporter.start("Downloading", Unit::Bytes);
 
@@ -56,7 +53,7 @@ pub async fn download(
     }
 }
 
-async fn download_to(client: &reqwest::Client, url: &str, part: &Path, progress: &dyn Progress) -> Result<u64, Box<dyn Error>> {
+async fn download_to(client: &reqwest::Client, url: &str, part: &Path, progress: &dyn Progress) -> Result<u64, crate::Error> {
     // Probe with a 1-byte range: a 206 reveals the size and range support, a 200 is the full body.
     let probe = client
         .get(url)
@@ -93,7 +90,7 @@ async fn download_ranged(
     part: &Path,
     total: u64,
     progress: &dyn Progress,
-) -> Result<u64, Box<dyn Error>> {
+) -> Result<u64, crate::Error> {
     File::create(part)?.set_len(total)?;
 
     let connections = parallelism().clamp(MIN_CONNECTIONS, MAX_CONNECTIONS) as u64;
@@ -124,13 +121,13 @@ async fn stream_to_file(
     file: File,
     expected: Option<u64>,
     progress: &dyn Progress,
-) -> Result<u64, Box<dyn Error>> {
+) -> Result<u64, crate::Error> {
     let (tx, rx) = mpsc::channel(CHANNEL_CAP);
     let writer = tokio::task::spawn_blocking(move || write_chunks(rx, file));
 
     let mut received: u64 = 0;
     let mut stream = resp.bytes_stream();
-    let network: Result<(), Box<dyn Error>> = async {
+    let network: Result<(), crate::Error> = async {
         while let Some(chunk) = stream.next().await {
             let chunk = chunk?;
             received += chunk.len() as u64;
@@ -163,7 +160,7 @@ fn write_chunks<B: AsRef<[u8]>>(mut rx: mpsc::Receiver<B>, file: File) -> io::Re
 }
 
 /// Extracts `archive` into `out` using one worker thread per CPU core.
-pub async fn extract_zip(archive: &Path, out: &Path, reporter: &dyn Reporter) -> Result<(), Box<dyn Error>> {
+pub async fn extract_zip(archive: &Path, out: &Path, reporter: &dyn Reporter) -> Result<(), crate::Error> {
     let (archive, out) = (archive.to_path_buf(), out.to_path_buf());
     let progress = reporter.start("Extracting", Unit::Files);
     tokio::task::spawn_blocking(move || {
@@ -172,10 +169,9 @@ pub async fn extract_zip(archive: &Path, out: &Path, reporter: &dyn Reporter) ->
         result
     })
         .await?
-        .map_err(unsend)
 }
 
-fn extract_zip_blocking(archive: &Path, out: &Path, progress: &dyn Progress) -> Result<(), SendError> {
+fn extract_zip_blocking(archive: &Path, out: &Path, progress: &dyn Progress) -> Result<(), crate::Error> {
     // Create the whole directory tree up front so workers only ever create files.
     let mut zip = ZipArchive::new(File::open(archive)?)?;
     let mut dirs = HashSet::new();
@@ -214,14 +210,13 @@ fn extract_zip_blocking(archive: &Path, out: &Path, progress: &dyn Progress) -> 
 }
 
 /// Moves a directory, creating the destination's parent and copying across volumes if needed.
-pub async fn move_dir(src: &Path, dst: &Path, reporter: Arc<dyn Reporter>) -> Result<(), Box<dyn Error>> {
+pub async fn move_dir(src: &Path, dst: &Path, reporter: Arc<dyn Reporter>) -> Result<(), crate::Error> {
     let (src, dst) = (src.to_path_buf(), dst.to_path_buf());
     tokio::task::spawn_blocking(move || move_dir_blocking(&src, &dst, reporter.as_ref()))
         .await?
-        .map_err(unsend)
 }
 
-fn move_dir_blocking(src: &Path, dst: &Path, reporter: &dyn Reporter) -> Result<(), SendError> {
+pub(crate) fn move_dir_blocking(src: &Path, dst: &Path, reporter: &dyn Reporter) -> Result<(), crate::Error> {
     if let Some(parent) = dst.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -240,7 +235,7 @@ fn move_dir_blocking(src: &Path, dst: &Path, reporter: &dyn Reporter) -> Result<
     }
 }
 
-fn copy_dir_blocking(src: &Path, dst: &Path, progress: &dyn Progress) -> Result<(), SendError> {
+fn copy_dir_blocking(src: &Path, dst: &Path, progress: &dyn Progress) -> Result<(), crate::Error> {
     let mut files = Vec::new();
     let mut pending = vec![src.to_path_buf()];
     while let Some(dir) = pending.pop() {
@@ -268,17 +263,17 @@ fn copy_dir_blocking(src: &Path, dst: &Path, progress: &dyn Progress) -> Result<
 fn run_parallel<T, S>(
     items: &[T],
     progress: &dyn Progress,
-    init: impl Fn() -> Result<S, SendError> + Sync,
-    work: impl Fn(&mut S, &T) -> Result<(), SendError> + Sync,
-) -> Result<(), SendError>
+    init: impl Fn() -> Result<S, crate::Error> + Sync,
+    work: impl Fn(&mut S, &T) -> Result<(), crate::Error> + Sync,
+) -> Result<(), crate::Error>
 where
     T: Sync,
 {
     let next = AtomicUsize::new(0);
     let failed = AtomicBool::new(false);
-    let first_error: Mutex<Option<SendError>> = Mutex::new(None);
+    let first_error: Mutex<Option<crate::Error>> = Mutex::new(None);
 
-    let worker = || -> Result<(), SendError> {
+    let worker = || -> Result<(), crate::Error> {
         let mut state = init()?;
         while !failed.load(Relaxed) {
             let Some(item) = items.get(next.fetch_add(1, Relaxed)) else { break };
@@ -347,10 +342,6 @@ fn buf_size(len: u64) -> usize {
 
 fn parallelism() -> usize {
     thread::available_parallelism().map_or(4, |n| n.get())
-}
-
-fn unsend(e: SendError) -> Box<dyn Error> {
-    e
 }
 
 #[cfg(test)]

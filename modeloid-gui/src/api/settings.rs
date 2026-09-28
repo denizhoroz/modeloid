@@ -1,6 +1,6 @@
-//! App settings, stored on the server machine in the user's config folder
-//! (e.g. `%APPDATA%\modeloid\settings.toml`). Secrets never go back to the
-//! browser in full; the UI only gets a `KeyStatus`.
+//! App settings, stored by the core (`modeloid::Settings`) on the server machine
+//! in the user's config folder (e.g. `%APPDATA%\modeloid\settings.toml`), shared
+//! with the CLI. Secrets never go back to the browser in full; the UI only gets a `KeyStatus`.
 
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -16,7 +16,8 @@ pub struct KeyStatus {
     pub settings_path: String,
 }
 
-/// Checks the shape of an API key before saving it.
+/// Checks the shape of an API key before saving it. Same rules as the core's
+/// `validate_api_key` (the core isn't built for the browser; the server checks again).
 pub fn validate_api_key(key: &str) -> Result<(), String> {
     let key = key.trim();
     if key.is_empty() {
@@ -49,55 +50,27 @@ pub async fn remove_roboflow_key() -> Result<KeyStatus, ServerFnError> {
 }
 
 #[cfg(feature = "server")]
-pub use backend::roboflow_api_key;
-
-#[cfg(feature = "server")]
 mod backend {
-    use std::fs;
     use std::path::{Path, PathBuf};
 
     use dioxus::prelude::ServerFnError;
-    use serde::{Deserialize, Serialize};
+    use modeloid::{Settings, ROBOFLOW_KEY_ENV};
 
-    use super::{validate_api_key, KeyStatus};
-
-    const ROBOFLOW_KEY_ENV: &str = "ROBOFLOW_API_KEY";
-
-    #[derive(Debug, Default, Serialize, Deserialize)]
-    struct Settings {
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        roboflow_api_key: Option<String>,
-    }
+    use super::KeyStatus;
 
     pub fn settings_path() -> Result<PathBuf, ServerFnError> {
-        dirs::config_dir()
-            .map(|dir| dir.join("modeloid").join("settings.toml"))
-            .ok_or_else(|| ServerFnError::new("Couldn't find a config folder on this computer."))
+        Settings::default_path().ok_or_else(|| ServerFnError::new("Couldn't find a config folder on this computer."))
     }
 
-    fn read(path: &Path) -> Result<Settings, String> {
-        match fs::read_to_string(path) {
-            Ok(text) => toml::from_str(&text).map_err(|e| format!("{} is invalid: {e}", path.display())),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Settings::default()),
-            Err(e) => Err(format!("Couldn't read {}: {e}", path.display())),
-        }
-    }
-
-    fn write(path: &Path, settings: &Settings) -> Result<(), String> {
-        let save = || -> std::io::Result<()> {
-            if let Some(dir) = path.parent() {
-                fs::create_dir_all(dir)?;
-            }
-            let text = toml::to_string(settings).map_err(std::io::Error::other)?;
-            fs::write(path, text)
-        };
-        save().map_err(|e| format!("Couldn't save {}: {e}", path.display()))
+    fn load(path: &Path) -> Result<Settings, String> {
+        Settings::load(path).map_err(|e| format!("Couldn't read the settings: {e}"))
     }
 
     pub fn roboflow_status(path: &Path) -> Result<KeyStatus, String> {
-        let key = read(path)?.roboflow_api_key;
+        let settings = load(path)?;
+        let key = settings.roboflow_api_key();
         Ok(KeyStatus {
-            saved_hint: key.as_deref().map(|k| {
+            saved_hint: key.map(|k| {
                 let tail: Vec<char> = k.chars().rev().take(4).collect();
                 tail.into_iter().rev().collect()
             }),
@@ -107,24 +80,10 @@ mod backend {
     }
 
     pub fn set_roboflow_key(path: &Path, key: Option<String>) -> Result<KeyStatus, String> {
-        let key = match key {
-            Some(key) => {
-                validate_api_key(&key)?;
-                Some(key.trim().to_string())
-            }
-            None => None,
-        };
-        let mut settings = read(path)?;
-        settings.roboflow_api_key = key;
-        write(path, &settings)?;
+        let mut settings = load(path)?;
+        settings.set_roboflow_api_key(key.as_deref())?;
+        settings.save(path).map_err(|e| format!("Couldn't save the settings: {e}"))?;
         roboflow_status(path)
-    }
-
-    /// The saved Roboflow key, for `DownloadOptions.api_key`. `None` lets the
-    /// core fall back to the `ROBOFLOW_API_KEY` environment variable.
-    pub fn roboflow_api_key() -> Option<String> {
-        let path = settings_path().ok()?;
-        read(&path).ok()?.roboflow_api_key
     }
 }
 

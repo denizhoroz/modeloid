@@ -3,7 +3,7 @@ use dioxus::prelude::*;
 use crate::api::datasets::{list_datasets, short_task, DatasetRow};
 use crate::api::error_message;
 use crate::components::{Icon, IconName};
-use crate::state::{use_datasets_version, use_workspace};
+use crate::state::{use_dataset_pick, DatasetPick, use_datasets_version, use_workspace};
 use crate::util::{format_bytes, format_count, plural};
 
 /// Right-hand panel listing the open workspace's datasets.
@@ -61,6 +61,10 @@ pub fn DatasetsPanel() -> Element {
 
 #[component]
 fn DatasetsTable(rows: Vec<DatasetRow>) -> Element {
+    let DatasetPick { pickers, mut picked } = use_dataset_pick();
+    // Rows pick a dataset only when the page has a DatasetPicker.
+    let pickable = pickers() > 0;
+
     rsx! {
         table { class: "data-table",
             thead {
@@ -79,7 +83,19 @@ fn DatasetsTable(rows: Vec<DatasetRow>) -> Element {
                 for row in rows {
                     tr { key: "{row.id}",
                         td { class: "num muted", "{row.id}" }
-                        th { class: "name", scope: "row", title: "{row.name}", "{row.name}" }
+                        th { class: "name", scope: "row", title: "{row.name}",
+                            if pickable {
+                                button {
+                                    class: "row-pick",
+                                    r#type: "button",
+                                    title: "Use {row.name} as input",
+                                    onclick: move |_| picked.set(Some(row.id)),
+                                    "{row.name}"
+                                }
+                            } else {
+                                "{row.name}"
+                            }
+                        }
                         td { title: "{row.task}", "{short_task(&row.task)}" }
                         td { class: "num", "{format_count(row.images)}" }
                         td { class: "num", "{format_count(row.labels)}" }

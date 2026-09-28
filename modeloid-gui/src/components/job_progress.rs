@@ -1,14 +1,15 @@
 use dioxus::prelude::*;
 
-use crate::api::download::{download_status, DownloadItem, DownloadJob, ItemStatus, ProgressUnit, Stage};
 use crate::api::error_message;
+use crate::api::jobs::{job_status, ItemStatus, Job, JobItem, JobKind, ProgressUnit, Stage};
 use crate::state::use_datasets_version;
 use crate::util::{format_bytes, plural};
 
-/// Latest download job, kept fresh by long-polling the server.
+/// Latest `kind` job, kept fresh by long-polling the server.
 /// Returns the job and a connection error, if polling stopped.
-pub fn use_download_job() -> (Signal<Option<DownloadJob>>, Signal<Option<String>>) {
-    let job = use_signal(|| None::<DownloadJob>);
+/// Every finished item refreshes the datasets panel, since tools add or change datasets.
+pub fn use_job(kind: JobKind) -> (Signal<Option<Job>>, Signal<Option<String>>) {
+    let job = use_signal(|| None::<Job>);
     let mut error = use_signal(|| None::<String>);
     let mut datasets_version = use_datasets_version();
 
@@ -16,10 +17,9 @@ pub fn use_download_job() -> (Signal<Option<DownloadJob>>, Signal<Option<String>
         let mut since = 0;
         let mut done_seen = 0;
         loop {
-            match download_status(since).await {
+            match job_status(kind, since).await {
                 Ok(Some(latest)) => {
                     since = latest.version;
-                    // A finished download adds a dataset: refresh the datasets panel.
                     let done = latest.items.iter().filter(|i| i.status == ItemStatus::Done).count();
                     if done != done_seen {
                         done_seen = done;
@@ -27,7 +27,7 @@ pub fn use_download_job() -> (Signal<Option<DownloadJob>>, Signal<Option<String>
                     }
                     set_if_newer(job, latest);
                 }
-                Ok(None) => {} // no download yet; the server already waited
+                Ok(None) => {} // no job yet; the server already waited
                 Err(e) => {
                     error.set(Some(error_message(&e)));
                     break;
@@ -40,38 +40,53 @@ pub fn use_download_job() -> (Signal<Option<DownloadJob>>, Signal<Option<String>
 }
 
 /// Replaces the job unless `latest` is older (a slow poll can race a fresh start).
-pub fn set_if_newer(mut job: Signal<Option<DownloadJob>>, latest: DownloadJob) {
+pub fn set_if_newer(mut job: Signal<Option<Job>>, latest: Job) {
     let newer = job.read().as_ref().is_none_or(|current| latest.version > current.version);
     if newer {
         job.set(Some(latest));
     }
 }
 
+/// Progress of a job: one row per item with its stage bar, notes, output and error.
 #[component]
-pub fn ProgressPanel(job: DownloadJob) -> Element {
+pub fn JobProgress(
+    job: Job,
+    /// Section title, e.g. "Downloads".
+    #[props(into)]
+    title: String,
+    /// What an item makes, for the summary, e.g. "dataset".
+    #[props(into, default = "item".to_string())]
+    noun: String,
+    /// Past tense for a done item, e.g. "downloaded".
+    #[props(into, default = "done".to_string())]
+    verb: String,
+    /// Shown before an item's output, e.g. "Saved to".
+    #[props(into, default = "Saved to".to_string())]
+    output_label: String,
+) -> Element {
     let total = job.items.len();
     let done = job.items.iter().filter(|i| i.status == ItemStatus::Done).count();
     let failed = job.items.iter().filter(|i| i.status == ItemStatus::Failed).count();
 
     let summary = if job.finished {
         match (done, failed) {
-            (_, 0) => format!("Finished: {} downloaded.", plural(done, "dataset")),
-            (0, _) => format!("Finished: {} failed.", plural(failed, "download")),
-            _ => format!("Finished: {done} downloaded, {failed} failed."),
+            (_, 0) => format!("Finished: {} {verb}.", plural(done, &noun)),
+            (0, _) => format!("Finished: {} failed.", plural(failed, &noun)),
+            _ => format!("Finished: {done} {verb}, {failed} failed."),
         }
     } else {
         format!("{} of {total} done{}", done + failed, if failed > 0 { format!(", {failed} failed") } else { String::new() })
     };
 
     rsx! {
-        section { class: "section-card", aria_labelledby: "download-progress-title",
+        section { class: "section-card", aria_labelledby: "job-progress-title",
             div { class: "section-card-header",
-                h2 { id: "download-progress-title", class: "section-card-title", "Downloads" }
+                h2 { id: "job-progress-title", class: "section-card-title", "{title}" }
                 p { class: "section-card-meta", aria_live: "polite", "{summary}" }
             }
             ul { class: "progress-list",
                 for (index, item) in job.items.iter().enumerate() {
-                    ProgressRow { key: "{index}", item: item.clone() }
+                    ProgressRow { key: "{index}", item: item.clone(), output_label: output_label.clone() }
                 }
             }
         }
@@ -79,7 +94,7 @@ pub fn ProgressPanel(job: DownloadJob) -> Element {
 }
 
 #[component]
-fn ProgressRow(item: DownloadItem) -> Element {
+fn ProgressRow(item: JobItem, output_label: String) -> Element {
     let (status_class, status_text) = match item.status {
         ItemStatus::Queued => ("is-queued", "Queued".to_string()),
         ItemStatus::Running => ("is-running", item.stage.as_ref().map_or("Starting".into(), |s| s.label.clone())),
@@ -91,7 +106,7 @@ fn ProgressRow(item: DownloadItem) -> Element {
         li { class: "progress-item {status_class}",
             div { class: "progress-item-head",
                 span { class: "status-pill", "{status_text}" }
-                span { class: "progress-link", title: "{item.link}", "{item.link}" }
+                span { class: "progress-link", title: "{item.label}", "{item.label}" }
             }
 
             if let Some(stage) = &item.stage {
@@ -102,9 +117,9 @@ fn ProgressRow(item: DownloadItem) -> Element {
                     p { class: "progress-note", "{message}" }
                 }
             }
-            if let Some(path) = &item.saved_to {
-                p { class: "progress-note", "Saved to "
-                    code { "{path}" }
+            if let Some(output) = &item.output {
+                p { class: "progress-note", "{output_label} "
+                    code { "{output}" }
                 }
             }
             if let Some(error) = &item.error {

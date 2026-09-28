@@ -1,4 +1,4 @@
-use std::{env, error::Error, path::Path, sync::Arc, time::Duration};
+use std::{env, path::Path, sync::Arc, time::Duration};
 
 use serde_json::Value;
 use url::Url;
@@ -9,7 +9,7 @@ use crate::core::{
 };
 
 const ROBOFLOW_API: &str = "https://api.roboflow.com";
-const ROBOFLOW_KEY_ENV: &str = "ROBOFLOW_API_KEY";
+pub const ROBOFLOW_KEY_ENV: &str = "ROBOFLOW_API_KEY";
 const EXPORT_POLL_ATTEMPTS: u32 = 20;
 const EXPORT_POLL_INTERVAL: Duration = Duration::from_secs(3);
 
@@ -28,7 +28,7 @@ pub struct DownloadOptions {
 }
 
 impl Source {
-    pub fn from_link(link: &str) -> Result<Self, Box<dyn Error>> {
+    pub fn from_link(link: &str) -> Result<Self, crate::Error> {
         let url = Url::parse(link)?;
         let host = url.host_str().ok_or("link has no host")?;
         let segments: Vec<&str> = url
@@ -51,7 +51,7 @@ impl Source {
         }
     }
 
-    fn roboflow(ws: &str, project: &str, version: Option<&str>) -> Result<Self, Box<dyn Error>> {
+    fn roboflow(ws: &str, project: &str, version: Option<&str>) -> Result<Self, crate::Error> {
         let version = version
             .map(|v| v.parse().map_err(|_| format!("invalid Roboflow version: {v}")))
             .transpose()?;
@@ -83,7 +83,7 @@ pub struct Downloader {
 }
 
 impl Downloader {
-    pub fn new(reporter: Arc<dyn Reporter>) -> Result<Self, Box<dyn Error>> {
+    pub fn new(reporter: Arc<dyn Reporter>) -> Result<Self, crate::Error> {
         let client = reqwest::Client::builder()
             .user_agent(concat!("modeloid/", env!("CARGO_PKG_VERSION")))
             .connect_timeout(Duration::from_secs(15))
@@ -92,7 +92,7 @@ impl Downloader {
     }
 
     /// Fetches project metadata and replaces an unspecified version with the latest one available.
-    pub async fn inspect(&self, source: Source, opts: &DownloadOptions) -> Result<(Source, SourceInfo), Box<dyn Error>> {
+    pub async fn inspect(&self, source: Source, opts: &DownloadOptions) -> Result<(Source, SourceInfo), crate::Error> {
         match source {
             Source::Roboflow { workspace, project, version } => {
                 let api_key = roboflow_api_key(opts)?;
@@ -115,7 +115,7 @@ impl Downloader {
     }
 
     /// Returns a direct URL to the dataset archive.
-    pub async fn resolve(&self, source: &Source, opts: &DownloadOptions) -> Result<String, Box<dyn Error>> {
+    pub async fn resolve(&self, source: &Source, opts: &DownloadOptions) -> Result<String, crate::Error> {
         match source {
             Source::Roboflow { workspace, project, version } => {
                 let version = version.ok_or("Roboflow version not resolved, call inspect first")?;
@@ -126,7 +126,7 @@ impl Downloader {
         }
     }
 
-    async fn roboflow_get(&self, url: &str, api_key: &str) -> Result<Value, Box<dyn Error>> {
+    async fn roboflow_get(&self, url: &str, api_key: &str) -> Result<Value, crate::Error> {
         let resp = self.client.get(url).query(&[("api_key", api_key)]).send().await?;
         let status = resp.status();
         let body: Value = resp.json().await.unwrap_or(Value::Null);
@@ -143,7 +143,7 @@ impl Downloader {
     }
 
     // Roboflow generates exports on demand, so the link may not exist on the first request.
-    async fn roboflow_export_link(&self, url: &str, api_key: &str) -> Result<String, Box<dyn Error>> {
+    async fn roboflow_export_link(&self, url: &str, api_key: &str) -> Result<String, crate::Error> {
         // Started lazily so a ready export shows no progress at all.
         let mut progress = None;
         let result = async {
@@ -174,17 +174,17 @@ impl Downloader {
     }
 
     /// Downloads `url` to `dest`, writing to `dest.part` until complete.
-    pub async fn download_file(&self, url: &str, dest: &Path) -> Result<(), Box<dyn Error>> {
+    pub async fn download_file(&self, url: &str, dest: &Path) -> Result<(), crate::Error> {
         io::download(&self.client, url, dest, self.reporter.as_ref()).await?;
         Ok(())
     }
 }
 
-fn roboflow_api_key(opts: &DownloadOptions) -> Result<String, Box<dyn Error>> {
+fn roboflow_api_key(opts: &DownloadOptions) -> Result<String, crate::Error> {
     match &opts.api_key {
         Some(key) => Ok(key.clone()),
         None => env::var(ROBOFLOW_KEY_ENV)
-            .map_err(|_| format!("Roboflow API key missing: pass --api-key or set {ROBOFLOW_KEY_ENV}").into()),
+            .map_err(|_| format!("Roboflow API key missing: save one in settings or set {ROBOFLOW_KEY_ENV}").into()),
     }
 }
 

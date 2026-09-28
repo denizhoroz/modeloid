@@ -15,6 +15,16 @@ pub struct WorkspaceState {
     pub datasets_version: Signal<u64>,
 }
 
+/// Links the datasets panel to a `DatasetPicker` on the page: clicking a panel
+/// row puts its id in `picked`, and the picker takes it from there.
+#[derive(Clone, Copy)]
+pub struct DatasetPick {
+    /// Number of pickers on screen; panel rows are clickable only when > 0.
+    pub pickers: Signal<u32>,
+    /// Dataset id clicked in the panel, not yet taken by a picker.
+    pub picked: Signal<Option<u32>>,
+}
+
 /// Call once near the root. Asks the server which workspace is open,
 /// so the choice survives page reloads.
 pub fn provide_workspace_state() {
@@ -23,6 +33,7 @@ pub fn provide_workspace_state() {
         checked: Signal::new(false),
         datasets_version: Signal::new(0),
     });
+    use_context_provider(|| DatasetPick { pickers: Signal::new(0), picked: Signal::new(None) });
     let (mut workspace, mut checked) = (state.workspace, state.checked);
 
     use_future(move || async move {
@@ -45,4 +56,8 @@ pub fn use_datasets_version() -> Signal<u64> {
 /// Whether the open workspace has been fetched from the server yet.
 pub fn use_workspace_checked() -> Signal<bool> {
     use_context::<WorkspaceState>().checked
+}
+
+pub fn use_dataset_pick() -> DatasetPick {
+    use_context::<DatasetPick>()
 }
