@@ -2,10 +2,15 @@
 //! which is where the `modeloid` core and the filesystem live.
 
 pub mod datasets;
+pub mod dialogs;
 pub mod download;
+pub mod explore;
+#[cfg(feature = "server")]
+pub mod files;
 pub mod import;
 pub mod jobs;
 pub mod settings;
+pub mod watch;
 pub mod workspace;
 
 use dioxus::prelude::ServerFnError;

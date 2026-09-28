@@ -1,21 +1,21 @@
-// Used by the Dataset Manager tools still to come (PLAN.md 2-7).
-#[allow(dead_code)]
-mod dataset_picker;
+mod charts;
 mod credential_field;
+mod dataset_picker;
 mod datasets_panel;
 mod fonts;
 mod icon;
 mod job_progress;
 mod layout;
+// Used by the Dataset Manager tools still to come (PLAN.md 3-7).
 #[allow(dead_code)]
 mod output_choice;
 mod resize_handle;
 mod sidebar;
 mod workspace_card;
 
-#[allow(unused_imports)]
-pub use dataset_picker::DatasetPicker;
+pub use charts::{Bar, BarList, Heatmap, HistogramChart, StatTile};
 pub use credential_field::CredentialField;
+pub use dataset_picker::DatasetPicker;
 pub use datasets_panel::DatasetsPanel;
 pub use fonts::Fonts;
 pub use icon::{Icon, IconName};

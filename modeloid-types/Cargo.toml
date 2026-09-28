@@ -1,0 +1,8 @@
+[package]
+name = "modeloid-types"
+version = "0.1.0"
+edition = "2024"
+description = "Plain data types and rules shared by the Modeloid core and its frontends (also builds for the browser)"
+
+[dependencies]
+serde = { version = "1.0.229", features = ["derive"] }

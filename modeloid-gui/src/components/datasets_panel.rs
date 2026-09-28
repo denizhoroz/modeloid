@@ -3,7 +3,7 @@ use dioxus::prelude::*;
 use crate::api::datasets::{list_datasets, short_task, DatasetRow};
 use crate::api::error_message;
 use crate::components::{Icon, IconName};
-use crate::state::{use_dataset_pick, DatasetPick, use_datasets_version, use_workspace};
+use crate::state::{use_dataset_pick, use_datasets_version, use_selected_dataset, use_workspace, DatasetPick};
 use crate::util::{format_bytes, format_count, plural};
 
 /// Right-hand panel listing the open workspace's datasets.
@@ -22,6 +22,16 @@ pub fn DatasetsPanel() -> Element {
         Some(Ok(rows)) => Some(rows.len()),
         _ => None,
     };
+
+    // Drop the selection when its dataset is gone (deleted, or moved outside the app).
+    let mut selected = use_selected_dataset();
+    use_effect(move || {
+        if let Some(Ok(rows)) = &*datasets.read() {
+            if selected.peek().is_some_and(|id| !rows.iter().any(|r| r.id == id)) {
+                selected.set(None);
+            }
+        }
+    });
 
     rsx! {
         aside { id: "datasets-panel", class: "datasets-panel", aria_labelledby: "datasets-panel-title",
@@ -62,8 +72,10 @@ pub fn DatasetsPanel() -> Element {
 #[component]
 fn DatasetsTable(rows: Vec<DatasetRow>) -> Element {
     let DatasetPick { pickers, mut picked } = use_dataset_pick();
-    // Rows pick a dataset only when the page has a DatasetPicker.
+    let mut selected = use_selected_dataset();
+    // With a DatasetPicker on the page, a click also picks the dataset as input.
     let pickable = pickers() > 0;
+    let hint = if pickable { "Select, and use as input" } else { "Select" };
 
     rsx! {
         table { class: "data-table",
@@ -81,18 +93,25 @@ fn DatasetsTable(rows: Vec<DatasetRow>) -> Element {
             }
             tbody {
                 for row in rows {
-                    tr { key: "{row.id}",
-                        td { class: "num muted", "{row.id}" }
-                        th { class: "name", scope: "row", title: "{row.name}",
+                    tr {
+                        key: "{row.id}",
+                        class: if selected() == Some(row.id) { "is-selected" },
+                        // Clicking a selected row again clears the selection; picking always adds.
+                        onclick: move |_| {
+                            let id = row.id;
+                            selected.set(if selected() == Some(id) { None } else { Some(id) });
                             if pickable {
-                                button {
-                                    class: "row-pick",
-                                    r#type: "button",
-                                    title: "Use {row.name} as input",
-                                    onclick: move |_| picked.set(Some(row.id)),
-                                    "{row.name}"
-                                }
-                            } else {
+                                picked.set(Some(id));
+                            }
+                        },
+                        td { class: "num muted", "{row.id}" }
+                        th { class: "name", scope: "row",
+                            // Keyboard access; the click bubbles to the row.
+                            button {
+                                class: "row-pick",
+                                r#type: "button",
+                                title: "{hint}: {row.name}",
+                                aria_pressed: if selected() == Some(row.id) { "true" } else { "false" },
                                 "{row.name}"
                             }
                         }

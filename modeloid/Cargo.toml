@@ -4,9 +4,11 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+modeloid-types = { path = "../modeloid-types" }
 chrono = { version = "0.4.45", features = ["serde"] }
 dirs = "7"
 futures-util = "0.3.34"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "bmp", "webp", "tiff"] }
 imagesize = "0.15.0"
 reqwest = { version = "0.13.5", features = ["json", "query", "stream"] }
 serde = { version = "1.0.229", features = ["derive"]}

@@ -1,5 +1,6 @@
 mod create_workspace;
 mod download;
+mod explore;
 mod home;
 mod not_found;
 mod settings;

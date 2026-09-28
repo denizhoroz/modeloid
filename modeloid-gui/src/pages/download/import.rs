@@ -6,7 +6,7 @@ use crate::api::datasets::validate_dataset_name;
 use crate::api::error_message;
 use crate::api::import::{name_from_path, start_import, ImportKind};
 use crate::api::jobs::JobKind;
-use crate::api::workspace::{pick_file, pick_folder};
+use crate::api::dialogs::{pick_file, pick_folder, DialogPurpose};
 use crate::components::{set_if_newer, use_job, Icon, IconName, JobProgress};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -49,8 +49,8 @@ pub fn ImportForm(datasets_path: String) -> Element {
         picking.set(true);
         form_error.set(None);
         let picked = match source_kind() {
-            SourceKind::Folder => pick_folder("Choose a dataset folder".into()).await,
-            SourceKind::Zip => pick_file("Choose a dataset zip".into(), "Zip archive".into(), vec!["zip".into()]).await,
+            SourceKind::Folder => pick_folder("Choose a dataset folder".into(), DialogPurpose::DatasetFolder).await,
+            SourceKind::Zip => pick_file("Choose a dataset zip".into(), DialogPurpose::DatasetZip, "Zip archive".into(), vec!["zip".into()]).await,
         };
         match picked {
             Ok(Some(path)) => match source_kind() {

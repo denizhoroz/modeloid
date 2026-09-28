@@ -27,26 +27,7 @@ pub enum OutputTarget {
     Overwrite,
 }
 
-/// Same rules as the core's `validate_dataset_name` (the core isn't built for
-/// the browser, so the form checks with this copy; the server checks again).
-pub fn validate_dataset_name(name: &str) -> Result<(), String> {
-    if name.trim() != name {
-        return Err("The name can't start or end with spaces.".into());
-    }
-    if name.is_empty() {
-        return Err("Enter a name.".into());
-    }
-    if name.chars().count() > 100 {
-        return Err("Keep the name under 100 characters.".into());
-    }
-    if let Some(c) = name.chars().find(|c| r#"<>:"/\|?*"#.contains(*c) || c.is_control()) {
-        return Err(format!("The name can't contain '{c}', it's used as a folder name."));
-    }
-    if name.ends_with('.') {
-        return Err("The name can't end with a dot.".into());
-    }
-    Ok(())
-}
+pub use modeloid_types::validate_dataset_name;
 
 /// Datasets of the open workspace ordered by id; empty when none is open.
 #[get("/api/datasets")]
@@ -116,15 +97,6 @@ mod backend {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn validates_dataset_names() {
-        assert!(validate_dataset_name("cats-v2").is_ok());
-        assert!(validate_dataset_name("").is_err());
-        assert!(validate_dataset_name("cats ").is_err());
-        assert!(validate_dataset_name("a:b").is_err());
-        assert!(validate_dataset_name("cats.").is_err());
-    }
 
     #[cfg(feature = "server")]
     #[test]

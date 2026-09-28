@@ -3676,7 +3676,9 @@ dependencies = [
  "chrono",
  "dirs 7.0.0",
  "futures-util",
+ "image",
  "imagesize",
+ "modeloid-types",
  "reqwest 0.13.5",
  "serde",
  "serde_json",
@@ -3703,9 +3705,19 @@ version = "0.1.0"
 dependencies = [
  "dioxus",
  "modeloid",
+ "modeloid-types",
+ "raw-window-handle 0.6.2",
  "rfd",
  "serde",
  "tokio",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "modeloid-types"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

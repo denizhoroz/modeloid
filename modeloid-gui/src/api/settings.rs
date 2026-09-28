@@ -54,21 +54,7 @@ pub struct KeyStatus {
     pub settings_path: String,
 }
 
-/// Checks the shape of an API key before saving it. Same rules as the core's
-/// `validate_api_key` (the core isn't built for the browser; the server checks again).
-pub fn validate_api_key(key: &str) -> Result<(), String> {
-    let key = key.trim();
-    if key.is_empty() {
-        return Err("Paste your API key.".into());
-    }
-    if key.chars().any(char::is_whitespace) {
-        return Err("The key can't contain spaces.".into());
-    }
-    if !(8..=128).contains(&key.len()) {
-        return Err("That doesn't look like an API key. Check you copied all of it.".into());
-    }
-    Ok(())
-}
+pub use modeloid_types::validate_api_key;
 
 /// Quick form check; the server parses Kaggle credentials fully.
 pub fn validate_credential(service: ServiceId, value: &str) -> Result<(), String> {
@@ -149,15 +135,6 @@ mod backend {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn validates_keys() {
-        assert!(validate_api_key("abcDEF1234567890").is_ok());
-        assert!(validate_api_key("  abcDEF1234567890  ").is_ok());
-        assert!(validate_api_key("").is_err());
-        assert!(validate_api_key("abc def 1234").is_err());
-        assert!(validate_api_key("short").is_err());
-    }
 
     #[test]
     fn validates_kaggle_credentials() {

@@ -6,8 +6,10 @@ use std::{fs, path::{Path, PathBuf}, sync::Arc};
 use crate::core::{
     download::{DownloadOptions, Downloader, Source, SourceInfo},
     io,
-    progress::{Reporter, Unit, check_cancel},
+    labels::{self, LabelFormat, LabelSet},
+    progress::{Progress, Reporter, Unit, check_cancel},
     scan::scan_dataset,
+    stats::{self, ExploreStats, STATS_VERSION},
 };
 use crate::models::dataset::{DATASET_FILE, Dataset, Lineage};
 
@@ -37,25 +39,7 @@ pub enum Output {
     Overwrite { id: u32 },
 }
 
-/// Dataset names become folder names, so they follow folder-name rules.
-pub fn validate_dataset_name(name: &str) -> Result<(), String> {
-    if name.trim() != name {
-        return Err("The name can't start or end with spaces.".into());
-    }
-    if name.is_empty() {
-        return Err("Enter a name.".into());
-    }
-    if name.chars().count() > 100 {
-        return Err("Keep the name under 100 characters.".into());
-    }
-    if let Some(c) = name.chars().find(|c| r#"<>:"/\|?*"#.contains(*c) || c.is_control()) {
-        return Err(format!("The name can't contain '{c}', it's used as a folder name."));
-    }
-    if name.ends_with('.') {
-        return Err("The name can't end with a dot.".into());
-    }
-    Ok(())
-}
+pub use modeloid_types::validate_dataset_name;
 
 
 #[derive(Serialize, Deserialize)]
@@ -183,6 +167,77 @@ impl Workspace {
     pub fn next_dataset_id(&self) -> Result<u32, crate::Error> {
         let max = self.list_datasets()?.iter().map(|(_, d)| d.id()).max();
         Ok(max.map_or(1, |id| id + 1))
+    }
+
+    /// Cheap summary of the workspace at `dir` on disk: changes when
+    /// `workspace.toml` or a dataset folder / `dataset.toml` is added, removed,
+    /// renamed or edited. Used to notice changes made outside Modeloid.
+    pub fn fingerprint(dir: &Path) -> u64 {
+        use std::hash::{Hash, Hasher};
+
+        let stamp = |path: &Path| fs::metadata(path).ok().map(|m| (m.len(), m.modified().ok()));
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        stamp(&dir.join("workspace.toml")).hash(&mut hasher);
+
+        let mut entries: Vec<_> = fs::read_dir(dir.join("datasets"))
+            .map(|rd| rd.filter_map(Result::ok).filter(|e| e.file_type().is_ok_and(|t| t.is_dir())).collect())
+            .unwrap_or_default();
+        entries.sort_by_key(|e| e.file_name());
+        for entry in entries {
+            entry.file_name().hash(&mut hasher);
+            stamp(&entry.path().join(DATASET_FILE)).hash(&mut hasher);
+        }
+        hasher.finish()
+    }
+
+    /// Labels of dataset `id`, read in its annotation format.
+    pub fn read_labels(&self, id: u32, progress: &dyn Progress) -> Result<(PathBuf, Dataset, LabelSet), crate::Error> {
+        let (dir, dataset) = self.find_dataset(id)?;
+        let format = LabelFormat::parse(dataset.annotation_format()).ok_or_else(|| {
+            format!(
+                "'{}' labels aren't supported yet; YOLO, COCO and Pascal VOC are",
+                dataset.annotation_format()
+            )
+        })?;
+        let set = labels::read(&dir, format, progress)?;
+        Ok((dir, dataset, set))
+    }
+
+    /// Explore statistics for dataset `id`. Cached in `.cache/stats/<id>.json`
+    /// until its `dataset.toml` changes; `refresh` recomputes anyway.
+    pub fn explore_stats(&self, id: u32, refresh: bool, progress: &dyn Progress) -> Result<ExploreStats, crate::Error> {
+        #[derive(serde::Serialize, serde::Deserialize)]
+        struct Cached {
+            version: u32,
+            stamp: String,
+            stats: ExploreStats,
+        }
+
+        let (dir, _) = self.find_dataset(id)?;
+        let meta = fs::metadata(dir.join(DATASET_FILE))?;
+        let stamp = format!("{}-{:?}", meta.len(), meta.modified().ok());
+        let cache = self.path.join(".cache").join("stats").join(format!("{id}.json"));
+
+        if !refresh {
+            let cached = fs::read(&cache).ok().and_then(|bytes| serde_json::from_slice::<Cached>(&bytes).ok());
+            if let Some(cached) = cached.filter(|c| c.version == STATS_VERSION && c.stamp == stamp) {
+                return Ok(cached.stats);
+            }
+        }
+
+        let (_, _, set) = self.read_labels(id, progress)?;
+        let stats = stats::analyze(&set);
+        if let Some(parent) = cache.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let cached = Cached { version: STATS_VERSION, stamp, stats };
+        fs::write(&cache, serde_json::to_vec(&cached)?)?;
+        Ok(cached.stats)
+    }
+
+    /// Where previews of dataset `id`'s images are cached.
+    pub fn thumbs_dir(&self, id: u32) -> PathBuf {
+        self.path.join(".cache").join("thumbs").join(id.to_string())
     }
 
     /// The dataset with this id and its folder.
@@ -644,6 +699,49 @@ mod tests {
     }
 
     #[test]
+    fn fingerprint_notices_outside_changes() {
+        let tmp = TempWorkspace::new("fingerprint");
+        let ws = &tmp.0;
+        let before = Workspace::fingerprint(ws.path());
+        assert_eq!(before, Workspace::fingerprint(ws.path()), "stable without changes");
+
+        let staging = tmp.staging_with(YOLO);
+        let dir = ws.save_output(&staging, &new_output("cats"), Lineage::new("import", &[]), &Silent).unwrap();
+        let added = Workspace::fingerprint(ws.path());
+        assert_ne!(before, added);
+
+        fs::rename(&dir, ws.datasets_dir().join("dogs")).unwrap();
+        let renamed = Workspace::fingerprint(ws.path());
+        assert_ne!(added, renamed);
+
+        fs::remove_dir_all(ws.datasets_dir().join("dogs")).unwrap();
+        assert_eq!(Workspace::fingerprint(ws.path()), before, "back to the empty state");
+    }
+
+    #[test]
+    fn explore_stats_are_cached_until_dataset_changes() {
+        let tmp = TempWorkspace::new("stats");
+        let ws = &tmp.0;
+        let staging = tmp.staging_with(&[("data.yaml", "names: ['cat']\n"), ("train/labels/a.txt", "0 0.5 0.5 0.2 0.2\n")]);
+        fs::create_dir_all(staging.join("train/images")).unwrap();
+        image::RgbImage::new(64, 32).save(staging.join("train/images/a.png")).unwrap();
+        ws.save_output(&staging, &new_output("cats"), Lineage::new("import", &[]), &Silent).unwrap();
+
+        let stats = ws.explore_stats(1, false, &Silent).unwrap();
+        assert_eq!((stats.image_count, stats.label_count), (1, 1));
+        assert_eq!(stats.image_sizes[0].width, 64);
+
+        // A doctored cache entry is served while dataset.toml is unchanged...
+        let cache = ws.path().join(".cache/stats/1.json");
+        let text = fs::read_to_string(&cache).unwrap().replace("\"image_count\":1", "\"image_count\":999");
+        fs::write(&cache, text).unwrap();
+        assert_eq!(ws.explore_stats(1, false, &Silent).unwrap().image_count, 999);
+        // ...and replaced on refresh.
+        assert_eq!(ws.explore_stats(1, true, &Silent).unwrap().image_count, 1);
+        assert!(ws.explore_stats(7, false, &Silent).is_err(), "unknown id");
+    }
+
+    #[test]
     fn download_future_is_send() {
         // Compile-time check: servers can run downloads on their own tasks.
         fn assert_send<T: Send>(_: &T) {}
@@ -651,14 +749,5 @@ mod tests {
         let opts = DownloadOptions { format: "coco".into(), ..Default::default() };
         let future = ws.download("https://example.com", &opts, Arc::new(Silent));
         assert_send(&future);
-    }
-
-    #[test]
-    fn validates_dataset_names() {
-        assert!(validate_dataset_name("cats-v2").is_ok());
-        assert!(validate_dataset_name("").is_err());
-        assert!(validate_dataset_name(" cats").is_err());
-        assert!(validate_dataset_name("a/b").is_err());
-        assert!(validate_dataset_name("..").is_err());
     }
 }

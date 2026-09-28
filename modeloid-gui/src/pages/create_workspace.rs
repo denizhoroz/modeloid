@@ -1,7 +1,8 @@
 use dioxus::prelude::*;
 
 use crate::api::error_message;
-use crate::api::workspace::{create_workspace, pick_folder, validate_workspace_name};
+use crate::api::dialogs::{pick_folder, DialogPurpose};
+use crate::api::workspace::{create_workspace, validate_workspace_name};
 use crate::components::{Icon, IconName};
 use crate::routes::Route;
 use crate::state::use_workspace;
@@ -41,7 +42,7 @@ pub fn CreateWorkspace() -> Element {
 
     let choose_folder = move |_| async move {
         picking.set(true);
-        match pick_folder("Choose where to create the workspace".into()).await {
+        match pick_folder("Choose where to create the workspace".into(), DialogPurpose::Workspace).await {
             Ok(Some(dir)) => parent.set(Some(dir)),
             Ok(None) => {} // dialog cancelled
             Err(e) => form_error.set(Some(error_message(&e))),

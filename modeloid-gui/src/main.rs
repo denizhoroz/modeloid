@@ -15,6 +15,11 @@ const FAVICON: Asset = asset!("/assets/favicon.ico");
 const MAIN_CSS: Asset = asset!("/assets/main.css");
 
 fn main() {
+    // The server adds plain file routes (dataset images) next to the app.
+    #[cfg(feature = "server")]
+    dioxus::serve(|| async move { Ok(dioxus::server::router(App).merge(api::files::routes())) });
+
+    #[cfg(not(feature = "server"))]
     dioxus::launch(App);
 }
 

@@ -9,18 +9,29 @@ edition = "2021"
 [dependencies]
 dioxus = { version = "0.7.1", features = ["router", "fullstack"] }
 serde = { version = "1.0.229", features = ["derive"] }
+# Shared with the core, builds for the browser too
+modeloid-types = { path = "../modeloid-types" }
 
 # Server only: the server runs on the user's machine, so it can use the filesystem and native dialogs
 modeloid = { path = "../modeloid", optional = true }
 rfd = { version = "0.17.2", optional = true }
 tokio = { version = "1.53.1", features = ["rt", "sync", "time", "macros"], optional = true }
+# Brings native dialogs to the front (see api/dialogs.rs)
+raw-window-handle = { version = "0.6", optional = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", optional = true, features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
+] }
 
 [features]
 default = ["web"]
 web = ["dioxus/web"]
 desktop = ["dioxus/desktop"]
 mobile = ["dioxus/mobile"]
-server = ["dioxus/server", "dep:modeloid", "dep:rfd", "dep:tokio"]
+server = ["dioxus/server", "dep:modeloid", "dep:rfd", "dep:tokio", "dep:raw-window-handle", "dep:windows-sys"]
 
 [dev-dependencies]
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time"] }

@@ -11,7 +11,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::core::{
@@ -54,33 +54,7 @@ impl LabelFormat {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum Split {
-    Train,
-    Val,
-    Test,
-}
-
-impl Split {
-    /// The split a dataset-relative path belongs to, from folder names like `train/` or `valid/`.
-    pub fn of_path(rel: &Path) -> Option<Split> {
-        rel.components().find_map(|c| match c.as_os_str().to_str()?.to_ascii_lowercase().as_str() {
-            "train" => Some(Split::Train),
-            "valid" | "val" | "validation" => Some(Split::Val),
-            "test" => Some(Split::Test),
-            _ => None,
-        })
-    }
-
-    /// Folder name used when writing (Roboflow's names).
-    pub fn dir_name(self) -> &'static str {
-        match self {
-            Split::Train => "train",
-            Split::Val => "valid",
-            Split::Test => "test",
-        }
-    }
-}
+pub use modeloid_types::Split;
 
 /// Axis-aligned box in pixels: top-left corner, width and height.
 #[derive(Debug, Clone, Copy, PartialEq)]

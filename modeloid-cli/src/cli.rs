@@ -7,7 +7,7 @@ use clap::{ Parser, Subcommand, ValueEnum };
 use modeloid::Workspace;
 use modeloid::Dataset;
 use modeloid::DownloadOptions;
-use modeloid::{Error, ImportMode, Service, Settings};
+use modeloid::{Error, ImportMode, Reporter, Service, Settings, Unit};
 
 use crate::progress::TermReporter;
 
@@ -110,6 +110,14 @@ impl From<ServiceArg> for Service {
 enum DatasetCommands {
     /// Create dataset.toml for dataset folders that don't have one
     Scan,
+    /// Show label statistics of a dataset
+    Stats {
+        /// Dataset name or id
+        dataset: String,
+        /// Recompute instead of using cached statistics
+        #[arg(long)]
+        refresh: bool,
+    },
 }
 
 pub struct Cli {
@@ -136,6 +144,7 @@ impl Cli {
             }
             Commands::Import { path, name, move_folder } => cmd_import(&path, name, move_folder),
             Commands::Dataset { command: DatasetCommands::Scan } => cmd_dataset_scan(),
+            Commands::Dataset { command: DatasetCommands::Stats { dataset, refresh } } => cmd_dataset_stats(&dataset, refresh),
             Commands::Settings { command } => cmd_settings(command),
         };
 
@@ -172,6 +181,58 @@ async fn cmd_download(link: &str, opts: DownloadOptions) -> Result<(), Error> {
     let dir = ws.download(link, &opts, Arc::new(TermReporter::new())).await?;
     println!("Dataset saved to {}", dir.display());
 
+    Ok(())
+}
+
+fn cmd_dataset_stats(dataset: &str, refresh: bool) -> Result<(), Error> {
+    let ws = _get_workspace()?;
+    let found = ws
+        .list_datasets()?
+        .into_iter()
+        .find(|(_, d)| d.name() == dataset || d.id().to_string() == dataset)
+        .ok_or_else(|| format!("no dataset named or numbered '{dataset}'"))?;
+    let (_, d) = found;
+
+    let reporter = TermReporter::new();
+    let progress = reporter.start("Reading labels", Unit::Files);
+    let stats = ws.explore_stats(d.id(), refresh, progress.as_ref());
+    progress.finish();
+    let stats = stats?;
+
+    let splits = ["train", "val", "test", "no split"];
+    println!("#{} {} ({})", d.id(), d.name(), d.annotation_format());
+    println!("{} images, {} labels, {} without labels", stats.image_count, stats.label_count, stats.empty_images.iter().sum::<u32>());
+    for (i, name) in splits.iter().enumerate().filter(|(i, _)| stats.images[*i] > 0) {
+        println!("  {name:<9} {:>7} images  {:>6} empty", stats.images[i], stats.empty_images[i]);
+    }
+
+    println!("
+Classes (labels / images):");
+    let mut classes: Vec<_> = stats.classes.iter().filter(|c| c.total_labels() > 0).collect();
+    classes.sort_by_key(|c| std::cmp::Reverse(c.total_labels()));
+    for class in &classes {
+        println!("  {:<24} {:>7} / {:>6}", class.name, class.total_labels(), class.images);
+    }
+    let unused = stats.classes.len() - classes.len();
+    if unused > 0 {
+        println!("  ({unused} classes without labels)");
+    }
+
+    let [small, medium, large] = stats.size_classes;
+    println!("
+Object sizes: {small} small, {medium} medium, {large} large (COCO: <32², <96² px)");
+    if stats.polygon_count > 0 {
+        println!("{} objects have segmentation outlines", stats.polygon_count);
+    }
+    let sizes: Vec<String> = stats.image_sizes.iter().take(5).map(|s| format!("{}x{} ({})", s.width, s.height, s.count)).collect();
+    println!("Image sizes: {}{}", sizes.join(", "), if stats.image_sizes.len() > 5 || stats.other_sizes > 0 { ", ..." } else { "" });
+    if stats.warning_count > 0 {
+        println!("
+{} warnings while reading labels, first ones:", stats.warning_count);
+        for warning in stats.warnings.iter().take(5) {
+            println!("  {warning}");
+        }
+    }
     Ok(())
 }
 

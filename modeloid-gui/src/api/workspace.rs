@@ -38,21 +38,6 @@ pub async fn current_workspace() -> Result<Option<WorkspaceInfo>, ServerFnError>
     Ok(backend::current().and_then(|dir| backend::load(&dir).ok()))
 }
 
-/// Opens a native folder picker. Returns `None` if the user cancels.
-#[post("/api/fs/pick-folder")]
-pub async fn pick_folder(title: String) -> Result<Option<String>, ServerFnError> {
-    let dir = backend::pick_folder(title).await?;
-    Ok(dir.map(|d| d.display().to_string()))
-}
-
-/// Opens the native file dialog on the server machine, limited to
-/// `extensions` (e.g. `["zip"]`). `None` if cancelled.
-#[post("/api/pick-file")]
-pub async fn pick_file(title: String, filter_name: String, extensions: Vec<String>) -> Result<Option<String>, ServerFnError> {
-    let file = backend::pick_file(title, filter_name, extensions).await?;
-    Ok(file.map(|f| f.display().to_string()))
-}
-
 /// Creates `<parent>/<name>/` as a new workspace and opens it.
 #[post("/api/workspace/create")]
 pub async fn create_workspace(
@@ -67,7 +52,8 @@ pub async fn create_workspace(
 /// Returns `None` if the user cancels the dialog.
 #[post("/api/workspace/load")]
 pub async fn load_workspace() -> Result<Option<WorkspaceInfo>, ServerFnError> {
-    let Some(dir) = backend::pick_folder("Choose a workspace folder".into()).await? else {
+    use crate::api::dialogs::{pick_folder_path, DialogPurpose};
+    let Some(dir) = pick_folder_path("Choose a workspace folder".into(), DialogPurpose::Workspace).await? else {
         return Ok(None);
     };
     backend::load(&dir).map(Some).map_err(ServerFnError::new)
@@ -82,7 +68,6 @@ mod backend {
     use std::path::{Path, PathBuf};
     use std::sync::Mutex;
 
-    use dioxus::prelude::ServerFnError;
     use modeloid::Workspace;
 
     use super::{validate_workspace_name, WorkspaceInfo};
@@ -98,25 +83,6 @@ mod backend {
 
     fn set_current(dir: &Path) {
         *CURRENT.lock().unwrap() = Some(dir.to_path_buf());
-    }
-
-    /// Shows the native folder dialog. It blocks, so it runs on a blocking thread.
-    pub async fn pick_folder(title: String) -> Result<Option<PathBuf>, ServerFnError> {
-        tokio::task::spawn_blocking(move || rfd::FileDialog::new().set_title(title).pick_folder())
-            .await
-            .map_err(|e| ServerFnError::new(e.to_string()))
-    }
-
-    pub async fn pick_file(title: String, filter_name: String, extensions: Vec<String>) -> Result<Option<PathBuf>, ServerFnError> {
-        tokio::task::spawn_blocking(move || {
-            let mut dialog = rfd::FileDialog::new().set_title(title);
-            if !extensions.is_empty() {
-                dialog = dialog.add_filter(filter_name, &extensions);
-            }
-            dialog.pick_file()
-        })
-        .await
-        .map_err(|e| ServerFnError::new(e.to_string()))
     }
 
     pub fn create(name: &str, description: &str, parent: &Path) -> Result<WorkspaceInfo, String> {

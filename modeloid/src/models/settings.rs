@@ -4,6 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::BTreeMap,
     env, fs, io,
     path::{Path, PathBuf},
 };
@@ -99,6 +100,10 @@ pub struct Settings {
     huggingface_token: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     kaggle: Option<KaggleCredentials>,
+    /// Folder each kind of file dialog opened in last (e.g. "workspace"), so
+    /// the next one starts there.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    last_folders: BTreeMap<String, PathBuf>,
 }
 
 impl Settings {
@@ -141,6 +146,15 @@ impl Settings {
         self.kaggle.as_ref()
     }
 
+    /// Where the `purpose` dialog should start, if that folder still exists.
+    pub fn last_folder(&self, purpose: &str) -> Option<&Path> {
+        self.last_folders.get(purpose).map(PathBuf::as_path).filter(|p| p.is_dir())
+    }
+
+    pub fn set_last_folder(&mut self, purpose: &str, dir: PathBuf) {
+        self.last_folders.insert(purpose.to_string(), dir);
+    }
+
     /// Saves validated credentials for `service`, or removes them with `None`.
     /// Kaggle takes `kaggle.json` contents or `username:key`.
     pub fn set_credential(&mut self, service: Service, value: Option<&str>) -> Result<(), String> {
@@ -180,33 +194,11 @@ fn checked_key(key: &str) -> Result<String, String> {
     Ok(key.trim().to_string())
 }
 
-/// Checks the shape of an API key or token before saving it.
-pub fn validate_api_key(key: &str) -> Result<(), String> {
-    let key = key.trim();
-    if key.is_empty() {
-        return Err("Paste your API key.".into());
-    }
-    if key.chars().any(char::is_whitespace) {
-        return Err("The key can't contain spaces.".into());
-    }
-    if !(8..=128).contains(&key.len()) {
-        return Err("That doesn't look like an API key. Check you copied all of it.".into());
-    }
-    Ok(())
-}
+pub use modeloid_types::validate_api_key;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn validates_keys() {
-        assert!(validate_api_key("abcDEF1234567890").is_ok());
-        assert!(validate_api_key("  abcDEF1234567890  ").is_ok());
-        assert!(validate_api_key("").is_err());
-        assert!(validate_api_key("abc def 1234").is_err());
-        assert!(validate_api_key("short").is_err());
-    }
 
     #[test]
     fn parses_kaggle_credentials() {
@@ -247,5 +239,18 @@ mod tests {
         assert!(!text.contains("roboflow") && !text.contains("kaggle"));
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn remembers_existing_folders_only() {
+        let mut settings = Settings::default();
+        settings.set_last_folder("import", env::temp_dir());
+        settings.set_last_folder("gone", env::temp_dir().join("modeloid-surely-missing-dir"));
+        assert_eq!(settings.last_folder("import"), Some(env::temp_dir().as_path()));
+        assert_eq!(settings.last_folder("gone"), None);
+        assert_eq!(settings.last_folder("other"), None);
+
+        let text = toml::to_string(&settings).unwrap();
+        assert_eq!(toml::from_str::<Settings>(&text).unwrap(), settings);
     }
 }
