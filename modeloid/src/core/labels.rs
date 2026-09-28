@@ -108,6 +108,10 @@ pub struct LabelSet {
     pub classes: Vec<String>,
     pub images: Vec<ImageLabels>,
     pub warnings: Vec<String>,
+    /// How many classes the dataset's own class list names (YOLO `data.yaml`).
+    /// Ids at or above it are unknown classes. `None` when there's no list to
+    /// check against (COCO and VOC only produce named classes; YOLO without `data.yaml`).
+    pub declared_classes: Option<usize>,
 }
 
 impl LabelSet {
@@ -160,6 +164,7 @@ fn read_yolo(dir: &Path, progress: &dyn Progress) -> io::Result<LabelSet> {
     for path in yamls {
         let names = parse_yaml_names(&read_lossy(path)?);
         if !names.is_empty() {
+            set.declared_classes = Some(names.len());
             set.classes = names;
             break;
         }
@@ -356,7 +361,9 @@ fn read_coco(dir: &Path, progress: &dyn Progress) -> io::Result<LabelSet> {
         }
 
         for ann in &coco.annotations {
-            let (Some(&image), Some(&class)) = (index_of.get(&ann.image_id), class_of.get(&ann.category_id)) else {
+            let Some(&image) = index_of.get(&ann.image_id) else { continue };
+            let Some(&class) = class_of.get(&ann.category_id) else {
+                set.warnings.push(format!("{}: annotation with unknown category {} skipped", path.display(), ann.category_id));
                 continue;
             };
             let polygon = largest_polygon(&ann.segmentation);
@@ -544,6 +551,44 @@ fn escape_xml(text: &str) -> String {
 
 fn unescape_xml(text: &str) -> String {
     text.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&apos;", "'").replace("&amp;", "&")
+}
+
+// ---------- label files without images ----------
+
+/// Label files (or COCO image entries) whose image doesn't exist, as paths
+/// relative to `dir`. Reading skips these silently; Health Check reports them.
+pub fn orphan_labels(dir: &Path, format: LabelFormat) -> io::Result<Vec<PathBuf>> {
+    let files = walk(dir)?;
+    let has_image = |stem_path: &Path| IMAGE_EXTENSIONS.iter().any(|ext| stem_path.with_extension(ext).is_file());
+    let rel = |p: &Path| p.strip_prefix(dir).unwrap_or(p).to_path_buf();
+
+    Ok(match format {
+        LabelFormat::Yolo => files
+            .iter()
+            .filter(|p| extension(p) == "txt")
+            .filter_map(|label| {
+                // Only files in a `labels` folder: other .txt files (READMEs) aren't labels.
+                let parts: Vec<_> = label.components().collect();
+                let at = parts.iter().rposition(|c| c.as_os_str().eq_ignore_ascii_case("labels"))?;
+                let image: PathBuf = parts
+                    .iter()
+                    .enumerate()
+                    .map(|(j, c)| if j == at { "images".as_ref() } else { c.as_os_str() })
+                    .collect();
+                (!has_image(&image)).then(|| rel(label))
+            })
+            .collect(),
+        LabelFormat::Voc => files.iter().filter(|p| extension(p) == "xml" && !has_image(p)).map(|p| rel(p)).collect(),
+        LabelFormat::Coco => {
+            let mut missing = Vec::new();
+            for path in files.iter().filter(|p| extension(p) == "json") {
+                let Ok(coco) = serde_json::from_slice::<CocoFile>(&fs::read(path)?) else { continue };
+                let json_dir = path.parent().unwrap_or(dir);
+                missing.extend(coco.images.iter().map(|i| json_dir.join(&i.file_name)).filter(|f| !f.is_file()).map(|f| rel(&f)));
+            }
+            missing
+        }
+    })
 }
 
 // ---------- shared helpers ----------

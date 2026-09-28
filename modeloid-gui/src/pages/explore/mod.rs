@@ -9,7 +9,7 @@ use dioxus::prelude::*;
 use crate::api::datasets::list_datasets;
 use crate::api::explore::{dataset_stats, GalleryFilter};
 use crate::api::error_message;
-use crate::components::DatasetPicker;
+use crate::components::ChooseDataset;
 use crate::routes::Route;
 use crate::state::{use_datasets_version, use_selected_dataset, use_workspace, use_workspace_checked};
 
@@ -47,24 +47,6 @@ pub fn Explore() -> Element {
                 },
             }
         }
-    }
-}
-
-/// Nothing selected yet: pick here, or click a row in the datasets panel.
-#[component]
-fn ChooseDataset() -> Element {
-    let mut selected = use_selected_dataset();
-    let picked = use_signal(Vec::<u32>::new);
-
-    // The picker's choice becomes the app-wide selection (the panel highlights it too).
-    use_effect(move || {
-        if let Some(id) = picked.read().first() {
-            selected.set(Some(*id));
-        }
-    });
-
-    rsx! {
-        DatasetPicker { title: "Dataset", selected: picked }
     }
 }
 

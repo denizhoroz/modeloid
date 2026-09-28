@@ -13,6 +13,9 @@ use serde::{Deserialize, Serialize};
 pub enum JobKind {
     Download,
     Import,
+    HealthCheck,
+    HealthFix,
+    Rescan,
 }
 
 impl JobKind {
@@ -21,6 +24,9 @@ impl JobKind {
         match self {
             JobKind::Download => "Download",
             JobKind::Import => "Import",
+            JobKind::HealthCheck => "Health Check",
+            JobKind::HealthFix => "Health Check fix",
+            JobKind::Rescan => "Rescan",
         }
     }
 }

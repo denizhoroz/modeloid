@@ -118,6 +118,25 @@ enum DatasetCommands {
         #[arg(long)]
         refresh: bool,
     },
+    /// Rebuild a dataset's dataset.toml from its files
+    Rescan {
+        /// Dataset name or id
+        dataset: String,
+    },
+    /// Check a dataset for broken images, bad boxes and duplicates
+    Check {
+        /// Dataset name or id
+        dataset: String,
+        /// Apply the recommended fixes afterwards
+        #[arg(long)]
+        fix: bool,
+        /// With --fix: name of the fixed copy (default: <dataset>-fixed)
+        #[arg(long)]
+        output: Option<String>,
+        /// With --fix: replace the dataset instead of making a copy
+        #[arg(long, conflicts_with = "output")]
+        overwrite: bool,
+    },
 }
 
 pub struct Cli {
@@ -145,6 +164,10 @@ impl Cli {
             Commands::Import { path, name, move_folder } => cmd_import(&path, name, move_folder),
             Commands::Dataset { command: DatasetCommands::Scan } => cmd_dataset_scan(),
             Commands::Dataset { command: DatasetCommands::Stats { dataset, refresh } } => cmd_dataset_stats(&dataset, refresh),
+            Commands::Dataset { command: DatasetCommands::Rescan { dataset } } => cmd_dataset_rescan(&dataset),
+            Commands::Dataset { command: DatasetCommands::Check { dataset, fix, output, overwrite } } => {
+                cmd_dataset_check(&dataset, fix, output, overwrite)
+            }
             Commands::Settings { command } => cmd_settings(command),
         };
 
@@ -184,14 +207,84 @@ async fn cmd_download(link: &str, opts: DownloadOptions) -> Result<(), Error> {
     Ok(())
 }
 
+/// The dataset with this name or id.
+fn find_dataset(ws: &Workspace, dataset: &str) -> Result<Dataset, Error> {
+    ws.list_datasets()?
+        .into_iter()
+        .map(|(_, d)| d)
+        .find(|d| d.name() == dataset || d.id().to_string() == dataset)
+        .ok_or_else(|| format!("no dataset named or numbered '{dataset}'").into())
+}
+
+fn cmd_dataset_rescan(dataset: &str) -> Result<(), Error> {
+    let ws = _get_workspace()?;
+    let d = find_dataset(&ws, dataset)?;
+    let reporter = TermReporter::new();
+    let progress = reporter.start("Scanning", Unit::Files);
+    let result = ws.rescan_dataset(d.id(), progress.as_ref());
+    progress.finish();
+    let d = result?;
+    println!("#{} {}: {} images, {} labels, {} classes", d.id(), d.name(), d.image_count(), d.label_count(), d.class_names().len());
+    Ok(())
+}
+
+fn cmd_dataset_check(dataset: &str, fix: bool, output: Option<String>, overwrite: bool) -> Result<(), Error> {
+    let ws = _get_workspace()?;
+    let d = find_dataset(&ws, dataset)?;
+    let reporter = TermReporter::new();
+    let report = ws.health_check(d.id(), &reporter)?;
+    let counts = report.counts();
+
+    println!("#{} {}: {} images, {} labels", d.id(), d.name(), report.image_count, report.label_count);
+    let lines = [
+        (counts.corrupt_images, "corrupt or unreadable images"),
+        (counts.size_mismatches, "images whose size differs from their labels"),
+        (counts.orphan_labels, "label files without an image"),
+        (counts.label_warnings, "unreadable label lines"),
+        (counts.degenerate_boxes, "empty or zero-area boxes"),
+        (counts.out_of_bounds, "boxes reaching outside the image"),
+        (counts.unknown_classes, "objects with unknown class ids"),
+        (counts.exact_groups, "groups of identical images"),
+        (counts.near_groups, "groups of look-alike images"),
+        (counts.leak_groups, "duplicate groups spanning splits (leaks)"),
+        (counts.unlabeled_images, "images without labels (can be intentional)"),
+    ];
+    for (count, what) in lines.iter().filter(|(c, _)| *c > 0) {
+        println!("  {count:>6}  {what}");
+    }
+    if counts.problems() == 0 {
+        println!("No problems found.");
+        return Ok(());
+    }
+    if !fix {
+        println!("\nRun again with --fix to apply the recommended fixes.");
+        return Ok(());
+    }
+
+    let fixes = modeloid::core::health::HealthFixes::recommended(&counts);
+    if !fixes.any() {
+        println!("Nothing the recommended fixes can repair automatically.");
+        return Ok(());
+    }
+    let output = if overwrite {
+        modeloid::Output::Overwrite { id: d.id() }
+    } else {
+        modeloid::Output::New { name: output.unwrap_or_else(|| format!("{}-fixed", d.name())) }
+    };
+    let (dir, summary) = ws.apply_health_fixes(d.id(), &fixes, &output, &reporter)?;
+    println!(
+        "Fixed: {} images removed, {} objects dropped, {} boxes clipped. Saved to {}",
+        summary.removed_images,
+        summary.dropped_objects,
+        summary.clipped_objects,
+        dir.display()
+    );
+    Ok(())
+}
+
 fn cmd_dataset_stats(dataset: &str, refresh: bool) -> Result<(), Error> {
     let ws = _get_workspace()?;
-    let found = ws
-        .list_datasets()?
-        .into_iter()
-        .find(|(_, d)| d.name() == dataset || d.id().to_string() == dataset)
-        .ok_or_else(|| format!("no dataset named or numbered '{dataset}'"))?;
-    let (_, d) = found;
+    let d = find_dataset(&ws, dataset)?;
 
     let reporter = TermReporter::new();
     let progress = reporter.start("Reading labels", Unit::Files);

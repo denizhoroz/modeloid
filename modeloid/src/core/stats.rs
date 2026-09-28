@@ -151,6 +151,7 @@ mod tests {
                 image(None, vec![(0, wide)]),
             ],
             warnings: vec!["bad line".into()],
+            declared_classes: Some(2),
         }
     }
 

@@ -265,7 +265,7 @@ pub(crate) fn copy_dir_blocking(src: &Path, dst: &Path, progress: &dyn Progress)
 
 /// Runs `work` over `items` on one thread per core. Threads pull the next item from a shared
 /// counter, so large and small items balance out; the first error stops all workers.
-fn run_parallel<T, S>(
+pub(crate) fn run_parallel<T, S>(
     items: &[T],
     progress: &dyn Progress,
     init: impl Fn() -> Result<S, crate::Error> + Sync,

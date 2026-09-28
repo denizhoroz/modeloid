@@ -113,10 +113,19 @@ impl Dataset {
 
     /// Replaces everything derived from files with fresh `stats` (after a tool
     /// rewrote the folder), keeping id, name, description and the like.
+    /// A more precise format or task name (e.g. "yolov8" from a download) is
+    /// kept when the scanner only finds the same family or nothing.
     pub fn refresh(&mut self, stats: DatasetStats) {
-        self.dataset_type = stats.dataset_type;
+        use crate::core::labels::LabelFormat;
+        if stats.dataset_type != "unknown" {
+            self.dataset_type = stats.dataset_type;
+        }
+        let same_family = LabelFormat::parse(&stats.annotation_format).is_some()
+            && LabelFormat::parse(&stats.annotation_format) == LabelFormat::parse(&self.annotation_format);
+        if stats.annotation_format != "unknown" && !same_family {
+            self.annotation_format = stats.annotation_format;
+        }
         self.image_format = stats.image_format;
-        self.annotation_format = stats.annotation_format;
         self.image_count = stats.image_count;
         self.label_count = stats.label_count;
         self.class_names = stats.class_names;

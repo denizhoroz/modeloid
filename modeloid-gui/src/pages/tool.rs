@@ -4,6 +4,7 @@ use crate::components::{Icon, IconName};
 use crate::nav;
 use crate::pages::download::Download;
 use crate::pages::explore::Explore;
+use crate::pages::health::HealthCheck;
 
 /// Placeholder page for every sidebar tool until each one is implemented.
 #[component]
@@ -21,6 +22,7 @@ pub fn Tool(section: String, tool: String) -> Element {
     match (category.slug, item.slug) {
         ("dataset", "download") => return rsx! { Download {} },
         ("dataset", "explore") => return rsx! { Explore {} },
+        ("dataset", "health-check") => return rsx! { HealthCheck {} },
         _ => {}
     }
 

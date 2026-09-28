@@ -5,6 +5,7 @@ use std::{fs, path::{Path, PathBuf}, sync::Arc};
 
 use crate::core::{
     download::{DownloadOptions, Downloader, Source, SourceInfo},
+    health::{self, FixSummary, HEALTH_VERSION, HealthFixes, HealthReport},
     io,
     labels::{self, LabelFormat, LabelSet},
     progress::{Progress, Reporter, Unit, check_cancel},
@@ -214,8 +215,7 @@ impl Workspace {
         }
 
         let (dir, _) = self.find_dataset(id)?;
-        let meta = fs::metadata(dir.join(DATASET_FILE))?;
-        let stamp = format!("{}-{:?}", meta.len(), meta.modified().ok());
+        let stamp = dataset_stamp(&dir)?;
         let cache = self.path.join(".cache").join("stats").join(format!("{id}.json"));
 
         if !refresh {
@@ -233,6 +233,100 @@ impl Workspace {
         let cached = Cached { version: STATS_VERSION, stamp, stats };
         fs::write(&cache, serde_json::to_vec(&cached)?)?;
         Ok(cached.stats)
+    }
+
+    fn health_cache(&self, id: u32) -> PathBuf {
+        self.path.join(".cache").join("health").join(format!("{id}.json"))
+    }
+
+    /// Runs Health Check on dataset `id` (decodes every image) and caches the
+    /// report in `.cache/health/<id>.json`.
+    pub fn health_check(&self, id: u32, reporter: &dyn Reporter) -> Result<HealthReport, crate::Error> {
+        let (dir, _) = self.find_dataset(id)?;
+        let stamp = dataset_stamp(&dir)?;
+        let reading = reporter.start("Reading labels", Unit::Files);
+        let read = self.read_labels(id, reading.as_ref());
+        reading.finish();
+        let (_, dataset, set) = read?;
+        let format = LabelFormat::parse(dataset.annotation_format()).ok_or("unsupported label format")?;
+        let orphans = labels::orphan_labels(&dir, format)?;
+
+        let checking = reporter.start("Checking images", Unit::Files);
+        let report = health::check(&dir, &set, orphans, stamp, checking.as_ref());
+        checking.finish();
+        let report = report?;
+
+        let cache = self.health_cache(id);
+        fs::create_dir_all(cache.parent().unwrap_or(&self.path))?;
+        fs::write(&cache, serde_json::to_vec(&report)?)?;
+        Ok(report)
+    }
+
+    /// The last Health Check report of dataset `id`, and whether it still
+    /// matches the dataset (its `dataset.toml` unchanged since).
+    pub fn health_report(&self, id: u32) -> Result<Option<(HealthReport, bool)>, crate::Error> {
+        let (dir, _) = self.find_dataset(id)?;
+        let Ok(bytes) = fs::read(self.health_cache(id)) else { return Ok(None) };
+        let Ok(report) = serde_json::from_slice::<HealthReport>(&bytes) else { return Ok(None) };
+        if report.version != HEALTH_VERSION {
+            return Ok(None);
+        }
+        let fresh = report.stamp == dataset_stamp(&dir)?;
+        Ok(Some((report, fresh)))
+    }
+
+    /// Applies Health Check fixes to dataset `id`: its labels are fixed in
+    /// memory, written in the same format to a staging folder, and saved as
+    /// `output`. Needs an up-to-date report. Only images and labels are kept.
+    pub fn apply_health_fixes(
+        &self,
+        id: u32,
+        fixes: &HealthFixes,
+        output: &Output,
+        reporter: &dyn Reporter,
+    ) -> Result<(PathBuf, FixSummary), crate::Error> {
+        let (report, fresh) = self.health_report(id)?.ok_or("run Health Check first")?;
+        if !fresh {
+            return Err("the dataset changed since it was checked; run Health Check again".into());
+        }
+        let reading = reporter.start("Reading labels", Unit::Files);
+        let read = self.read_labels(id, reading.as_ref());
+        reading.finish();
+        let (dir, dataset, mut set) = read?;
+        let format = LabelFormat::parse(dataset.annotation_format()).ok_or("unsupported label format")?;
+
+        let summary = health::apply_fixes(&dir, &mut set, &report, fixes);
+        let staging = self.staging_dir("health-fix")?;
+        let writing = reporter.start("Writing", Unit::Files);
+        let written = labels::write(&set, &staging, format, writing.as_ref());
+        writing.finish();
+        if let Err(e) = written {
+            let _ = fs::remove_dir_all(&staging);
+            return Err(e.into());
+        }
+
+        let lineage = Lineage::new("health-fix", &[&dataset])
+            .with_param("removed_images", summary.removed_images as i64)
+            .with_param("dropped_objects", summary.dropped_objects as i64)
+            .with_param("clipped_objects", summary.clipped_objects as i64)
+            .with_param("fixes", fix_names(fixes));
+        match self.save_output(&staging, output, lineage, reporter) {
+            Ok(dir) => Ok((dir, summary)),
+            Err(e) => {
+                let _ = fs::remove_dir_all(&staging);
+                Err(e)
+            }
+        }
+    }
+
+    /// Rebuilds dataset `id`'s `dataset.toml` from its files (after manual
+    /// edits), keeping its id, name, description and history.
+    pub fn rescan_dataset(&self, id: u32, progress: &dyn Progress) -> Result<Dataset, crate::Error> {
+        let (dir, mut dataset) = self.find_dataset(id)?;
+        let stats = scan_dataset(&dir, progress)?;
+        dataset.refresh(stats);
+        dataset.save_to_dir(&dir)?;
+        Ok(dataset)
     }
 
     /// Where previews of dataset `id`'s images are cached.
@@ -511,6 +605,30 @@ impl Workspace {
         dataset.save_to_dir(dir)?;
         Ok(dataset)
     }
+}
+
+/// Changes whenever the dataset's `dataset.toml` does; cache key for derived data.
+fn dataset_stamp(dir: &Path) -> Result<String, crate::Error> {
+    let meta = fs::metadata(dir.join(DATASET_FILE))?;
+    Ok(format!("{}-{:?}", meta.len(), meta.modified().ok()))
+}
+
+/// Names of the chosen fixes, for the lineage record.
+fn fix_names(fixes: &HealthFixes) -> Vec<String> {
+    [
+        (fixes.remove_corrupt, "remove_corrupt"),
+        (fixes.drop_degenerate, "drop_degenerate"),
+        (fixes.clip_out_of_bounds, "clip_out_of_bounds"),
+        (fixes.drop_unknown_classes, "drop_unknown_classes"),
+        (fixes.remove_leaks, "remove_leaks"),
+        (fixes.remove_exact_duplicates, "remove_exact_duplicates"),
+        (fixes.remove_near_duplicates, "remove_near_duplicates"),
+        (fixes.remove_unlabeled, "remove_unlabeled"),
+    ]
+    .into_iter()
+    .filter(|(on, _)| *on)
+    .map(|(_, name)| name.to_string())
+    .collect()
 }
 
 /// Sortable, file-name-safe time stamp for temporary folders.

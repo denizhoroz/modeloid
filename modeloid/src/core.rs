@@ -1,4 +1,5 @@
 pub mod download;
+pub mod health;
 pub mod io;
 pub mod labels;
 pub mod progress;
