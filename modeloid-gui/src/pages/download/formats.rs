@@ -44,7 +44,7 @@ pub fn FormatSection(selected: Signal<String>, custom: Signal<String>, error: Op
             h2 { id: "download-options-title", class: "section-card-title", "Download options" }
 
             div { class: "field",
-                label { class: "field-label", r#for: "download-format", "Format" }
+                label { class: "field-label", r#for: "download-format", "Roboflow export format" }
                 select {
                     id: "download-format",
                     class: "input select",
@@ -60,7 +60,7 @@ pub fn FormatSection(selected: Signal<String>, custom: Signal<String>, error: Op
                     option { value: OTHER, selected: is_other, "Other…" }
                 }
                 if !is_other {
-                    p { class: "field-hint", "Annotation format the dataset is exported in." }
+                    p { class: "field-hint", "Annotation format Roboflow exports the dataset in. Other sources download as they are." }
                 }
             }
 

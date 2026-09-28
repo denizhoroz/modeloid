@@ -5,13 +5,51 @@
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
-/// What the UI may know about a stored API key.
+/// A service with saved credentials (mirrors the core's `Service`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ServiceId {
+    Roboflow,
+    Kaggle,
+    HuggingFace,
+}
+
+impl ServiceId {
+    pub const ALL: [ServiceId; 3] = [ServiceId::Roboflow, ServiceId::Kaggle, ServiceId::HuggingFace];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ServiceId::Roboflow => "Roboflow",
+            ServiceId::Kaggle => "Kaggle",
+            ServiceId::HuggingFace => "Hugging Face",
+        }
+    }
+
+    /// Name of the credential, e.g. "Roboflow API key".
+    pub fn credential(self) -> &'static str {
+        match self {
+            ServiceId::Roboflow => "Roboflow API key",
+            ServiceId::Kaggle => "Kaggle API credentials",
+            ServiceId::HuggingFace => "Hugging Face token",
+        }
+    }
+
+    /// Short, URL-safe id for element ids.
+    pub fn slug(self) -> &'static str {
+        match self {
+            ServiceId::Roboflow => "roboflow",
+            ServiceId::Kaggle => "kaggle",
+            ServiceId::HuggingFace => "huggingface",
+        }
+    }
+}
+
+/// What the UI may know about stored credentials.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct KeyStatus {
-    /// Last 4 characters of the saved key, if one is saved.
+    /// Last 4 characters of a saved key, or the saved Kaggle username.
     pub saved_hint: Option<String>,
-    /// No key saved, but the matching environment variable is set.
-    pub from_env: bool,
+    /// Nothing saved, but this is used instead, e.g. "ROBOFLOW_API_KEY env var".
+    pub fallback: Option<String>,
     /// Where the settings file lives, shown to the user.
     pub settings_path: String,
 }
@@ -32,21 +70,38 @@ pub fn validate_api_key(key: &str) -> Result<(), String> {
     Ok(())
 }
 
-#[get("/api/settings/roboflow-key")]
-pub async fn roboflow_key_status() -> Result<KeyStatus, ServerFnError> {
-    backend::roboflow_status(&backend::settings_path()?).map_err(ServerFnError::new)
+/// Quick form check; the server parses Kaggle credentials fully.
+pub fn validate_credential(service: ServiceId, value: &str) -> Result<(), String> {
+    let value = value.trim();
+    match service {
+        ServiceId::Kaggle if value.starts_with('{') => {
+            if value.contains("\"username\"") && value.contains("\"key\"") {
+                Ok(())
+            } else {
+                Err("That isn't a valid kaggle.json. It needs \"username\" and \"key\".".into())
+            }
+        }
+        ServiceId::Kaggle => match value.split_once(':') {
+            Some((user, key)) if !user.trim().is_empty() => validate_api_key(key),
+            _ => Err("Paste the contents of kaggle.json, or username:key.".into()),
+        },
+        _ => validate_api_key(value),
+    }
 }
 
-#[post("/api/settings/roboflow-key")]
-pub async fn save_roboflow_key(key: String) -> Result<KeyStatus, ServerFnError> {
-    let path = backend::settings_path()?;
-    backend::set_roboflow_key(&path, Some(key)).map_err(ServerFnError::new)
+#[post("/api/settings/credentials/status")]
+pub async fn credential_status(service: ServiceId) -> Result<KeyStatus, ServerFnError> {
+    backend::status(&backend::settings_path()?, service).map_err(ServerFnError::new)
 }
 
-#[post("/api/settings/roboflow-key/remove")]
-pub async fn remove_roboflow_key() -> Result<KeyStatus, ServerFnError> {
-    let path = backend::settings_path()?;
-    backend::set_roboflow_key(&path, None).map_err(ServerFnError::new)
+#[post("/api/settings/credentials/save")]
+pub async fn save_credential(service: ServiceId, value: String) -> Result<KeyStatus, ServerFnError> {
+    backend::set(&backend::settings_path()?, service, Some(value)).map_err(ServerFnError::new)
+}
+
+#[post("/api/settings/credentials/remove")]
+pub async fn remove_credential(service: ServiceId) -> Result<KeyStatus, ServerFnError> {
+    backend::set(&backend::settings_path()?, service, None).map_err(ServerFnError::new)
 }
 
 #[cfg(feature = "server")]
@@ -54,9 +109,17 @@ mod backend {
     use std::path::{Path, PathBuf};
 
     use dioxus::prelude::ServerFnError;
-    use modeloid::{Settings, ROBOFLOW_KEY_ENV};
+    use modeloid::{Service, Settings};
 
-    use super::KeyStatus;
+    use super::{KeyStatus, ServiceId};
+
+    fn core(service: ServiceId) -> Service {
+        match service {
+            ServiceId::Roboflow => Service::Roboflow,
+            ServiceId::Kaggle => Service::Kaggle,
+            ServiceId::HuggingFace => Service::HuggingFace,
+        }
+    }
 
     pub fn settings_path() -> Result<PathBuf, ServerFnError> {
         Settings::default_path().ok_or_else(|| ServerFnError::new("Couldn't find a config folder on this computer."))
@@ -66,30 +129,26 @@ mod backend {
         Settings::load(path).map_err(|e| format!("Couldn't read the settings: {e}"))
     }
 
-    pub fn roboflow_status(path: &Path) -> Result<KeyStatus, String> {
-        let settings = load(path)?;
-        let key = settings.roboflow_api_key();
+    pub fn status(path: &Path, service: ServiceId) -> Result<KeyStatus, String> {
+        let saved_hint = load(path)?.credential_hint(core(service));
         Ok(KeyStatus {
-            saved_hint: key.map(|k| {
-                let tail: Vec<char> = k.chars().rev().take(4).collect();
-                tail.into_iter().rev().collect()
-            }),
-            from_env: key.is_none() && std::env::var_os(ROBOFLOW_KEY_ENV).is_some(),
+            fallback: if saved_hint.is_none() { core(service).fallback() } else { None },
+            saved_hint,
             settings_path: path.display().to_string(),
         })
     }
 
-    pub fn set_roboflow_key(path: &Path, key: Option<String>) -> Result<KeyStatus, String> {
+    pub fn set(path: &Path, service: ServiceId, value: Option<String>) -> Result<KeyStatus, String> {
         let mut settings = load(path)?;
-        settings.set_roboflow_api_key(key.as_deref())?;
+        settings.set_credential(core(service), value.as_deref())?;
         settings.save(path).map_err(|e| format!("Couldn't save the settings: {e}"))?;
-        roboflow_status(path)
+        status(path, service)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::validate_api_key;
+    use super::*;
 
     #[test]
     fn validates_keys() {
@@ -99,11 +158,20 @@ mod tests {
         assert!(validate_api_key("abc def 1234").is_err());
         assert!(validate_api_key("short").is_err());
     }
+
+    #[test]
+    fn validates_kaggle_credentials() {
+        assert!(validate_credential(ServiceId::Kaggle, "deniz:0123456789abcdef").is_ok());
+        assert!(validate_credential(ServiceId::Kaggle, r#"{"username":"deniz","key":"0123456789abcdef"}"#).is_ok());
+        assert!(validate_credential(ServiceId::Kaggle, "0123456789abcdef").is_err());
+        assert!(validate_credential(ServiceId::Kaggle, r#"{"username":"deniz"}"#).is_err());
+        assert!(validate_credential(ServiceId::HuggingFace, "hf_0123456789abcdef").is_ok());
+    }
 }
 
 #[cfg(all(test, feature = "server"))]
 mod server_tests {
-    use super::backend;
+    use super::{backend, ServiceId};
 
     #[test]
     fn save_status_remove() {
@@ -111,19 +179,21 @@ mod server_tests {
         let _ = std::fs::remove_dir_all(&dir);
         let path = dir.join("nested").join("settings.toml");
 
-        assert_eq!(backend::roboflow_status(&path).unwrap().saved_hint, None);
+        assert_eq!(backend::status(&path, ServiceId::Roboflow).unwrap().saved_hint, None);
 
-        let status = backend::set_roboflow_key(&path, Some(" abcdefgh1234 ".into())).unwrap();
+        let status = backend::set(&path, ServiceId::Roboflow, Some(" abcdefgh1234 ".into())).unwrap();
         assert_eq!(status.saved_hint.as_deref(), Some("1234"));
-        assert!(!status.from_env);
-        let text = std::fs::read_to_string(&path).unwrap();
-        assert!(text.contains("roboflow_api_key = \"abcdefgh1234\""));
+        assert_eq!(status.fallback, None);
 
-        assert!(backend::set_roboflow_key(&path, Some("bad key".into())).is_err());
+        let status = backend::set(&path, ServiceId::Kaggle, Some("deniz:0123456789abcdef".into())).unwrap();
+        assert_eq!(status.saved_hint.as_deref(), Some("deniz"));
 
-        let status = backend::set_roboflow_key(&path, None).unwrap();
+        assert!(backend::set(&path, ServiceId::HuggingFace, Some("bad key".into())).is_err());
+
+        let status = backend::set(&path, ServiceId::Roboflow, None).unwrap();
         assert_eq!(status.saved_hint, None);
-        assert!(!std::fs::read_to_string(&path).unwrap().contains("roboflow"));
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("roboflow") && text.contains("deniz"));
 
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -195,7 +195,22 @@ button {
     border-bottom: 1px solid var(--color-border);
 }
 
-.datasets-panel-header .section-card-title {
+.datasets-panel-header /* Header with a trailing action button: title and meta stay together on the left */
+.section-card-header:has(> .button-sm) {
+    justify-content: flex-start;
+}
+
+.section-card-header > .button-sm {
+    margin-left: auto;
+}
+
+.button.button-sm {
+    height: 22px;
+    padding: 0 var(--space-2);
+    font-size: var(--text-xs);
+}
+
+.section-card-title {
     flex: 1;
 }
 
@@ -888,6 +903,16 @@ a.workspace-button {
         color var(--duration) var(--ease-out);
 }
 
+/* Page-level tabs (Download | Import) */
+.segmented-tabs {
+    margin-bottom: var(--space-3);
+}
+
+.segmented-tabs .segmented-option {
+    padding: 0 var(--space-4);
+    font-size: var(--text-sm);
+}
+
 .segmented-option:hover {
     color: var(--color-fg);
 }
@@ -920,7 +945,7 @@ a.workspace-button {
     color: var(--color-fg);
 }
 
-/* Radio cards (FolderSelect) */
+/* Radio / checkbox cards (DatasetPicker, OutputSelect, Import) */
 .choice-list {
     display: flex;
     flex-direction: column;
@@ -1108,6 +1133,14 @@ fieldset.section-card:disabled {
     color: var(--color-danger-fg);
 }
 
+.is-cancelled .status-pill {
+    border-style: dashed;
+}
+
+.is-cancelled .progress-link {
+    color: var(--color-fg-muted);
+}
+
 .progress-link {
     min-width: 0;
     overflow: hidden;
@@ -1190,10 +1223,34 @@ fieldset.section-card:disabled {
 }
 
 .settings-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
     padding: var(--space-3);
     border: 1px solid var(--color-border-strong);
     border-radius: var(--radius-md);
     background: var(--color-surface);
+}
+
+.settings-card > .field + .field {
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--color-border);
+}
+
+/* Import: pick button + chosen path on one line */
+.folder-pick-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+}
+
+.picked-path {
+    min-width: 0;
+    overflow: hidden;
+    font-size: var(--text-xs);
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .folder-picker {
@@ -1339,5 +1396,11 @@ fieldset.section-card:disabled {
     *::before,
     *::after {
         transition-duration: 0ms !important;
+    }
+}
+
+@media (max-width: 767px) {
+    .button.button-sm {
+        height: var(--control-height);
     }
 }

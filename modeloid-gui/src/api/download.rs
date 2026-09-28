@@ -1,9 +1,23 @@
-//! Dataset downloads: one job item per link, run by `api::jobs`.
+//! Dataset downloads (Roboflow, Kaggle, Hugging Face, direct zip links): one
+//! job item per link, run by `api::jobs`.
 //! The page starts a job, then long-polls `job_status(JobKind::Download)`.
 
 use dioxus::prelude::*;
 
 use crate::api::jobs::Job;
+use crate::api::settings::ServiceId;
+
+/// The service a link downloads from, if it needs credentials. A quick check
+/// for the form; the server parses links properly.
+pub fn link_service(link: &str) -> Option<ServiceId> {
+    let rest = link.trim().split_once("://").map_or(link, |(_, r)| r).to_ascii_lowercase();
+    let host = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    match host {
+        "universe.roboflow.com" | "app.roboflow.com" => Some(ServiceId::Roboflow),
+        "kaggle.com" | "www.kaggle.com" => Some(ServiceId::Kaggle),
+        _ => None,
+    }
+}
 
 /// Link lines that don't look like URLs, as (line number, text). Empty lines are ignored.
 pub fn invalid_links(text: &str) -> Vec<(usize, String)> {
@@ -21,22 +35,15 @@ pub fn parse_links(text: &str) -> Vec<String> {
     text.lines().map(str::trim).filter(|l| !l.is_empty()).map(String::from).collect()
 }
 
-/// Starts downloading `links` in order. `target` is the parent folder for the
-/// datasets; `None` means the workspace's `datasets/` folder.
+/// Starts downloading `links` in order into the workspace's `datasets/` folder.
 #[post("/api/download/start")]
-pub async fn start_download(
-    links: Vec<String>,
-    format: String,
-    target: Option<String>,
-) -> Result<Job, ServerFnError> {
-    backend::start(links, format, target).map_err(ServerFnError::new)
+pub async fn start_download(links: Vec<String>, format: String) -> Result<Job, ServerFnError> {
+    backend::start(links, format).map_err(ServerFnError::new)
 }
 
 #[cfg(feature = "server")]
 mod backend {
-    use std::path::PathBuf;
-
-    use modeloid::{DownloadOptions, Workspace};
+    use modeloid::{Settings, Source, Workspace};
 
     use crate::api::jobs::{self, Job, JobKind};
     use crate::api::workspace;
@@ -53,7 +60,7 @@ mod backend {
         }
     }
 
-    pub fn start(links: Vec<String>, format: String, target: Option<String>) -> Result<Job, String> {
+    pub fn start(links: Vec<String>, format: String) -> Result<Job, String> {
         let links: Vec<String> = links.iter().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect();
         if links.is_empty() {
             return Err("Enter at least one link.".into());
@@ -63,24 +70,19 @@ mod backend {
         }
         let format = format.trim().to_lowercase();
         validate_format(&format)?;
+        // Catch malformed links now instead of as failed items.
+        for (i, link) in links.iter().enumerate() {
+            Source::from_link(link).map_err(|e| {
+                if links.len() == 1 { format!("{e}.") } else { format!("Link {}: {e}.", i + 1) }
+            })?;
+        }
 
         let dir = workspace::current_dir().ok_or("Load or create a workspace first.")?;
         let ws = Workspace::load_from_dir(&dir).map_err(|e| format!("Couldn't open the workspace: {e}"))?;
-        let target = match target {
-            Some(t) => {
-                let t = PathBuf::from(t);
-                if !t.is_dir() {
-                    return Err(format!("{} isn't a folder. Choose another target.", t.display()));
-                }
-                t
-            }
-            None => ws.datasets_dir(),
-        };
-
-        let opts = DownloadOptions { api_key: modeloid::saved_roboflow_api_key(), format };
+        let opts = Settings::load_default().download_options(format);
         jobs::start(JobKind::Download, links.clone(), move |ctx| {
             let link = &links[ctx.index()];
-            ctx.block_on(ws.download_to(link, &opts, &target, ctx.reporter()))
+            ctx.block_on(ws.download(link, &opts, ctx.reporter()))
                 .map(|dir| Some(dir.display().to_string()))
                 .map_err(|e| e.to_string())
         })
@@ -104,6 +106,16 @@ mod backend {
 #[cfg(test)]
 mod tests {
     use super::{invalid_links, parse_links};
+
+    #[test]
+    fn finds_link_services() {
+        use super::link_service;
+        use crate::api::settings::ServiceId;
+        assert_eq!(link_service("https://universe.roboflow.com/a/b"), Some(ServiceId::Roboflow));
+        assert_eq!(link_service("https://www.kaggle.com/datasets/a/b"), Some(ServiceId::Kaggle));
+        assert_eq!(link_service("https://huggingface.co/datasets/a/b"), None);
+        assert_eq!(link_service("https://example.com/kaggle.com"), None);
+    }
 
     #[test]
     fn parses_link_lines() {

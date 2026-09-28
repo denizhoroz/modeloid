@@ -6,10 +6,27 @@ use std::{fs, path::{Path, PathBuf}, sync::Arc};
 use crate::core::{
     download::{DownloadOptions, Downloader, Source, SourceInfo},
     io,
-    progress::{Reporter, Unit},
+    progress::{Reporter, Unit, check_cancel},
     scan::scan_dataset,
 };
 use crate::models::dataset::{DATASET_FILE, Dataset, Lineage};
+
+/// How `Workspace::import_dir` brings a folder in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImportMode {
+    Copy,
+    /// Moves the folder; fast on the same drive, and the original is gone.
+    Move,
+}
+
+impl ImportMode {
+    pub fn name(self) -> &'static str {
+        match self {
+            ImportMode::Copy => "copy",
+            ImportMode::Move => "move",
+        }
+    }
+}
 
 /// Where a tool's result goes.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -277,30 +294,19 @@ impl Workspace {
         Ok(dirs)
     }
 
-    /// Downloads a dataset into the workspace's `datasets/` folder.
+    /// Downloads a dataset into `datasets/<name>`. Staging happens in the
+    /// workspace's `.cache/tmp`.
     pub async fn download(
         &self,
         link: &str,
         opts: &DownloadOptions,
         reporter: Arc<dyn Reporter>,
     ) -> Result<PathBuf, crate::Error> {
-        self.download_to(link, opts, &self.datasets_dir(), reporter).await
-    }
-
-    /// Downloads a dataset into `target/<name>`. Staging still happens in the
-    /// workspace's `.cache/tmp`, and the dataset id comes from this workspace.
-    pub async fn download_to(
-        &self,
-        link: &str,
-        opts: &DownloadOptions,
-        target: &Path,
-        reporter: Arc<dyn Reporter>,
-    ) -> Result<PathBuf, crate::Error> {
         let downloader = Downloader::new(reporter.clone())?;
         let (source, info) = downloader.inspect(Source::from_link(link)?, opts).await?;
         let name = source.name(opts);
 
-        let final_dir = target.join(&name);
+        let final_dir = self.datasets_dir().join(&name);
         if final_dir.exists() {
             return Err(format!("dataset already exists: {}", final_dir.display()).into());
         }
@@ -309,10 +315,13 @@ impl Workspace {
         tokio::fs::create_dir_all(&tmp_dir).await?;
         let archive = tmp_dir.join(format!("{name}.zip"));
         let extract_dir = tmp_dir.join(&name);
+        let _ = tokio::fs::remove_dir_all(&extract_dir).await; // leftovers of an earlier failed run
 
         let result: Result<(), crate::Error> = async {
-            Self::fetch_into(&downloader, &source, opts, &archive, &extract_dir, reporter.as_ref()).await?;
-            self.describe_download(&extract_dir, &name, link, &info, opts, reporter.as_ref()).await?;
+            downloader.fetch(&source, opts, &archive, &extract_dir).await?;
+            check_cancel(reporter.is_cancelled())?;
+            self.describe_download(&extract_dir, &name, link, &source, &info, opts, reporter.as_ref()).await?;
+            check_cancel(reporter.is_cancelled())?;
             io::move_dir(&extract_dir, &final_dir, reporter.clone()).await
         }
         .await;
@@ -326,17 +335,91 @@ impl Workspace {
         result.map(|_| final_dir)
     }
 
-    async fn fetch_into(
-        downloader: &Downloader,
-        source: &Source,
-        opts: &DownloadOptions,
-        archive: &Path,
-        extract_dir: &Path,
-        reporter: &dyn Reporter,
-    ) -> Result<(), crate::Error> {
-        let url = downloader.resolve(source, opts).await?;
-        downloader.download_file(&url, archive).await?;
-        io::extract_zip(archive, extract_dir, reporter).await?;
+    /// Imports the dataset folder `src` as `datasets/<name>`, copying it or
+    /// moving it. A move is undone if the import fails.
+    pub fn import_dir(&self, src: &Path, name: &str, mode: ImportMode, reporter: &dyn Reporter) -> Result<PathBuf, crate::Error> {
+        if !src.is_dir() {
+            return Err(format!("{} isn't a folder", src.display()).into());
+        }
+        // Canonical paths only for comparing; the record keeps the readable one.
+        let src = std::path::absolute(src)?;
+        let canonical = src.canonicalize()?;
+        let workspace = self.path.canonicalize()?;
+        if workspace.starts_with(&canonical) {
+            return Err("that folder contains this workspace; pick the dataset folder itself".into());
+        }
+        if canonical.starts_with(workspace.join("datasets")) {
+            return Err("that folder is already in this workspace's datasets folder".into());
+        }
+        self.check_new_name(name)?;
+
+        let staging = self.staging_dir("import")?;
+        let placed = match mode {
+            ImportMode::Copy => {
+                let progress = reporter.start("Copying", Unit::Files);
+                let result = io::copy_dir_blocking(&src, &staging, progress.as_ref());
+                progress.finish();
+                result
+            }
+            ImportMode::Move => {
+                fs::remove_dir(&staging)?;
+                io::move_dir_blocking(&src, &staging, reporter)
+            }
+        };
+        if let Err(e) = placed {
+            let _ = fs::remove_dir_all(&staging);
+            return Err(e);
+        }
+
+        let lineage = Lineage::new("import", &[])
+            .with_param("source", src.display().to_string())
+            .with_param("mode", mode.name());
+        self.save_output(&staging, &Output::New { name: name.to_string() }, lineage, reporter)
+            .inspect_err(|_| match mode {
+                ImportMode::Copy => {
+                    let _ = fs::remove_dir_all(&staging);
+                }
+                ImportMode::Move => {
+                    let _ = io::move_dir_blocking(&staging, &src, reporter);
+                }
+            })
+    }
+
+    /// Imports a dataset zip as `datasets/<name>`. A single top-level folder
+    /// inside the archive is unwrapped.
+    pub fn import_zip(&self, zip: &Path, name: &str, reporter: &dyn Reporter) -> Result<PathBuf, crate::Error> {
+        if !zip.is_file() {
+            return Err(format!("{} isn't a file", zip.display()).into());
+        }
+        if !io::is_zip(zip)? {
+            return Err(format!("{} isn't a zip file", zip.display()).into());
+        }
+        self.check_new_name(name)?;
+
+        let staging = self.staging_dir("import")?;
+        let result = (|| {
+            let progress = reporter.start("Extracting", Unit::Files);
+            let extracted = io::extract_zip_blocking(zip, &staging, progress.as_ref());
+            progress.finish();
+            extracted?;
+            io::unwrap_single_dir(&staging)?;
+            check_cancel(reporter.is_cancelled())?;
+
+            let source = std::path::absolute(zip).unwrap_or_else(|_| zip.to_path_buf());
+            let lineage = Lineage::new("import", &[]).with_param("source", source.display().to_string());
+            self.save_output(&staging, &Output::New { name: name.to_string() }, lineage, reporter)
+        })();
+        if result.is_err() {
+            let _ = fs::remove_dir_all(&staging);
+        }
+        result
+    }
+
+    fn check_new_name(&self, name: &str) -> Result<(), crate::Error> {
+        validate_dataset_name(name)?;
+        if self.datasets_dir().join(name).exists() {
+            return Err(format!("a dataset folder named '{name}' already exists").into());
+        }
         Ok(())
     }
 
@@ -346,6 +429,7 @@ impl Workspace {
         dir: &Path,
         name: &str,
         link: &str,
+        source: &Source,
         info: &SourceInfo,
         opts: &DownloadOptions,
         reporter: &dyn Reporter,
@@ -360,7 +444,10 @@ impl Workspace {
         .await??;
 
         let mut dataset = Dataset::from_stats(self.next_dataset_id()?, name.to_string(), stats);
-        dataset.set_annotation_format(opts.format.clone());
+        // Roboflow knows the exact export format (e.g. "yolov8"); others keep the scanner's guess.
+        if matches!(source, Source::Roboflow { .. }) {
+            dataset.set_annotation_format(opts.format.clone());
+        }
         if !info.dataset_type.is_empty() {
             dataset.set_dataset_type(info.dataset_type.clone());
         }
@@ -469,13 +556,100 @@ mod tests {
         assert_eq!(fs::read_dir(ws.tmp_dir()).unwrap().count(), 0, "staging and backup are gone");
     }
 
+    fn yolo_folder(dir: &Path) {
+        for (rel, contents) in YOLO {
+            let path = dir.join(rel);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, contents).unwrap();
+        }
+    }
+
+    #[test]
+    fn imports_folder_by_copy_and_move() {
+        let tmp = TempWorkspace::new("import-dir");
+        let ws = &tmp.0;
+        let src = ws.path().join("outside-src");
+        yolo_folder(&src);
+
+        let dir = ws.import_dir(&src, "cats", ImportMode::Copy, &Silent).unwrap();
+        assert!(src.join("data.yaml").is_file(), "copy keeps the source");
+        let saved = Dataset::load_from_dir(&dir).unwrap();
+        assert_eq!((saved.name(), saved.image_count()), ("cats", 1));
+        let lineage = saved.lineage().unwrap();
+        assert_eq!((lineage.operation.as_str(), lineage.params["mode"].as_str()), ("import", Some("copy")));
+
+        assert!(ws.import_dir(&src, "cats", ImportMode::Copy, &Silent).is_err(), "name taken");
+        assert!(ws.import_dir(ws.path(), "whole", ImportMode::Copy, &Silent).is_err(), "contains workspace");
+        assert!(ws.import_dir(&dir, "again", ImportMode::Copy, &Silent).is_err(), "already inside");
+
+        ws.import_dir(&src, "cats-moved", ImportMode::Move, &Silent).unwrap();
+        assert!(!src.exists(), "move takes the source");
+        assert!(ws.datasets_dir().join("cats-moved/train/images/a.jpg").is_file());
+        assert_eq!(fs::read_dir(ws.tmp_dir()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn imports_zip_and_unwraps_single_folder() {
+        use std::io::Write;
+        let tmp = TempWorkspace::new("import-zip");
+        let ws = &tmp.0;
+        let zip_path = ws.path().join("cats.zip");
+        let mut zip = zip::ZipWriter::new(fs::File::create(&zip_path).unwrap());
+        for (rel, contents) in YOLO {
+            zip.start_file(format!("cats-export/{rel}"), zip::write::SimpleFileOptions::default()).unwrap();
+            zip.write_all(contents.as_bytes()).unwrap();
+        }
+        zip.finish().unwrap();
+
+        let dir = ws.import_zip(&zip_path, "cats", &Silent).unwrap();
+        assert!(dir.join("data.yaml").is_file(), "top folder unwrapped");
+        assert_eq!(Dataset::load_from_dir(&dir).unwrap().image_count(), 1);
+
+        let not_zip = ws.path().join("notes.txt");
+        fs::write(&not_zip, "hello").unwrap();
+        assert!(ws.import_zip(&not_zip, "notes", &Silent).is_err());
+        assert_eq!(fs::read_dir(ws.tmp_dir()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn cancelled_import_cleans_up() {
+        struct Cancelling;
+        impl Reporter for Cancelling {
+            fn start(&self, _: &'static str, _: Unit) -> Box<dyn crate::Progress> {
+                Box::new(CancelledProgress)
+            }
+            fn message(&self, _: &str) {}
+            fn is_cancelled(&self) -> bool {
+                true
+            }
+        }
+        struct CancelledProgress;
+        impl crate::Progress for CancelledProgress {
+            fn set_total(&self, _: u64) {}
+            fn add(&self, _: u64) {}
+            fn finish(&self) {}
+            fn is_cancelled(&self) -> bool {
+                true
+            }
+        }
+
+        let tmp = TempWorkspace::new("import-cancel");
+        let ws = &tmp.0;
+        let src = ws.path().join("outside-src");
+        yolo_folder(&src);
+        let err = ws.import_dir(&src, "cats", ImportMode::Copy, &Cancelling).unwrap_err();
+        assert!(err.downcast_ref::<crate::Cancelled>().is_some(), "{err}");
+        assert!(!ws.datasets_dir().join("cats").exists());
+        assert_eq!(fs::read_dir(ws.tmp_dir()).unwrap().count(), 0);
+    }
+
     #[test]
     fn download_future_is_send() {
         // Compile-time check: servers can run downloads on their own tasks.
         fn assert_send<T: Send>(_: &T) {}
         let ws = Workspace::new("x".into(), PathBuf::from("."));
-        let opts = DownloadOptions { api_key: None, format: "coco".into() };
-        let future = ws.download_to("https://example.com", &opts, Path::new("."), Arc::new(Silent));
+        let opts = DownloadOptions { format: "coco".into(), ..Default::default() };
+        let future = ws.download("https://example.com", &opts, Arc::new(Silent));
         assert_send(&future);
     }
 

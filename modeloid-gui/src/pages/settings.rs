@@ -1,6 +1,7 @@
 use dioxus::prelude::*;
 
-use crate::components::RoboflowKeyField;
+use crate::api::settings::ServiceId;
+use crate::components::CredentialField;
 
 #[component]
 pub fn Settings() -> Element {
@@ -11,9 +12,13 @@ pub fn Settings() -> Element {
 
             section { class: "settings-section", aria_labelledby: "settings-api-keys",
                 h2 { id: "settings-api-keys", class: "settings-section-title", "API Keys" }
-                p { class: "settings-section-lead", "Keys for the services Modeloid downloads from." }
+                p { class: "settings-section-lead",
+                    "Keys for the services Modeloid downloads from. Stored on this computer in your user config folder, shared with the command line tool."
+                }
                 div { class: "settings-card",
-                    RoboflowKeyField {}
+                    for service in ServiceId::ALL {
+                        CredentialField { key: "{service.slug()}", service }
+                    }
                 }
             }
         }

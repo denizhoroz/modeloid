@@ -7,7 +7,10 @@ use std::{
 use serde_json::Value;
 
 use crate::{
-    core::{labels::Split, progress::Progress},
+    core::{
+        labels::Split,
+        progress::{Cancelled, Progress},
+    },
     models::dataset::DATASET_FILE,
 };
 
@@ -58,6 +61,9 @@ pub fn scan_dataset(dir: &Path, progress: &dyn Progress) -> io::Result<DatasetSt
             }
             stats.size_bytes += meta.len();
             progress.add(1);
+            if progress.is_cancelled() {
+                return Err(io::Error::other(Cancelled));
+            }
 
             let rel = path.strip_prefix(dir).unwrap_or(&path);
             let ext = extension(&path);

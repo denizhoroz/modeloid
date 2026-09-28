@@ -1,40 +1,75 @@
-//! Dataset Manager > Download.
+//! Dataset Manager > Download & Import: download from online sources, or
+//! import a dataset folder / zip from this computer.
 
 mod formats;
+mod import;
 mod links;
 
 use dioxus::prelude::*;
 
-use crate::api::download::start_download;
+use crate::api::download::{link_service, parse_links, start_download};
 use crate::api::jobs::JobKind;
 use crate::api::error_message;
-use crate::api::settings::{roboflow_key_status, KeyStatus};
-use crate::components::{set_if_newer, use_job, FolderChoice, FolderSelect, JobProgress};
+use crate::api::settings::{credential_status, KeyStatus, ServiceId};
+use crate::components::{set_if_newer, use_job, JobProgress};
 use crate::routes::Route;
 use crate::state::{use_workspace, use_workspace_checked};
 use crate::util::plural;
 
 use formats::{FormatSection, DEFAULT_FORMAT, OTHER};
+use import::ImportForm;
 use links::{collect_links, LinkMode, LinksSection};
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Tab {
+    Download,
+    Import,
+}
 
 #[component]
 pub fn Download() -> Element {
     let workspace = use_workspace();
     let checked = use_workspace_checked();
+    let mut tab = use_signal(|| Tab::Download);
 
     rsx! {
         document::Title { "Download & Import · Modeloid" }
         div { class: "page",
             p { class: "page-eyebrow", "Dataset Manager" }
             h1 { "Download & Import" }
-            p { class: "page-lead", "Download datasets from Roboflow into your workspace." }
+            p { class: "page-lead",
+                "Download datasets from Roboflow, Kaggle, Hugging Face or a zip link, or import one from this computer."
+            }
 
             match workspace() {
-                Some(info) => rsx! { DownloadForm { datasets_path: info.datasets_path } },
+                Some(info) => rsx! {
+                    div { class: "segmented segmented-tabs", role: "tablist", aria_label: "Download or import",
+                        for (value, label, id) in [(Tab::Download, "Download", "download"), (Tab::Import, "Import", "import")] {
+                            button {
+                                key: "{id}",
+                                id: "tab-{id}",
+                                class: if tab() == value { "segmented-option is-selected" } else { "segmented-option" },
+                                r#type: "button",
+                                role: "tab",
+                                aria_selected: if tab() == value { "true" } else { "false" },
+                                aria_controls: "panel-{id}",
+                                onclick: move |_| tab.set(value),
+                                "{label}"
+                            }
+                        }
+                    }
+                    // Both stay mounted so typed input and progress survive switching tabs.
+                    div { id: "panel-download", role: "tabpanel", aria_labelledby: "tab-download", hidden: tab() != Tab::Download,
+                        DownloadForm { datasets_path: info.datasets_path.clone() }
+                    }
+                    div { id: "panel-import", role: "tabpanel", aria_labelledby: "tab-import", hidden: tab() != Tab::Import,
+                        ImportForm { datasets_path: info.datasets_path }
+                    }
+                },
                 None if !checked() => rsx! {}, // still asking the server
                 None => rsx! {
                     div { class: "notice",
-                        p { "Downloads go into a workspace. Create one, or load one from the sidebar." }
+                        p { "Datasets go into a workspace. Create one, or load one from the sidebar." }
                         Link { class: "button", to: Route::CreateWorkspace {}, "Create workspace" }
                     }
                 },
@@ -50,26 +85,34 @@ fn DownloadForm(datasets_path: String) -> Element {
     let batch = use_signal(String::new);
     let format = use_signal(|| DEFAULT_FORMAT.to_string());
     let custom_format = use_signal(String::new);
-    let target = use_signal(FolderChoice::default);
 
     let mut submitted = use_signal(|| false);
     let mut starting = use_signal(|| false);
     let mut form_error = use_signal(|| None::<String>);
 
     let (job, poll_error) = use_job(JobKind::Download);
-    let key_status = use_resource(roboflow_key_status);
+    let roboflow = use_resource(move || credential_status(ServiceId::Roboflow));
+    let kaggle = use_resource(move || credential_status(ServiceId::Kaggle));
 
     let running = job.read().as_ref().is_some_and(|j| !j.finished);
     let format_value = move || if format() == OTHER { custom_format().trim().to_lowercase() } else { format() };
     let format_error = (submitted() && format() == OTHER && format_value().is_empty())
         .then(|| "Enter a format name.".to_string());
-    let target_error = if submitted() { target.read().resolve().err() } else { None };
     let link_count = collect_links(mode(), &single.read(), &batch.read()).map_or(0, |l| l.len());
 
-    let no_key = matches!(
-        &*key_status.read(),
-        Some(Ok(KeyStatus { saved_hint: None, from_env: false, .. }))
-    );
+    // Services the typed links need that have no credentials anywhere.
+    let typed = match mode() {
+        LinkMode::Single => vec![single().trim().to_string()],
+        LinkMode::Batch => parse_links(&batch.read()),
+    };
+    let missing: Vec<ServiceId> = [(ServiceId::Roboflow, roboflow), (ServiceId::Kaggle, kaggle)]
+        .into_iter()
+        .filter(|(service, _)| typed.iter().any(|l| link_service(l) == Some(*service)))
+        .filter(|(_, status)| {
+            matches!(&*status.read(), Some(Ok(KeyStatus { saved_hint: None, fallback: None, .. })))
+        })
+        .map(|(service, _)| service)
+        .collect();
 
     let submit = move |e: FormEvent| async move {
         e.prevent_default();
@@ -81,10 +124,9 @@ fn DownloadForm(datasets_path: String) -> Element {
         if format.is_empty() {
             return;
         }
-        let Ok(target) = target.read().resolve() else { return };
 
         starting.set(true);
-        match start_download(links, format, target).await {
+        match start_download(links, format).await {
             Ok(started) => {
                 set_if_newer(job, started);
                 submitted.set(false);
@@ -95,23 +137,18 @@ fn DownloadForm(datasets_path: String) -> Element {
     };
 
     rsx! {
-        if no_key {
-            div { class: "notice notice-warning", role: "status",
-                p { "No Roboflow API key is set, so downloads will fail." }
-                Link { class: "button button-secondary", to: Route::Settings {}, "Add key in Settings" }
+        for service in missing {
+            div { key: "{service.slug()}", class: "notice notice-warning", role: "status",
+                p { "No {service.credential()} set, so {service.label()} downloads will fail." }
+                Link { class: "button button-secondary", to: Route::Settings {}, "Add in Settings" }
             }
         }
 
         form { class: "section-stack", novalidate: true, onsubmit: submit,
             LinksSection { mode, single, batch, show_errors: submitted() }
             FormatSection { selected: format, custom: custom_format, error: format_error }
-            FolderSelect {
-                title: "Target folder",
-                default_label: "Workspace datasets folder",
-                default_path: datasets_path,
-                choice: target,
-                dialog_title: "Choose where to save the datasets",
-                error: target_error,
+            p { class: "field-hint", "Datasets are saved in the workspace's datasets folder: "
+                code { "{datasets_path}" }
             }
 
             if let Some(message) = form_error() {

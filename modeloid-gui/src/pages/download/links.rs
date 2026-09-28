@@ -89,7 +89,7 @@ pub fn LinksSection(
                             r#type: "url",
                             spellcheck: "false",
                             autocomplete: "off",
-                            placeholder: "https://universe.roboflow.com/<workspace>/<project>/dataset/<version>",
+                            placeholder: "https://universe.roboflow.com/<workspace>/<project>",
                             aria_invalid: if show_errors && single_error.is_some() { "true" },
                             aria_describedby: "download-link-help",
                             value: "{single}",
@@ -101,7 +101,7 @@ pub fn LinksSection(
                             },
                             _ => rsx! {
                                 p { id: "download-link-help", class: "field-hint",
-                                    "Roboflow Universe or app link. Without a version, the latest one is used."
+                                    "Roboflow, Kaggle or Hugging Face dataset link, or a direct link to a .zip file. Roboflow links without a version use the latest one."
                                 }
                             },
                         }
@@ -131,7 +131,7 @@ pub fn LinksSection(
                             },
                             _ => rsx! {
                                 p { id: "download-links-help", class: "field-hint",
-                                    "One link per line. They download one after another."
+                                    "One link per line, any supported source. They download one after another."
                                 }
                             },
                         }

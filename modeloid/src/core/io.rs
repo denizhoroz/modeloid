@@ -15,7 +15,7 @@ use reqwest::{StatusCode, header};
 use tokio::sync::mpsc;
 use zip::ZipArchive;
 
-use crate::core::progress::{Progress, Reporter, Unit};
+use crate::core::progress::{Progress, Reporter, Unit, check_cancel};
 
 /// Files at least this large are fetched over several connections when the server supports ranges.
 const PARALLEL_THRESHOLD: u64 = 16 * 1024 * 1024;
@@ -35,12 +35,16 @@ pub async fn download(
     dest: &Path,
     reporter: &dyn Reporter,
 ) -> Result<u64, crate::Error> {
-    let part = dest.with_extension("part");
     let progress = reporter.start("Downloading", Unit::Bytes);
-
-    let result = download_to(client, url, &part, progress.as_ref()).await;
+    let result = download_into(client, url, dest, progress.as_ref()).await;
     progress.finish();
+    result
+}
 
+/// Like `download`, but counts bytes on `progress` instead of starting its own task.
+pub async fn download_into(client: &reqwest::Client, url: &str, dest: &Path, progress: &dyn Progress) -> Result<u64, crate::Error> {
+    let part = dest.with_extension("part");
+    let result = download_to(client, url, &part, progress).await;
     match result {
         Ok(size) => {
             tokio::fs::rename(&part, dest).await?;
@@ -129,6 +133,7 @@ async fn stream_to_file(
     let mut stream = resp.bytes_stream();
     let network: Result<(), crate::Error> = async {
         while let Some(chunk) = stream.next().await {
+            check_cancel(progress.is_cancelled())?;
             let chunk = chunk?;
             received += chunk.len() as u64;
             progress.add(chunk.len() as u64);
@@ -171,7 +176,7 @@ pub async fn extract_zip(archive: &Path, out: &Path, reporter: &dyn Reporter) ->
         .await?
 }
 
-fn extract_zip_blocking(archive: &Path, out: &Path, progress: &dyn Progress) -> Result<(), crate::Error> {
+pub(crate) fn extract_zip_blocking(archive: &Path, out: &Path, progress: &dyn Progress) -> Result<(), crate::Error> {
     // Create the whole directory tree up front so workers only ever create files.
     let mut zip = ZipArchive::new(File::open(archive)?)?;
     let mut dirs = HashSet::new();
@@ -235,7 +240,7 @@ pub(crate) fn move_dir_blocking(src: &Path, dst: &Path, reporter: &dyn Reporter)
     }
 }
 
-fn copy_dir_blocking(src: &Path, dst: &Path, progress: &dyn Progress) -> Result<(), crate::Error> {
+pub(crate) fn copy_dir_blocking(src: &Path, dst: &Path, progress: &dyn Progress) -> Result<(), crate::Error> {
     let mut files = Vec::new();
     let mut pending = vec![src.to_path_buf()];
     while let Some(dir) = pending.pop() {
@@ -276,6 +281,7 @@ where
     let worker = || -> Result<(), crate::Error> {
         let mut state = init()?;
         while !failed.load(Relaxed) {
+            check_cancel(progress.is_cancelled())?;
             let Some(item) = items.get(next.fetch_add(1, Relaxed)) else { break };
             work(&mut state, item)?;
             progress.add(1);
@@ -338,6 +344,33 @@ fn content_range_total(headers: &header::HeaderMap) -> Option<u64> {
 
 fn buf_size(len: u64) -> usize {
     usize::try_from(len).map_or(FILE_BUF, |len| len.clamp(1, FILE_BUF))
+}
+
+/// Whether `path` starts with a zip signature.
+pub fn is_zip(path: &Path) -> io::Result<bool> {
+    let mut magic = [0u8; 4];
+    let mut file = File::open(path)?;
+    let read = io::Read::read(&mut file, &mut magic)?;
+    Ok(read == 4 && (magic == *b"PK\x03\x04" || magic == *b"PK\x05\x06"))
+}
+
+/// Archives often wrap everything in one folder (`cats/train/...`). If `dir`
+/// holds just one folder (ignoring macOS `__MACOSX` junk), moves its contents up.
+pub fn unwrap_single_dir(dir: &Path) -> io::Result<()> {
+    let _ = fs::remove_dir_all(dir.join("__MACOSX"));
+    let entries: Vec<_> = fs::read_dir(dir)?.collect::<Result<_, _>>()?;
+    let [only] = entries.as_slice() else { return Ok(()) };
+    if !only.file_type()?.is_dir() {
+        return Ok(());
+    }
+    // Renamed first, in case it contains an entry with its own name.
+    let inner = dir.join(".modeloid-unwrap");
+    fs::rename(only.path(), &inner)?;
+    for entry in fs::read_dir(&inner)? {
+        let entry = entry?;
+        fs::rename(entry.path(), dir.join(entry.file_name()))?;
+    }
+    fs::remove_dir(inner)
 }
 
 fn parallelism() -> usize {

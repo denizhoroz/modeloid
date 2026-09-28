@@ -191,6 +191,9 @@
       max-width: 96rem;
     }
   }
+  .contents {
+    display: contents;
+  }
   .hidden {
     display: none;
   }

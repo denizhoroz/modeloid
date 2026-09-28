@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum JobKind {
     Download,
+    Import,
 }
 
 impl JobKind {
@@ -19,6 +20,7 @@ impl JobKind {
     pub fn label(self) -> &'static str {
         match self {
             JobKind::Download => "Download",
+            JobKind::Import => "Import",
         }
     }
 }
@@ -29,6 +31,8 @@ pub enum ItemStatus {
     Running,
     Done,
     Failed,
+    /// Stopped by the user, or skipped because the job was cancelled.
+    Cancelled,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -67,6 +71,8 @@ pub struct Job {
     pub version: u64,
     pub items: Vec<JobItem>,
     pub finished: bool,
+    /// The user asked to stop; the running item stops at its next check.
+    pub cancel_requested: bool,
 }
 
 /// Returns the latest `kind` job once its `version` is newer than `since`,
@@ -74,6 +80,13 @@ pub struct Job {
 #[post("/api/jobs/status")]
 pub async fn job_status(kind: JobKind, since: u64) -> Result<Option<Job>, ServerFnError> {
     Ok(backend::status(kind, since).await)
+}
+
+/// Asks the running `kind` job to stop. The current item stops at its next
+/// check (and cleans up), queued items are skipped.
+#[post("/api/jobs/cancel")]
+pub async fn cancel_job(kind: JobKind) -> Result<(), ServerFnError> {
+    backend::cancel(kind).map_err(ServerFnError::new)
 }
 
 #[cfg(feature = "server")]
@@ -84,7 +97,7 @@ mod backend {
     use std::collections::HashMap;
     use std::future::Future;
     use std::pin::pin;
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::{Arc, LazyLock, Mutex};
     use std::time::Duration;
 
@@ -111,6 +124,8 @@ mod backend {
     struct Shared {
         job: Mutex<Job>,
         changed: Notify,
+        /// Checked by the core through `Reporter`/`Progress::is_cancelled`.
+        cancelled: AtomicBool,
     }
 
     impl Shared {
@@ -134,6 +149,17 @@ mod backend {
         fn finished(&self) -> bool {
             self.job.lock().unwrap().finished
         }
+
+        fn is_cancelled(&self) -> bool {
+            self.cancelled.load(Ordering::Relaxed)
+        }
+    }
+
+    pub fn cancel(kind: JobKind) -> Result<(), String> {
+        let shared = latest(kind).filter(|s| !s.finished()).ok_or("Nothing is running.")?;
+        shared.cancelled.store(true, Ordering::Relaxed);
+        shared.update(|job| job.cancel_requested = true);
+        Ok(())
     }
 
     fn latest(kind: JobKind) -> Option<Arc<Shared>> {
@@ -193,8 +219,10 @@ mod backend {
                     })
                     .collect(),
                 finished: false,
+                cancel_requested: false,
             }),
             changed: Notify::new(),
+            cancelled: AtomicBool::new(false),
         });
 
         let runtime = Handle::try_current().map_err(|e| format!("Couldn't start the job: {e}"))?;
@@ -210,8 +238,13 @@ mod backend {
     fn run(job: &Arc<Shared>, runtime: &Handle, work: &mut dyn FnMut(&ItemCtx) -> Result<Option<String>, String>) {
         let count = job.snapshot().items.len();
         for index in 0..count {
+            if job.is_cancelled() {
+                job.item(index, |item| item.status = ItemStatus::Cancelled);
+                continue;
+            }
             job.item(index, |item| item.status = ItemStatus::Running);
             let result = work(&ItemCtx { job, index, runtime });
+            let cancelled = job.is_cancelled();
             job.item(index, |item| {
                 item.stage = None;
                 match result {
@@ -219,6 +252,8 @@ mod backend {
                         item.status = ItemStatus::Done;
                         item.output = output;
                     }
+                    // Whatever error cancelling caused, it's a cancel to the user.
+                    Err(_) if cancelled => item.status = ItemStatus::Cancelled,
                     Err(e) => {
                         item.status = ItemStatus::Failed;
                         item.error = Some(e);
@@ -287,6 +322,10 @@ mod backend {
         fn message(&self, msg: &str) {
             self.job.item(self.index, |item| item.message = Some(msg.to_string()));
         }
+
+        fn is_cancelled(&self) -> bool {
+            self.job.is_cancelled()
+        }
     }
 
     struct JobProgress {
@@ -320,6 +359,10 @@ mod backend {
                 }
             });
         }
+
+        fn is_cancelled(&self) -> bool {
+            self.job.is_cancelled()
+        }
     }
 }
 
@@ -327,6 +370,9 @@ mod backend {
 mod tests {
     use super::*;
 
+    use super::backend::cancel;
+
+    // One test: jobs are global and only one runs at a time.
     #[tokio::test(flavor = "multi_thread")]
     async fn runs_items_in_order_and_reports() {
         let labels = vec!["ok".to_string(), "fails".to_string()];
@@ -358,5 +404,28 @@ mod tests {
         assert_eq!(job.items[0].message.as_deref(), Some("item 0"));
         assert_eq!(job.items[1].status, ItemStatus::Failed);
         assert_eq!(job.items[1].error.as_deref(), Some("boom"));
+
+        // Cancelling stops the running item (via the reporter) and skips the rest.
+        let labels = vec!["slow".to_string(), "skipped".to_string()];
+        start(JobKind::Import, labels, |ctx| {
+            let reporter = ctx.reporter();
+            while !reporter.is_cancelled() {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            Err("stopped".into())
+        })
+        .unwrap();
+        cancel(JobKind::Import).unwrap();
+        let job = loop {
+            let job = backend::status(JobKind::Import, 0).await.unwrap();
+            if job.finished {
+                break job;
+            }
+        };
+        assert!(job.cancel_requested);
+        assert_eq!(job.items[0].status, ItemStatus::Cancelled);
+        assert_eq!(job.items[0].error, None);
+        assert_eq!(job.items[1].status, ItemStatus::Cancelled);
+        assert!(cancel(JobKind::Import).is_err(), "nothing left to cancel");
     }
 }

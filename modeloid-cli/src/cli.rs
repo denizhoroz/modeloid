@@ -2,12 +2,12 @@
 use std::env;
 use std::path::PathBuf;
 use std::sync::Arc;
-use clap::{ Parser, Subcommand };
+use clap::{ Parser, Subcommand, ValueEnum };
 
 use modeloid::Workspace;
 use modeloid::Dataset;
 use modeloid::DownloadOptions;
-use modeloid::{Error, Settings, ROBOFLOW_KEY_ENV};
+use modeloid::{Error, ImportMode, Service, Settings};
 
 use crate::progress::TermReporter;
 
@@ -33,18 +33,32 @@ enum Commands {
     /// Get current workspace information
     Info,
 
-    /// Download a dataset using a link
+    /// Download a dataset from Roboflow, Kaggle, Hugging Face or a direct zip link
     Download {
         /// URL
         link: String,
 
-        /// API key for the source (falls back to the saved key, then ROBOFLOW_API_KEY)
+        /// Roboflow API key (falls back to the saved key, then ROBOFLOW_API_KEY)
         #[arg(long)]
         api_key: Option<String>,
 
-        /// Export format (e.g. coco, yolov8, voc)
+        /// Roboflow export format (e.g. coco, yolov8, voc)
         #[arg(long, default_value = "coco")]
         format: String,
+    },
+
+    /// Import a local dataset folder or zip file into the workspace
+    Import {
+        /// Folder or .zip file
+        path: PathBuf,
+
+        /// Dataset name (defaults to the folder or zip name)
+        #[arg(long)]
+        name: Option<String>,
+
+        /// Move the folder instead of copying it
+        #[arg(long = "move")]
+        move_folder: bool,
     },
 
     /// Manage datasets in the workspace
@@ -64,12 +78,32 @@ enum Commands {
 enum SettingsCommands {
     /// Show where settings are stored and what is set
     Show,
-    /// Save a Roboflow API key
-    SetRoboflowKey {
-        key: String,
+    /// Save credentials for a service (Kaggle: kaggle.json contents or username:key)
+    Set {
+        service: ServiceArg,
+        value: String,
     },
-    /// Remove the saved Roboflow API key
-    RemoveRoboflowKey,
+    /// Remove saved credentials for a service
+    Remove {
+        service: ServiceArg,
+    },
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum ServiceArg {
+    Roboflow,
+    Kaggle,
+    Huggingface,
+}
+
+impl From<ServiceArg> for Service {
+    fn from(arg: ServiceArg) -> Self {
+        match arg {
+            ServiceArg::Roboflow => Service::Roboflow,
+            ServiceArg::Kaggle => Service::Kaggle,
+            ServiceArg::Huggingface => Service::HuggingFace,
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -94,9 +128,13 @@ impl Cli {
             Commands::Init => cmd_init(),
             Commands::Info => cmd_info(),
             Commands::Download { link, api_key, format } => {
-                let api_key = api_key.or_else(modeloid::saved_roboflow_api_key);
-                cmd_download(&link, DownloadOptions { api_key, format }).await
+                let mut opts = Settings::load_default().download_options(format);
+                if api_key.is_some() {
+                    opts.api_key = api_key;
+                }
+                cmd_download(&link, opts).await
             }
+            Commands::Import { path, name, move_folder } => cmd_import(&path, name, move_folder),
             Commands::Dataset { command: DatasetCommands::Scan } => cmd_dataset_scan(),
             Commands::Settings { command } => cmd_settings(command),
         };
@@ -152,6 +190,28 @@ fn cmd_dataset_scan() -> Result<(), Error> {
 }
 
 
+fn cmd_import(path: &PathBuf, name: Option<String>, move_folder: bool) -> Result<(), Error> {
+    let ws = _get_workspace()?;
+    let name = match name {
+        Some(name) => name,
+        None => path
+            .file_stem()
+            .ok_or("can't take a name from that path, pass --name")?
+            .to_string_lossy()
+            .into_owned(),
+    };
+    let reporter = TermReporter::new();
+    let dir = if path.is_dir() {
+        let mode = if move_folder { ImportMode::Move } else { ImportMode::Copy };
+        ws.import_dir(path, &name, mode, &reporter)?
+    } else {
+        ws.import_zip(path, &name, &reporter)?
+    };
+    println!("Dataset imported to {}", dir.display());
+
+    Ok(())
+}
+
 fn cmd_settings(command: SettingsCommands) -> Result<(), Error> {
     let path = Settings::default_path().ok_or("no config folder on this computer")?;
     let mut settings = Settings::load(&path)?;
@@ -159,24 +219,27 @@ fn cmd_settings(command: SettingsCommands) -> Result<(), Error> {
     match command {
         SettingsCommands::Show => {
             println!("Settings file: {}", path.display());
-            match settings.roboflow_api_key() {
-                Some(key) => {
-                    let tail: String = key.chars().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect();
-                    println!("Roboflow API key: saved, ends in {tail}");
-                }
-                None if env::var_os(ROBOFLOW_KEY_ENV).is_some() => println!("Roboflow API key: from {ROBOFLOW_KEY_ENV}"),
-                None => println!("Roboflow API key: not set"),
+            for service in Service::ALL {
+                let state = match (settings.credential_hint(service), service.fallback()) {
+                    (Some(hint), _) if service == Service::Kaggle => format!("saved for {hint}"),
+                    (Some(hint), _) => format!("saved, ends in {hint}"),
+                    (None, Some(fallback)) => format!("from {fallback}"),
+                    (None, None) => "not set".to_string(),
+                };
+                println!("{}: {state}", service.label());
             }
         }
-        SettingsCommands::SetRoboflowKey { key } => {
-            settings.set_roboflow_api_key(Some(&key))?;
+        SettingsCommands::Set { service, value } => {
+            let service = Service::from(service);
+            settings.set_credential(service, Some(&value))?;
             settings.save(&path)?;
-            println!("Roboflow API key saved to {}", path.display());
+            println!("{} credentials saved to {}", service.label(), path.display());
         }
-        SettingsCommands::RemoveRoboflowKey => {
-            settings.set_roboflow_api_key(None)?;
+        SettingsCommands::Remove { service } => {
+            let service = Service::from(service);
+            settings.set_credential(service, None)?;
             settings.save(&path)?;
-            println!("Roboflow API key removed");
+            println!("{} credentials removed", service.label());
         }
     }
     Ok(())

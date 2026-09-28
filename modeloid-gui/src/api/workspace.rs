@@ -45,6 +45,14 @@ pub async fn pick_folder(title: String) -> Result<Option<String>, ServerFnError>
     Ok(dir.map(|d| d.display().to_string()))
 }
 
+/// Opens the native file dialog on the server machine, limited to
+/// `extensions` (e.g. `["zip"]`). `None` if cancelled.
+#[post("/api/pick-file")]
+pub async fn pick_file(title: String, filter_name: String, extensions: Vec<String>) -> Result<Option<String>, ServerFnError> {
+    let file = backend::pick_file(title, filter_name, extensions).await?;
+    Ok(file.map(|f| f.display().to_string()))
+}
+
 /// Creates `<parent>/<name>/` as a new workspace and opens it.
 #[post("/api/workspace/create")]
 pub async fn create_workspace(
@@ -97,6 +105,18 @@ mod backend {
         tokio::task::spawn_blocking(move || rfd::FileDialog::new().set_title(title).pick_folder())
             .await
             .map_err(|e| ServerFnError::new(e.to_string()))
+    }
+
+    pub async fn pick_file(title: String, filter_name: String, extensions: Vec<String>) -> Result<Option<PathBuf>, ServerFnError> {
+        tokio::task::spawn_blocking(move || {
+            let mut dialog = rfd::FileDialog::new().set_title(title);
+            if !extensions.is_empty() {
+                dialog = dialog.add_filter(filter_name, &extensions);
+            }
+            dialog.pick_file()
+        })
+        .await
+        .map_err(|e| ServerFnError::new(e.to_string()))
     }
 
     pub fn create(name: &str, description: &str, parent: &Path) -> Result<WorkspaceInfo, String> {

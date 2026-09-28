@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 
 use crate::api::error_message;
-use crate::api::jobs::{job_status, ItemStatus, Job, JobItem, JobKind, ProgressUnit, Stage};
+use crate::api::jobs::{cancel_job, job_status, ItemStatus, Job, JobItem, JobKind, ProgressUnit, Stage};
 use crate::state::use_datasets_version;
 use crate::util::{format_bytes, plural};
 
@@ -63,19 +63,39 @@ pub fn JobProgress(
     /// Shown before an item's output, e.g. "Saved to".
     #[props(into, default = "Saved to".to_string())]
     output_label: String,
+    /// Show a Cancel button while the job runs.
+    #[props(default = true)]
+    cancellable: bool,
 ) -> Element {
+    let mut cancel_error = use_signal(|| None::<String>);
     let total = job.items.len();
-    let done = job.items.iter().filter(|i| i.status == ItemStatus::Done).count();
-    let failed = job.items.iter().filter(|i| i.status == ItemStatus::Failed).count();
+    let count = |status| job.items.iter().filter(|i| i.status == status).count();
+    let (done, failed, cancelled) = (count(ItemStatus::Done), count(ItemStatus::Failed), count(ItemStatus::Cancelled));
 
     let summary = if job.finished {
-        match (done, failed) {
-            (_, 0) => format!("Finished: {} {verb}.", plural(done, &noun)),
-            (0, _) => format!("Finished: {} failed.", plural(failed, &noun)),
-            _ => format!("Finished: {done} {verb}, {failed} failed."),
+        let mut parts = Vec::new();
+        if done > 0 || (failed == 0 && cancelled == 0) {
+            parts.push(format!("{} {verb}", plural(done, &noun)));
         }
+        if failed > 0 {
+            parts.push(format!("{failed} failed"));
+        }
+        if cancelled > 0 {
+            parts.push(format!("{cancelled} cancelled"));
+        }
+        format!("Finished: {}.", parts.join(", "))
+    } else if job.cancel_requested {
+        "Cancelling…".to_string()
     } else {
         format!("{} of {total} done{}", done + failed, if failed > 0 { format!(", {failed} failed") } else { String::new() })
+    };
+
+    let kind = job.kind;
+    let cancel = move |_| async move {
+        cancel_error.set(None);
+        if let Err(e) = cancel_job(kind).await {
+            cancel_error.set(Some(error_message(&e)));
+        }
     };
 
     rsx! {
@@ -83,6 +103,18 @@ pub fn JobProgress(
             div { class: "section-card-header",
                 h2 { id: "job-progress-title", class: "section-card-title", "{title}" }
                 p { class: "section-card-meta", aria_live: "polite", "{summary}" }
+                if cancellable && !job.finished {
+                    button {
+                        class: "button button-secondary button-sm",
+                        r#type: "button",
+                        disabled: job.cancel_requested,
+                        onclick: cancel,
+                        "Cancel"
+                    }
+                }
+            }
+            if let Some(message) = cancel_error() {
+                p { class: "field-error", role: "alert", "{message}" }
             }
             ul { class: "progress-list",
                 for (index, item) in job.items.iter().enumerate() {
@@ -100,6 +132,7 @@ fn ProgressRow(item: JobItem, output_label: String) -> Element {
         ItemStatus::Running => ("is-running", item.stage.as_ref().map_or("Starting".into(), |s| s.label.clone())),
         ItemStatus::Done => ("is-done", "Done".to_string()),
         ItemStatus::Failed => ("is-failed", "Failed".to_string()),
+        ItemStatus::Cancelled => ("is-cancelled", "Cancelled".to_string()),
     };
 
     rsx! {
