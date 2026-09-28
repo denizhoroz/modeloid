@@ -67,6 +67,12 @@ enum Commands {
         command: DatasetCommands,
     },
 
+    /// Saved target class lists of the workspace
+    ClassLists {
+        #[command(subcommand)]
+        command: ClassListCommands,
+    },
+
     /// User settings, shared with the GUI
     Settings {
         #[command(subcommand)]
@@ -137,6 +143,62 @@ enum DatasetCommands {
         #[arg(long, conflicts_with = "output")]
         overwrite: bool,
     },
+    /// Rename, merge or drop classes of one dataset
+    Classes {
+        /// Dataset name or id
+        dataset: String,
+        /// Rename or merge: OLD=NEW (NEW may be an existing class). Repeatable
+        #[arg(long, value_name = "OLD=NEW")]
+        rename: Vec<String>,
+        /// Drop a class: NAME drops its boxes, NAME:images drops images containing it. Repeatable
+        #[arg(long, value_name = "NAME[:images]")]
+        drop: Vec<String>,
+        /// Only show the result, don't write anything
+        #[arg(long)]
+        dry_run: bool,
+        /// Name of the new dataset (default: <dataset>-classes)
+        #[arg(long)]
+        output: Option<String>,
+        /// Replace the dataset instead of making a copy
+        #[arg(long, conflicts_with = "output")]
+        overwrite: bool,
+    },
+    /// Merge datasets, matching classes by name (or as a plan file says)
+    Merge {
+        /// Dataset names or ids, in order
+        #[arg(required = true, num_args = 2..)]
+        datasets: Vec<String>,
+        /// Class mapping to use (TOML, as written by --write-plan)
+        #[arg(long)]
+        plan: Option<PathBuf>,
+        /// Write the suggested plan to this file and stop, for editing
+        #[arg(long)]
+        write_plan: Option<PathBuf>,
+        /// Output label format: yolo, coco or voc (default: the first dataset's)
+        #[arg(long)]
+        format: Option<String>,
+        /// Keep each dataset's train/val/test instead of putting everything into train
+        #[arg(long)]
+        keep_splits: bool,
+        /// Only show the result, don't write anything
+        #[arg(long)]
+        dry_run: bool,
+        /// Name of the merged dataset (default: first-second-...)
+        #[arg(long)]
+        output: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum ClassListCommands {
+    /// List saved class lists
+    List,
+    /// Show one class list
+    Show { name: String },
+    /// Save a class list: classes in id order, comma-separated
+    Save { name: String, classes: String },
+    /// Delete a class list
+    Delete { name: String },
 }
 
 pub struct Cli {
@@ -168,6 +230,13 @@ impl Cli {
             Commands::Dataset { command: DatasetCommands::Check { dataset, fix, output, overwrite } } => {
                 cmd_dataset_check(&dataset, fix, output, overwrite)
             }
+            Commands::Dataset { command: DatasetCommands::Classes { dataset, rename, drop, dry_run, output, overwrite } } => {
+                cmd_dataset_classes(&dataset, &rename, &drop, dry_run, output, overwrite)
+            }
+            Commands::Dataset {
+                command: DatasetCommands::Merge { datasets, plan, write_plan, format, keep_splits, dry_run, output },
+            } => cmd_dataset_merge(&datasets, plan, write_plan, format, keep_splits, dry_run, output),
+            Commands::ClassLists { command } => cmd_class_lists(command),
             Commands::Settings { command } => cmd_settings(command),
         };
 
@@ -279,6 +348,197 @@ fn cmd_dataset_check(dataset: &str, fix: bool, output: Option<String>, overwrite
         summary.clipped_objects,
         dir.display()
     );
+    Ok(())
+}
+
+fn cmd_dataset_classes(
+    dataset: &str,
+    renames: &[String],
+    drops: &[String],
+    dry_run: bool,
+    output: Option<String>,
+    overwrite: bool,
+) -> Result<(), Error> {
+    use modeloid::core::classes::{ClassAction, DropMode};
+
+    let ws = _get_workspace()?;
+    let d = find_dataset(&ws, dataset)?;
+    let mut plan = ws.class_merge_suggestion(&[d.id()])?;
+
+    for rename in renames {
+        let (old, new) = rename.split_once('=').ok_or_else(|| format!("--rename takes OLD=NEW, got '{rename}'"))?;
+        let (old, new) = (old.trim(), new.trim());
+        if !plan.targets.iter().any(|t| t == old) {
+            return Err(format!("'{old}' isn't a class of {}", d.name()).into());
+        }
+        // Renaming onto an existing class merges the two.
+        plan.rename_target(old, new);
+        let mut seen = std::collections::HashSet::new();
+        plan.targets.retain(|t| seen.insert(t.clone()));
+    }
+    for drop in drops {
+        let (name, mode) = match drop.split_once(':') {
+            Some((name, "images")) => (name.trim(), DropMode::Images),
+            Some((_, other)) => return Err(format!("--drop takes NAME or NAME:images, got ':{other}'").into()),
+            None => (drop.trim(), DropMode::Boxes),
+        };
+        let sources: Vec<String> = plan
+            .rules
+            .iter()
+            .filter(|r| matches!(&r.action, ClassAction::To(t) if t == name))
+            .map(|r| r.source.clone())
+            .collect();
+        if sources.is_empty() {
+            return Err(format!("'{name}' isn't a class of {}", d.name()).into());
+        }
+        plan.remove_target(name);
+        for source in sources {
+            plan.set_rule(&source, ClassAction::Drop(mode));
+        }
+    }
+
+    let preview = ws.class_merge_preview(&plan)?;
+    print_preview(&plan, &preview);
+    if dry_run || !preview.can_run() {
+        return Ok(());
+    }
+    let output = if overwrite {
+        modeloid::Output::Overwrite { id: d.id() }
+    } else {
+        modeloid::Output::New { name: output.unwrap_or_else(|| format!("{}-classes", d.name())) }
+    };
+    let (dir, summary) = ws.apply_class_merge(&plan, &output, &TermReporter::new())?;
+    println!(
+        "Done: {} images ({} removed), {} objects dropped. Saved to {}",
+        summary.images,
+        summary.removed_images,
+        summary.dropped_objects,
+        dir.display()
+    );
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn cmd_dataset_merge(
+    datasets: &[String],
+    plan_file: Option<PathBuf>,
+    write_plan: Option<PathBuf>,
+    format: Option<String>,
+    keep_splits: bool,
+    dry_run: bool,
+    output: Option<String>,
+) -> Result<(), Error> {
+    use modeloid::core::classes::{MergePlan, SplitMode};
+
+    let ws = _get_workspace()?;
+    let inputs: Vec<Dataset> = datasets.iter().map(|d| find_dataset(&ws, d)).collect::<Result<_, _>>()?;
+    let ids: Vec<u32> = inputs.iter().map(|d| d.id()).collect();
+
+    let mut plan = match plan_file {
+        Some(path) => {
+            let text = std::fs::read_to_string(&path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+            let mut plan: MergePlan = toml::from_str(&text).map_err(|e| format!("invalid plan {}: {e}", path.display()))?;
+            plan.inputs = ids.clone();
+            plan
+        }
+        None => ws.class_merge_suggestion(&ids)?,
+    };
+    if let Some(format) = format {
+        plan.format = format;
+    }
+    if keep_splits {
+        plan.split = SplitMode::Keep;
+    }
+
+    if let Some(path) = write_plan {
+        std::fs::write(&path, toml::to_string(&plan)?)?;
+        println!("Plan written to {}. Edit it, then run with --plan {}", path.display(), path.display());
+        return Ok(());
+    }
+
+    let preview = ws.class_merge_preview(&plan)?;
+    print_preview(&plan, &preview);
+    if dry_run || !preview.can_run() {
+        return Ok(());
+    }
+    let name = output.unwrap_or_else(|| inputs.iter().map(|d| d.name()).collect::<Vec<_>>().join("-"));
+    let (dir, summary) = ws.apply_class_merge(&plan, &modeloid::Output::New { name }, &TermReporter::new())?;
+    println!(
+        "Merged: {} images ({} removed), {} objects dropped. Saved to {}",
+        summary.images,
+        summary.removed_images,
+        summary.dropped_objects,
+        dir.display()
+    );
+    Ok(())
+}
+
+fn print_preview(plan: &modeloid::core::classes::MergePlan, preview: &modeloid::core::classes::MergePreview) {
+    println!("Inputs: {}", preview.input_names.join(", "));
+    println!("Output: {} classes, {} labels, splits {:?}", plan.targets.len(), plan.format, plan.split);
+    for (i, target) in preview.targets.iter().enumerate() {
+        let counts: Vec<String> = target.labels.iter().map(u32::to_string).collect();
+        println!("  {i:>3}  {:<24} {}", target.target, counts.join(" + "));
+    }
+    if preview.dropped_labels > 0 {
+        println!("{} labels dropped", preview.dropped_labels);
+    }
+    if preview.dropped_images > 0 {
+        println!("up to {} images dropped", preview.dropped_images);
+    }
+    let name = |id: u32| {
+        plan.inputs.iter().position(|&i| i == id).and_then(|p| preview.input_names.get(p)).cloned().unwrap_or_else(|| format!("#{id}"))
+    };
+    for missing in &preview.missing_labels {
+        let missing_in: Vec<String> = missing.missing_in.iter().map(|&id| name(id)).collect();
+        println!(
+            "Warning: '{}' isn't labelled in {}; its {} images may contain unlabeled {}",
+            missing.target,
+            missing_in.join(", "),
+            missing.images_at_risk,
+            missing.target
+        );
+    }
+    for target in &preview.empty_targets {
+        println!("Warning: target '{target}' gets no labels");
+    }
+    for (id, class) in &preview.unmapped {
+        println!("Not mapped: '{class}' in {}", name(*id));
+    }
+    for problem in &preview.problems {
+        println!("Problem: {problem}");
+    }
+    if !preview.can_run() {
+        println!("Fix the problems above first (use --write-plan and --plan to edit the mapping).");
+    }
+}
+
+fn cmd_class_lists(command: ClassListCommands) -> Result<(), Error> {
+    use modeloid::core::classes::ClassList;
+
+    let ws = _get_workspace()?;
+    match command {
+        ClassListCommands::List => {
+            for list in ws.class_lists()? {
+                println!("{:<24} {} classes", list.name, list.classes.len());
+            }
+        }
+        ClassListCommands::Show { name } => {
+            let list = ws.class_lists()?.into_iter().find(|l| l.name == name).ok_or_else(|| format!("no class list '{name}'"))?;
+            for (i, class) in list.classes.iter().enumerate() {
+                println!("{i:>3}  {class}");
+            }
+        }
+        ClassListCommands::Save { name, classes } => {
+            let classes: Vec<String> = classes.split(',').map(str::trim).filter(|c| !c.is_empty()).map(String::from).collect();
+            ws.save_class_list(&ClassList { name: name.clone(), classes })?;
+            println!("Saved class list '{name}'");
+        }
+        ClassListCommands::Delete { name } => {
+            ws.delete_class_list(&name)?;
+            println!("Deleted class list '{name}'");
+        }
+    }
     Ok(())
 }
 

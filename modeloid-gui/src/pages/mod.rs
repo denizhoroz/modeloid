@@ -1,3 +1,4 @@
+mod classes;
 mod create_workspace;
 mod download;
 mod explore;

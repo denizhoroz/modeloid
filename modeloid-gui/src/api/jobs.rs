@@ -16,6 +16,7 @@ pub enum JobKind {
     HealthCheck,
     HealthFix,
     Rescan,
+    ClassesMerge,
 }
 
 impl JobKind {
@@ -27,6 +28,7 @@ impl JobKind {
             JobKind::HealthCheck => "Health Check",
             JobKind::HealthFix => "Health Check fix",
             JobKind::Rescan => "Rescan",
+            JobKind::ClassesMerge => "Classes & Merge",
         }
     }
 }

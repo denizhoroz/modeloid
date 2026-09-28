@@ -10,6 +10,7 @@ use crate::api::datasets::OutputTarget;
 use crate::api::jobs::Job;
 
 /// Longest list per finding sent to the page; counts are always complete.
+#[cfg_attr(not(feature = "server"), allow(dead_code))]
 const SHOWN: usize = 200;
 
 /// A report for the page: lists cut to `SHOWN`, full counts, and whether it

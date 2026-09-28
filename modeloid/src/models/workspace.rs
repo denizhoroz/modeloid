@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::{fs, path::{Path, PathBuf}, sync::Arc};
 
 use crate::core::{
+    classes::{self, ClassList, MergePlan, MergePreview, MergeSummary, SplitMode},
     download::{DownloadOptions, Downloader, Source, SourceInfo},
     health::{self, FixSummary, HEALTH_VERSION, HealthFixes, HealthReport},
     io,
@@ -327,6 +328,127 @@ impl Workspace {
         dataset.refresh(stats);
         dataset.save_to_dir(&dir)?;
         Ok(dataset)
+    }
+
+    fn class_lists_dir(&self) -> PathBuf {
+        self.path.join("classes")
+    }
+
+    /// Saved target class lists (presets), by name.
+    pub fn class_lists(&self) -> Result<Vec<ClassList>, crate::Error> {
+        let dir = self.class_lists_dir();
+        let Ok(entries) = fs::read_dir(&dir) else { return Ok(Vec::new()) };
+        let mut lists = Vec::new();
+        for entry in entries {
+            let path = entry?.path();
+            if path.extension().is_some_and(|e| e == "toml") {
+                let text = fs::read_to_string(&path)?;
+                lists.push(toml::from_str::<ClassList>(&text).map_err(|e| format!("invalid {}: {e}", path.display()))?);
+            }
+        }
+        lists.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        Ok(lists)
+    }
+
+    /// Saves (or replaces) a class list as `classes/<name>.toml`.
+    pub fn save_class_list(&self, list: &ClassList) -> Result<(), crate::Error> {
+        validate_dataset_name(&list.name)?;
+        if list.classes.is_empty() {
+            return Err("a class list needs at least one class".into());
+        }
+        fs::create_dir_all(self.class_lists_dir())?;
+        fs::write(self.class_lists_dir().join(format!("{}.toml", list.name)), toml::to_string(list)?)?;
+        Ok(())
+    }
+
+    pub fn delete_class_list(&self, name: &str) -> Result<(), crate::Error> {
+        validate_dataset_name(name)?;
+        fs::remove_file(self.class_lists_dir().join(format!("{name}.toml"))).map_err(|e| format!("cannot delete class list '{name}': {e}"))?;
+        Ok(())
+    }
+
+    /// Name and statistics of each input, for suggestions and previews.
+    fn merge_inputs(&self, ids: &[u32]) -> Result<Vec<(u32, String, ExploreStats)>, crate::Error> {
+        ids.iter()
+            .map(|&id| {
+                let (_, dataset) = self.find_dataset(id)?;
+                Ok((id, dataset.name().to_string(), self.explore_stats(id, false, &crate::Silent)?))
+            })
+            .collect()
+    }
+
+    /// A first class mapping for `ids` (same-looking names joined), writing
+    /// in the first input's format family.
+    pub fn class_merge_suggestion(&self, ids: &[u32]) -> Result<MergePlan, crate::Error> {
+        let inputs = self.merge_inputs(ids)?;
+        let format = match ids.first() {
+            Some(&id) => {
+                let (_, dataset) = self.find_dataset(id)?;
+                LabelFormat::parse(dataset.annotation_format()).unwrap_or(LabelFormat::Yolo).name()
+            }
+            None => LabelFormat::Yolo.name(),
+        };
+        let stats: Vec<classes::InputStats> =
+            inputs.iter().map(|(id, name, stats)| classes::InputStats { id: *id, name, stats }).collect();
+        Ok(classes::suggest(&stats, format))
+    }
+
+    /// What `plan` would produce, from cached statistics.
+    pub fn class_merge_preview(&self, plan: &MergePlan) -> Result<MergePreview, crate::Error> {
+        let inputs = self.merge_inputs(&plan.inputs)?;
+        let stats: Vec<classes::InputStats> =
+            inputs.iter().map(|(id, name, stats)| classes::InputStats { id: *id, name, stats }).collect();
+        Ok(classes::preview(plan, &stats))
+    }
+
+    /// Applies a class mapping to one or more datasets and saves the result
+    /// as `output` (overwrite only with a single input).
+    pub fn apply_class_merge(
+        &self,
+        plan: &MergePlan,
+        output: &Output,
+        reporter: &dyn Reporter,
+    ) -> Result<(PathBuf, MergeSummary), crate::Error> {
+        if matches!(output, Output::Overwrite { .. }) && plan.inputs.len() != 1 {
+            return Err("overwriting works with exactly one input dataset".into());
+        }
+        let format = LabelFormat::parse(&plan.format).ok_or_else(|| format!("unknown output format '{}'", plan.format))?;
+
+        let mut sets = Vec::new();
+        let mut parents = Vec::new();
+        for &id in &plan.inputs {
+            let reading = reporter.start("Reading labels", Unit::Files);
+            let read = self.read_labels(id, reading.as_ref());
+            reading.finish();
+            let (_, dataset, set) = read?;
+            sets.push((id, set));
+            parents.push(dataset);
+        }
+        let (set, summary) = classes::apply(plan, sets)?;
+
+        let staging = self.staging_dir("classes-merge")?;
+        let writing = reporter.start("Writing", Unit::Files);
+        let written = labels::write(&set, &staging, format, writing.as_ref());
+        writing.finish();
+        if let Err(e) = written {
+            let _ = fs::remove_dir_all(&staging);
+            return Err(e.into());
+        }
+
+        let parent_refs: Vec<&Dataset> = parents.iter().collect();
+        let lineage = Lineage::new(if plan.inputs.len() > 1 { "merge" } else { "classes" }, &parent_refs)
+            .with_param("targets", plan.targets.clone())
+            .with_param("format", format.name())
+            .with_param("split", if plan.split == SplitMode::AllTrain { "all-train" } else { "keep" })
+            .with_param("removed_images", summary.removed_images as i64)
+            .with_param("dropped_objects", summary.dropped_objects as i64);
+        match self.save_output(&staging, output, lineage, reporter) {
+            Ok(dir) => Ok((dir, summary)),
+            Err(e) => {
+                let _ = fs::remove_dir_all(&staging);
+                Err(e)
+            }
+        }
     }
 
     /// Where previews of dataset `id`'s images are cached.
@@ -857,6 +979,71 @@ mod tests {
         // ...and replaced on refresh.
         assert_eq!(ws.explore_stats(1, true, &Silent).unwrap().image_count, 1);
         assert!(ws.explore_stats(7, false, &Silent).is_err(), "unknown id");
+    }
+
+    #[test]
+    fn saves_and_deletes_class_lists() {
+        let tmp = TempWorkspace::new("class-lists");
+        let ws = &tmp.0;
+        assert!(ws.class_lists().unwrap().is_empty());
+        let list = ClassList { name: "vehicles".into(), classes: vec!["car".into(), "truck".into()] };
+        ws.save_class_list(&list).unwrap();
+        ws.save_class_list(&ClassList { name: "Animals".into(), classes: vec!["cat".into()] }).unwrap();
+        let lists = ws.class_lists().unwrap();
+        assert_eq!(lists.iter().map(|l| l.name.as_str()).collect::<Vec<_>>(), ["Animals", "vehicles"]);
+        assert_eq!(lists[1], list);
+        assert!(ws.save_class_list(&ClassList { name: "a/b".into(), classes: vec!["x".into()] }).is_err());
+        assert!(ws.save_class_list(&ClassList { name: "empty".into(), classes: vec![] }).is_err());
+        ws.delete_class_list("vehicles").unwrap();
+        assert_eq!(ws.class_lists().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn merges_yolo_and_coco_into_yolo() {
+        use crate::core::classes::{ClassAction, DropMode};
+
+        let tmp = TempWorkspace::new("merge");
+        let ws = &tmp.0;
+        // YOLO: car, person.
+        let yolo = tmp.staging_with(&[
+            ("data.yaml", "names: ['car', 'person']\n"),
+            ("train/labels/a.txt", "0 0.5 0.5 0.2 0.2\n1 0.2 0.2 0.1 0.1\n"),
+        ]);
+        fs::create_dir_all(yolo.join("train/images")).unwrap();
+        image::RgbImage::new(64, 64).save(yolo.join("train/images/a.png")).unwrap();
+        ws.save_output(&yolo, &new_output("street"), Lineage::new("import", &[]), &Silent).unwrap();
+        // COCO: Cars, dog (same file name as the YOLO image).
+        let coco = tmp.staging_with(&[(
+            "valid/_annotations.coco.json",
+            r#"{"images": [{"id": 1, "file_name": "a.png", "width": 64, "height": 64}],
+                "categories": [{"id": 1, "name": "Cars"}, {"id": 2, "name": "dog"}],
+                "annotations": [{"id": 1, "image_id": 1, "category_id": 1, "bbox": [1, 2, 10, 10]},
+                                {"id": 2, "image_id": 1, "category_id": 2, "bbox": [20, 20, 10, 10]}]}"#,
+        )]);
+        image::RgbImage::new(64, 64).save(coco.join("valid/a.png")).unwrap();
+        ws.save_output(&coco, &new_output("pets"), Lineage::new("import", &[]), &Silent).unwrap();
+
+        let mut plan = ws.class_merge_suggestion(&[1, 2]).unwrap();
+        assert_eq!(plan.format, "yolo");
+        assert_eq!(plan.targets, ["car", "person", "dog"]);
+        plan.remove_target("dog");
+        plan.set_rule("dog", ClassAction::Drop(DropMode::Boxes));
+        let preview = ws.class_merge_preview(&plan).unwrap();
+        assert!(preview.can_run(), "{preview:?}");
+        assert_eq!(preview.missing_labels.iter().map(|m| m.target.as_str()).collect::<Vec<_>>(), ["person"]);
+
+        let (dir, summary) = ws.apply_class_merge(&plan, &new_output("street-pets"), &Silent).unwrap();
+        assert_eq!((summary.images, summary.dropped_objects), (2, 1));
+        let merged = Dataset::load_from_dir(&dir).unwrap();
+        assert_eq!((merged.image_count(), merged.label_count()), (2, 3));
+        assert_eq!(merged.class_names(), ["car", "person"]);
+        assert_eq!(merged.lineage().unwrap().parents.len(), 2);
+        // Both images were a.png: the second got a new name in train/.
+        assert!(dir.join("train/images/a.png").is_file() && dir.join("train/images/a_1.png").is_file());
+        let label = fs::read_to_string(dir.join("train/labels/a_1.txt")).unwrap();
+        assert!(label.starts_with("0 "), "Cars mapped to car = 0: {label}");
+
+        assert!(ws.apply_class_merge(&plan, &Output::Overwrite { id: 1 }, &Silent).is_err(), "no overwrite with 2 inputs");
     }
 
     #[test]
