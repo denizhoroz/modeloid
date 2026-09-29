@@ -37,10 +37,10 @@ mod backend {
     use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
 
-    use modeloid::{core::stats, LabelSet, Silent, Workspace};
+    use modeloid::{core::stats, LabelSet, Progress, Silent, Workspace};
 
     use super::{ExploreStats, GalleryFilter, GalleryPage};
-    use crate::api::workspace;
+    use crate::api::{activity, workspace};
 
     /// Labels of the dataset last looked at, so paging and previews don't
     /// re-read every label file. Keyed by workspace, dataset and its toml stamp.
@@ -51,7 +51,7 @@ mod backend {
         Workspace::load_from_dir(&dir).map_err(|e| format!("Couldn't open the workspace: {e}"))
     }
 
-    fn labels(ws: &Workspace, id: u32) -> Result<(PathBuf, Arc<LabelSet>), String> {
+    fn labels(ws: &Workspace, id: u32, progress: &dyn Progress) -> Result<(PathBuf, Arc<LabelSet>), String> {
         let (dir, _) = ws.find_dataset(id).map_err(|e| e.to_string())?;
         let meta = std::fs::metadata(dir.join("dataset.toml")).map_err(|e| e.to_string())?;
         let key = format!("{}|{id}|{}|{:?}", ws.path().display(), meta.len(), meta.modified().ok());
@@ -61,23 +61,32 @@ mod backend {
                 return Ok((dir, set.clone()));
             }
         }
-        let (_, _, set) = ws.read_labels(id, &Silent).map_err(|e| e.to_string())?;
+        let (_, _, set) = ws.read_labels(id, progress).map_err(|e| e.to_string())?;
         let set = Arc::new(set);
         *LABELS.lock().unwrap() = Some((key, set.clone()));
         Ok((dir, set))
     }
 
-    async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
-        tokio::task::spawn_blocking(f).await.map_err(|e| e.to_string())?
+    /// Opens the workspace and names the load after dataset `id`.
+    fn open_for(ctx: &activity::TaskCtx, action: &str, id: u32) -> Result<Workspace, String> {
+        let ws = open()?;
+        if let Ok((_, dataset)) = ws.find_dataset(id) {
+            ctx.set_label(format!("{action} · {}", dataset.name()));
+        }
+        Ok(ws)
     }
 
     pub async fn stats(id: u32, refresh: bool) -> Result<ExploreStats, String> {
-        blocking(move || open()?.explore_stats(id, refresh, &Silent).map_err(|e| e.to_string())).await
+        activity::track("explore-stats", "Reading labels", move |ctx| {
+            let ws = open_for(ctx, "Reading labels", id)?;
+            ws.explore_stats(id, refresh, &ctx.progress()).map_err(|e| e.to_string())
+        })
+        .await
     }
 
     pub async fn gallery(id: u32, filter: GalleryFilter, offset: usize, limit: usize) -> Result<GalleryPage, String> {
-        blocking(move || {
-            let (_, set) = labels(&open()?, id)?;
+        activity::track("explore-gallery", "Loading gallery", move |ctx| {
+            let (_, set) = labels(&open_for(ctx, "Loading gallery", id)?, id, &ctx.progress())?;
             Ok(stats::gallery_page(&set, &filter, offset, limit))
         })
         .await
@@ -87,7 +96,7 @@ mod backend {
     /// cached preview of it. Only files inside the dataset folder are served.
     pub fn image_file(id: u32, index: usize, thumb_size: Option<u32>) -> Result<PathBuf, String> {
         let ws = open()?;
-        let (dir, set) = labels(&ws, id)?;
+        let (dir, set) = labels(&ws, id, &Silent)?;
         let file = &set.images.get(index).ok_or("No such image.")?.file;
         let (dir, file) = (dir.canonicalize().map_err(|e| e.to_string())?, file.canonicalize().map_err(|e| e.to_string())?);
         if !file.starts_with(&dir) {

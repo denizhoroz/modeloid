@@ -10,6 +10,7 @@ mod layout;
 mod output_choice;
 mod resize_handle;
 mod sidebar;
+mod status_bar;
 mod workspace_card;
 
 pub use appearance_settings::AppearanceSettings;
@@ -24,4 +25,5 @@ pub use layout::AppLayout;
 pub use output_choice::{OutputChoice, OutputSelect};
 pub use resize_handle::ResizeHandle;
 pub use sidebar::Sidebar;
+pub use status_bar::StatusBar;
 pub use workspace_card::WorkspaceCard;

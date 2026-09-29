@@ -11,13 +11,19 @@ use crate::api::jobs::Job;
 /// A first mapping for these inputs: same-looking class names joined.
 #[post("/api/classes/suggest")]
 pub async fn class_merge_suggestion(inputs: Vec<u32>) -> Result<MergePlan, ServerFnError> {
-    backend::blocking(move |ws| ws.class_merge_suggestion(&inputs).map_err(|e| e.to_string())).await
+    backend::tracked("classes-suggest", "Suggesting class mapping", move |ws, progress| {
+        ws.class_merge_suggestion(&inputs, progress).map_err(|e| e.to_string())
+    })
+    .await
 }
 
 /// What `plan` would produce (from cached statistics; fast).
 #[post("/api/classes/preview")]
 pub async fn class_merge_preview(plan: MergePlan) -> Result<MergePreview, ServerFnError> {
-    backend::blocking(move |ws| ws.class_merge_preview(&plan).map_err(|e| e.to_string())).await
+    backend::tracked("classes-preview", "Previewing class mapping", move |ws, progress| {
+        ws.class_merge_preview(&plan, progress).map_err(|e| e.to_string())
+    })
+    .await
 }
 
 /// Starts writing the mapped (and merged) dataset.
@@ -44,16 +50,26 @@ pub async fn delete_class_list(name: String) -> Result<(), ServerFnError> {
 #[cfg(feature = "server")]
 mod backend {
     use dioxus::prelude::ServerFnError;
-    use modeloid::Workspace;
+    use modeloid::{Progress, Silent, Workspace};
 
     use super::MergePlan;
     use crate::api::datasets::{resolve_output, OutputTarget};
     use crate::api::jobs::{self, Job, JobKind};
-    use crate::api::workspace;
+    use crate::api::{activity, workspace};
 
     fn open() -> Result<Workspace, String> {
         let dir = workspace::current_dir().ok_or("Load or create a workspace first.")?;
         Workspace::load_from_dir(&dir).map_err(|e| format!("Couldn't open the workspace: {e}"))
+    }
+
+    /// Like `blocking`, but listed in the status bar and cancelled by a newer
+    /// call in the same `slot`. For reads only: a cancelled write would be lost.
+    pub async fn tracked<T: Send + 'static>(
+        slot: &'static str,
+        label: &'static str,
+        f: impl FnOnce(&Workspace, &dyn Progress) -> Result<T, String> + Send + 'static,
+    ) -> Result<T, ServerFnError> {
+        activity::track(slot, label, move |ctx| f(&open()?, &ctx.progress())).await.map_err(ServerFnError::new)
     }
 
     /// Runs `f` with the open workspace on a blocking thread.
@@ -69,7 +85,7 @@ mod backend {
     pub fn run(plan: MergePlan, output: OutputTarget) -> Result<Job, String> {
         let ws = open()?;
         let output = resolve_output(output, &plan.inputs)?;
-        let preview = ws.class_merge_preview(&plan).map_err(|e| e.to_string())?;
+        let preview = ws.class_merge_preview(&plan, &Silent).map_err(|e| e.to_string())?;
         if let Some(problem) = preview.problems.first() {
             return Err(problem.clone());
         }

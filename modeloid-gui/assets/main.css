@@ -31,6 +31,7 @@
     /* Layout */
     --sidebar-width: 232px;
     --topbar-height: 48px;
+    --statusbar-height: 24px;
     --nav-item-height: 28px;
     --control-height: 26px;
     --input-height: 30px;
@@ -90,6 +91,40 @@ button {
     flex-shrink: 0;
 }
 
+/* Scrollbars: thin, theme coloured, vertical and horizontal alike.
+   Standard properties (Firefox, Chromium 121+); the ::-webkit-scrollbar
+   rules only apply where those aren't supported (older Safari). */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-border-strong) transparent;
+}
+
+*:hover {
+    scrollbar-color: var(--color-fg-muted) transparent;
+}
+
+@supports not (scrollbar-color: auto) {
+    ::-webkit-scrollbar {
+        width: 10px;
+        height: 10px;
+    }
+
+    ::-webkit-scrollbar-track,
+    ::-webkit-scrollbar-corner {
+        background: transparent;
+    }
+
+    ::-webkit-scrollbar-thumb {
+        border: 2px solid transparent;
+        border-radius: 999px;
+        background: var(--color-border-strong) padding-box;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+        background: var(--color-fg-muted) padding-box;
+    }
+}
+
 .skip-link {
     position: fixed;
     top: var(--space-2);
@@ -123,13 +158,15 @@ button {
 .content {
     min-width: 0;
     outline: none;
+    /* Room for the status bar, fixed along the bottom of this column */
+    padding-bottom: var(--statusbar-height);
 }
 
 /* Page + resizable right-hand panel (dataset pages) */
 .content-split {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto min(var(--panel-width), 70%);
-    height: 100dvh;
+    height: calc(100dvh - var(--statusbar-height));
 }
 
 .content-main {
@@ -2276,6 +2313,148 @@ button.bar-row:hover,
     /* The panel sits below the page on narrow screens. */
     .select-hint-arrow {
         transform: rotate(90deg);
+    }
+}
+
+/* ==========================================================================
+   Status bar: running job and background loads, along the bottom
+   ========================================================================== */
+/* Spans the content column only; the sidebar keeps the full height. */
+.status-bar {
+    position: fixed;
+    inset: auto 0 0 var(--sidebar-width);
+    z-index: var(--z-topbar);
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    height: var(--statusbar-height);
+    padding: 0 var(--space-3);
+    background: var(--color-surface);
+    border-top: 1px solid var(--color-border);
+    color: var(--color-fg);
+    font-size: var(--text-xs);
+    line-height: 1;
+}
+
+.status-spinner,
+.status-dot {
+    flex-shrink: 0;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+}
+
+.status-spinner {
+    border: 2px solid var(--color-border-strong);
+    border-top-color: var(--color-accent);
+    animation: spin 0.8s linear infinite;
+}
+
+.status-dot {
+    width: 6px;
+    height: 6px;
+    margin: 0 2px;
+    background: var(--color-fg-muted);
+}
+
+.status-dot.is-lost {
+    background: var(--color-danger-fg);
+}
+
+.status-text {
+    display: flex;
+    gap: var(--space-2);
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.status-text.is-idle {
+    color: var(--color-fg-muted);
+}
+
+.status-detail {
+    color: var(--color-fg-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.status-button {
+    flex-shrink: 0;
+    height: calc(var(--statusbar-height) - 6px);
+    padding: 0 var(--space-2);
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-sm);
+    background: none;
+    font-size: var(--text-xs);
+    line-height: 1;
+    cursor: pointer;
+}
+
+.status-button:hover:not(:disabled) {
+    background: var(--color-surface-hover);
+}
+
+.status-button:disabled {
+    color: var(--color-fg-muted);
+    cursor: default;
+}
+
+.status-more {
+    position: relative;
+    margin-left: auto;
+}
+
+.status-list {
+    position: absolute;
+    right: 0;
+    bottom: calc(100% + var(--space-1));
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    width: min(420px, calc(100vw - var(--space-4)));
+    max-height: 50dvh;
+    margin: 0;
+    padding: var(--space-2);
+    overflow-y: auto;
+    list-style: none;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-md);
+}
+
+.status-list-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    min-height: var(--statusbar-height);
+}
+
+.status-error {
+    color: var(--color-danger-fg);
+    white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .status-spinner {
+        animation: none;
+        border-color: var(--color-accent);
+    }
+}
+
+@media (max-width: 767px) {
+    :root {
+        --statusbar-height: 32px;
+    }
+
+    /* No sidebar column: full width */
+    .status-bar {
+        left: 0;
+    }
+
+    .content-split {
+        padding-bottom: var(--statusbar-height);
     }
 }
 

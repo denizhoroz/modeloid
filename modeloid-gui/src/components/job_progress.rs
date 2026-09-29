@@ -1,40 +1,24 @@
 use dioxus::prelude::*;
 
 use crate::api::error_message;
-use crate::api::jobs::{cancel_job, job_status, ItemStatus, Job, JobItem, JobKind, ProgressUnit, Stage};
-use crate::state::use_datasets_version;
+use crate::api::jobs::{cancel_job, ItemStatus, Job, JobItem, JobKind, ProgressUnit, Stage};
+use crate::state::use_activity;
 use crate::util::{format_bytes, plural};
 
-/// Latest `kind` job, kept fresh by long-polling the server.
-/// Returns the job and a connection error, if polling stopped.
-/// Every finished item refreshes the datasets panel, since tools add or change datasets.
-pub fn use_job(kind: JobKind) -> (Signal<Option<Job>>, Signal<Option<String>>) {
+/// Latest `kind` job, kept fresh from the app-wide activity poll
+/// (`state::provide_activity_state`). Pages may also set it right after
+/// starting a job (`set_if_newer`). Returns the job and a connection error.
+pub fn use_job(kind: JobKind) -> (Signal<Option<Job>>, Memo<Option<String>>) {
     let job = use_signal(|| None::<Job>);
-    let mut error = use_signal(|| None::<String>);
-    let mut datasets_version = use_datasets_version();
+    let activity = use_activity();
 
-    use_future(move || async move {
-        let mut since = 0;
-        let mut done_seen = 0;
-        loop {
-            match job_status(kind, since).await {
-                Ok(Some(latest)) => {
-                    since = latest.version;
-                    let done = latest.items.iter().filter(|i| i.status == ItemStatus::Done).count();
-                    if done != done_seen {
-                        done_seen = done;
-                        *datasets_version.write() += 1;
-                    }
-                    set_if_newer(job, latest);
-                }
-                Ok(None) => {} // no job yet; the server already waited
-                Err(e) => {
-                    error.set(Some(error_message(&e)));
-                    break;
-                }
-            }
+    use_effect(move || {
+        let latest = activity.snapshot.read().as_ref().and_then(|s| s.jobs.iter().find(|j| j.kind == kind).cloned());
+        if let Some(latest) = latest {
+            set_if_newer(job, latest);
         }
     });
+    let error = use_memo(move || activity.error.read().clone());
 
     (job, error)
 }

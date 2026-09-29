@@ -7,7 +7,7 @@ use clap::{ Parser, Subcommand, ValueEnum };
 use modeloid::Workspace;
 use modeloid::Dataset;
 use modeloid::DownloadOptions;
-use modeloid::{Error, ImportMode, Reporter, Service, Settings, Unit};
+use modeloid::{Error, ImportMode, Reporter, Service, Settings, Silent, Unit};
 
 use crate::progress::TermReporter;
 
@@ -363,7 +363,7 @@ fn cmd_dataset_classes(
 
     let ws = _get_workspace()?;
     let d = find_dataset(&ws, dataset)?;
-    let mut plan = ws.class_merge_suggestion(&[d.id()])?;
+    let mut plan = ws.class_merge_suggestion(&[d.id()], &Silent)?;
 
     for rename in renames {
         let (old, new) = rename.split_once('=').ok_or_else(|| format!("--rename takes OLD=NEW, got '{rename}'"))?;
@@ -397,7 +397,7 @@ fn cmd_dataset_classes(
         }
     }
 
-    let preview = ws.class_merge_preview(&plan)?;
+    let preview = ws.class_merge_preview(&plan, &Silent)?;
     print_preview(&plan, &preview);
     if dry_run || !preview.can_run() {
         return Ok(());
@@ -441,7 +441,7 @@ fn cmd_dataset_merge(
             plan.inputs = ids.clone();
             plan
         }
-        None => ws.class_merge_suggestion(&ids)?,
+        None => ws.class_merge_suggestion(&ids, &Silent)?,
     };
     if let Some(format) = format {
         plan.format = format;
@@ -456,7 +456,7 @@ fn cmd_dataset_merge(
         return Ok(());
     }
 
-    let preview = ws.class_merge_preview(&plan)?;
+    let preview = ws.class_merge_preview(&plan, &Silent)?;
     print_preview(&plan, &preview);
     if dry_run || !preview.can_run() {
         return Ok(());

@@ -2,7 +2,12 @@
 
 use dioxus::prelude::*;
 
+use std::collections::HashMap;
+
+use crate::api::activity::{activity_status, ActivitySnapshot};
 use crate::api::appearance::Appearance;
+use crate::api::error_message;
+use crate::api::jobs::{ItemStatus, JobKind};
 use crate::api::watch::workspace_changes;
 use crate::api::workspace::{current_workspace, WorkspaceInfo};
 
@@ -100,4 +105,54 @@ pub struct AppearanceState(pub Signal<Appearance>);
 
 pub fn use_appearance() -> Signal<Appearance> {
     use_context::<AppearanceState>().0
+}
+
+/// What the server is busy with: jobs (for tool pages' progress) and
+/// background loads (for the status bar). One long-poll feeds the whole app;
+/// browsers allow only 6 open requests per server, and a poll per job starved
+/// page loads.
+#[derive(Clone, Copy)]
+pub struct ActivityState {
+    pub snapshot: Signal<Option<ActivitySnapshot>>,
+    /// Set when polling stopped (the server went away).
+    pub error: Signal<Option<String>>,
+}
+
+/// Call once, in the app layout, after `provide_workspace_state`.
+/// Every item a job finishes refreshes the datasets, since tools add or change them.
+pub fn provide_activity_state() {
+    let state = use_context_provider(|| ActivityState { snapshot: Signal::new(None), error: Signal::new(None) });
+    let (mut snapshot, mut error) = (state.snapshot, state.error);
+    let mut datasets_version = use_datasets_version();
+
+    use_future(move || async move {
+        let mut since = 0;
+        // Done items of each kind's latest job; `None` before the first answer.
+        let mut done_seen: Option<HashMap<JobKind, usize>> = None;
+        loop {
+            match activity_status(since).await {
+                Ok(latest) => {
+                    since = latest.version;
+                    let done: HashMap<JobKind, usize> = latest
+                        .jobs
+                        .iter()
+                        .map(|j| (j.kind, j.items.iter().filter(|i| i.status == ItemStatus::Done).count()))
+                        .collect();
+                    if done_seen.as_ref().is_some_and(|seen| *seen != done) {
+                        *datasets_version.write() += 1;
+                    }
+                    done_seen = Some(done);
+                    snapshot.set(Some(latest));
+                }
+                Err(e) => {
+                    error.set(Some(error_message(&e)));
+                    break;
+                }
+            }
+        }
+    });
+}
+
+pub fn use_activity() -> ActivityState {
+    use_context::<ActivityState>()
 }

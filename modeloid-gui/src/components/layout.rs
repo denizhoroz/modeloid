@@ -1,14 +1,15 @@
 use dioxus::prelude::*;
 
-use crate::components::{DatasetsPanel, Icon, IconName, ResizeHandle, Sidebar};
+use crate::components::{DatasetsPanel, Icon, IconName, ResizeHandle, Sidebar, StatusBar};
 use crate::routes::Route;
-use crate::state::provide_workspace_state;
+use crate::state::{provide_activity_state, provide_workspace_state};
 
 /// App shell: sidebar on the left, current page on the right.
 /// On narrow screens the sidebar becomes a drawer opened from the top bar.
 #[component]
 pub fn AppLayout() -> Element {
     provide_workspace_state();
+    provide_activity_state();
     let mut drawer_open = use_signal(|| false);
     // Lives here so the panel keeps its width across dataset pages.
     let panel_width = use_signal(|| 420.0);
@@ -69,6 +70,8 @@ pub fn AppLayout() -> Element {
                     Outlet::<Route> {}
                 }
             }
+
+            StatusBar {}
         }
     }
 }

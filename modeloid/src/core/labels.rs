@@ -15,7 +15,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::core::{
-    progress::Progress,
+    progress::{Progress, check_cancel},
     scan::{IMAGE_EXTENSIONS, parse_yaml_names},
 };
 
@@ -171,7 +171,7 @@ fn read_yolo(dir: &Path, progress: &dyn Progress) -> io::Result<LabelSet> {
     }
 
     for file in files.iter().filter(|p| is_image(p)) {
-        progress.add(1);
+        tick(progress)?;
         let rel = file.strip_prefix(dir).unwrap_or(file);
         let Some((width, height)) = image_size(file, &mut set.warnings) else { continue };
         let mut image = new_image(file, rel, width, height);
@@ -345,7 +345,7 @@ fn read_coco(dir: &Path, progress: &dyn Progress) -> io::Result<LabelSet> {
 
         let mut index_of = HashMap::new();
         for img in &coco.images {
-            progress.add(1);
+            tick(progress)?;
             let file = json_dir.join(&img.file_name);
             let (width, height) = if img.width > 0 && img.height > 0 {
                 (img.width, img.height)
@@ -465,7 +465,7 @@ fn read_voc(dir: &Path, progress: &dyn Progress) -> io::Result<LabelSet> {
     let mut set = LabelSet::default();
 
     for file in walk(dir)?.iter().filter(|p| is_image(p)) {
-        progress.add(1);
+        tick(progress)?;
         let rel = file.strip_prefix(dir).unwrap_or(file);
         let xml_path = file.with_extension("xml");
         let xml = if xml_path.is_file() { Some(read_lossy(&xml_path)?) } else { None };
@@ -592,6 +592,13 @@ pub fn orphan_labels(dir: &Path, format: LabelFormat) -> io::Result<Vec<PathBuf>
 }
 
 // ---------- shared helpers ----------
+
+/// Counts one image read; stops reading once the user cancelled.
+fn tick(progress: &dyn Progress) -> io::Result<()> {
+    check_cancel(progress.is_cancelled()).map_err(|e| io::Error::new(io::ErrorKind::Interrupted, e))?;
+    progress.add(1);
+    Ok(())
+}
 
 fn new_image(file: &Path, rel: &Path, width: u32, height: u32) -> ImageLabels {
     ImageLabels {
@@ -735,6 +742,22 @@ mod tests {
         tmp.write("valid/labels/b.txt", "garbage\n");
         tmp.write("valid/images/broken.png", "not an image");
         tmp
+    }
+
+    #[test]
+    fn stops_reading_when_cancelled() {
+        struct Stopped;
+        impl Progress for Stopped {
+            fn set_total(&self, _: u64) {}
+            fn add(&self, _: u64) {}
+            fn finish(&self) {}
+            fn is_cancelled(&self) -> bool {
+                true
+            }
+        }
+        let tmp = yolo_dataset("read-cancelled");
+        let err = read(&tmp.0, LabelFormat::Yolo, &Stopped).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Interrupted);
     }
 
     #[test]

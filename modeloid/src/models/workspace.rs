@@ -368,19 +368,21 @@ impl Workspace {
     }
 
     /// Name and statistics of each input, for suggestions and previews.
-    fn merge_inputs(&self, ids: &[u32]) -> Result<Vec<(u32, String, ExploreStats)>, crate::Error> {
+    /// Statistics of each input; reads labels (counted on `progress`) for
+    /// inputs without cached statistics.
+    fn merge_inputs(&self, ids: &[u32], progress: &dyn Progress) -> Result<Vec<(u32, String, ExploreStats)>, crate::Error> {
         ids.iter()
             .map(|&id| {
                 let (_, dataset) = self.find_dataset(id)?;
-                Ok((id, dataset.name().to_string(), self.explore_stats(id, false, &crate::Silent)?))
+                Ok((id, dataset.name().to_string(), self.explore_stats(id, false, progress)?))
             })
             .collect()
     }
 
     /// A first class mapping for `ids` (same-looking names joined), writing
     /// in the first input's format family.
-    pub fn class_merge_suggestion(&self, ids: &[u32]) -> Result<MergePlan, crate::Error> {
-        let inputs = self.merge_inputs(ids)?;
+    pub fn class_merge_suggestion(&self, ids: &[u32], progress: &dyn Progress) -> Result<MergePlan, crate::Error> {
+        let inputs = self.merge_inputs(ids, progress)?;
         let format = match ids.first() {
             Some(&id) => {
                 let (_, dataset) = self.find_dataset(id)?;
@@ -394,8 +396,8 @@ impl Workspace {
     }
 
     /// What `plan` would produce, from cached statistics.
-    pub fn class_merge_preview(&self, plan: &MergePlan) -> Result<MergePreview, crate::Error> {
-        let inputs = self.merge_inputs(&plan.inputs)?;
+    pub fn class_merge_preview(&self, plan: &MergePlan, progress: &dyn Progress) -> Result<MergePreview, crate::Error> {
+        let inputs = self.merge_inputs(&plan.inputs, progress)?;
         let stats: Vec<classes::InputStats> =
             inputs.iter().map(|(id, name, stats)| classes::InputStats { id: *id, name, stats }).collect();
         Ok(classes::preview(plan, &stats))
@@ -1023,12 +1025,12 @@ mod tests {
         image::RgbImage::new(64, 64).save(coco.join("valid/a.png")).unwrap();
         ws.save_output(&coco, &new_output("pets"), Lineage::new("import", &[]), &Silent).unwrap();
 
-        let mut plan = ws.class_merge_suggestion(&[1, 2]).unwrap();
+        let mut plan = ws.class_merge_suggestion(&[1, 2], &Silent).unwrap();
         assert_eq!(plan.format, "yolo");
         assert_eq!(plan.targets, ["car", "person", "dog"]);
         plan.remove_target("dog");
         plan.set_rule("dog", ClassAction::Drop(DropMode::Boxes));
-        let preview = ws.class_merge_preview(&plan).unwrap();
+        let preview = ws.class_merge_preview(&plan, &Silent).unwrap();
         assert!(preview.can_run(), "{preview:?}");
         assert_eq!(preview.missing_labels.iter().map(|m| m.target.as_str()).collect::<Vec<_>>(), ["person"]);
 

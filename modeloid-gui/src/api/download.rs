@@ -1,6 +1,6 @@
 //! Dataset downloads (Roboflow, Kaggle, Hugging Face, direct zip links): one
 //! job item per link, run by `api::jobs`.
-//! The page starts a job, then long-polls `job_status(JobKind::Download)`.
+//! The page starts a job; its progress comes through the activity poll.
 
 use dioxus::prelude::*;
 

@@ -54,7 +54,7 @@ mod backend {
     use super::{HealthFixes, HealthView, SHOWN};
     use crate::api::datasets::{resolve_output, OutputTarget};
     use crate::api::jobs::{self, Job, JobKind};
-    use crate::api::workspace;
+    use crate::api::{activity, workspace};
 
     fn open() -> Result<Workspace, String> {
         let dir = workspace::current_dir().ok_or("Load or create a workspace first.")?;
@@ -66,12 +66,15 @@ mod backend {
     }
 
     pub async fn report(id: u32) -> Result<Option<HealthView>, String> {
-        tokio::task::spawn_blocking(move || {
-            let found = open()?.health_report(id).map_err(|e| e.to_string())?;
+        activity::track("health-report", "Loading health report", move |ctx| {
+            let ws = open()?;
+            if let Ok(name) = name_of(&ws, id) {
+                ctx.set_label(format!("Loading health report · {name}"));
+            }
+            let found = ws.health_report(id).map_err(|e| e.to_string())?;
             Ok(found.map(|(report, fresh)| HealthView { counts: report.counts(), report: report.truncated(SHOWN), fresh }))
         })
         .await
-        .map_err(|e| e.to_string())?
     }
 
     pub fn check(id: u32) -> Result<Job, String> {

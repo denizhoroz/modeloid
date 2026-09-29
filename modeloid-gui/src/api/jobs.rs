@@ -2,8 +2,10 @@
 //! items run in order on a blocking thread of the server's runtime. Only one job runs at a time,
 //! across all kinds, so tools don't fight over the same files.
 //!
-//! Each kind keeps its latest job, so every tool page shows its own. Pages
-//! long-poll `job_status(kind, since)` for progress.
+//! Each kind keeps its latest job, so every tool page shows its own. Progress
+//! reaches the browser through the one activity long-poll (`api/activity.rs`),
+//! not a request per job: browsers allow only 6 open requests per server, and
+//! a poll per job starved page loads.
 
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -83,13 +85,6 @@ pub struct Job {
     pub cancel_requested: bool,
 }
 
-/// Returns the latest `kind` job once its `version` is newer than `since`,
-/// waiting up to ~20s for a change. `None` if no such job has run yet.
-#[post("/api/jobs/status")]
-pub async fn job_status(kind: JobKind, since: u64) -> Result<Option<Job>, ServerFnError> {
-    Ok(backend::status(kind, since).await)
-}
-
 /// Asks the running `kind` job to stop. The current item stops at its next
 /// check (and cleans up), queued items are skipped.
 #[post("/api/jobs/cancel")]
@@ -98,32 +93,23 @@ pub async fn cancel_job(kind: JobKind) -> Result<(), ServerFnError> {
 }
 
 #[cfg(feature = "server")]
-pub use backend::start;
+pub use backend::{latest_all, running, start};
 
 #[cfg(feature = "server")]
 mod backend {
     use std::collections::HashMap;
     use std::future::Future;
-    use std::pin::pin;
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::{Arc, LazyLock, Mutex};
-    use std::time::Duration;
 
     use modeloid::{Progress, Reporter, Unit};
     use tokio::runtime::Handle;
-    use tokio::sync::Notify;
-    use tokio::time::{sleep_until, timeout_at, Instant};
 
     use super::{ItemStatus, Job, JobItem, JobKind, ProgressUnit, Stage};
-
-    const POLL_TIMEOUT: Duration = Duration::from_secs(20);
-    /// Minimum time a status request takes, so progress updates don't flood requests.
-    const POLL_MIN: Duration = Duration::from_millis(300);
 
     static VERSION: AtomicU64 = AtomicU64::new(0);
     /// Latest job of each kind.
     static JOBS: LazyLock<Mutex<HashMap<JobKind, Arc<Shared>>>> = LazyLock::new(Default::default);
-    static JOB_STARTED: Notify = Notify::const_new();
 
     fn next_version() -> u64 {
         VERSION.fetch_add(1, Ordering::SeqCst) + 1
@@ -131,7 +117,6 @@ mod backend {
 
     struct Shared {
         job: Mutex<Job>,
-        changed: Notify,
         /// Checked by the core through `Reporter`/`Progress::is_cancelled`.
         cancelled: AtomicBool,
     }
@@ -143,7 +128,7 @@ mod backend {
                 f(&mut job);
                 job.version = next_version();
             }
-            self.changed.notify_waiters();
+            crate::api::activity::changed();
         }
 
         fn item(&self, index: usize, f: impl FnOnce(&mut JobItem)) {
@@ -168,6 +153,16 @@ mod backend {
         shared.cancelled.store(true, Ordering::Relaxed);
         shared.update(|job| job.cancel_requested = true);
         Ok(())
+    }
+
+    /// The latest job of every kind that has run.
+    pub fn latest_all() -> Vec<Job> {
+        JOBS.lock().unwrap().values().map(|s| s.snapshot()).collect()
+    }
+
+    /// The job that hasn't finished yet, if any (only one runs at a time).
+    pub fn running() -> Option<Job> {
+        JOBS.lock().unwrap().values().find(|s| !s.finished()).map(|s| s.snapshot())
     }
 
     fn latest(kind: JobKind) -> Option<Arc<Shared>> {
@@ -229,7 +224,6 @@ mod backend {
                 finished: false,
                 cancel_requested: false,
             }),
-            changed: Notify::new(),
             cancelled: AtomicBool::new(false),
         });
 
@@ -239,7 +233,6 @@ mod backend {
 
         jobs.insert(kind, shared.clone());
         drop(jobs);
-        JOB_STARTED.notify_waiters();
         Ok(shared.snapshot())
     }
 
@@ -270,42 +263,6 @@ mod backend {
             });
         }
         job.update(|j| j.finished = true);
-    }
-
-    pub async fn status(kind: JobKind, since: u64) -> Option<Job> {
-        let started = Instant::now();
-        let deadline = started + POLL_TIMEOUT;
-
-        let shared = loop {
-            let started_signal = pin!(JOB_STARTED.notified());
-            if let Some(shared) = latest(kind) {
-                break shared;
-            }
-            if timeout_at(deadline, started_signal).await.is_err() {
-                return None;
-            }
-        };
-
-        loop {
-            let mut changed = pin!(shared.changed.notified());
-            changed.as_mut().enable();
-            let started_signal = pin!(JOB_STARTED.notified());
-            // A newer job of this kind replaced the one we're watching.
-            let shared = match latest(kind) {
-                Some(newer) if !Arc::ptr_eq(&newer, &shared) => newer,
-                _ => shared.clone(),
-            };
-            let job = shared.snapshot();
-            if job.version > since {
-                sleep_until(started + POLL_MIN).await;
-                return Some(shared.snapshot());
-            }
-            tokio::select! {
-                _ = changed => {}
-                _ = started_signal => {}
-                _ = sleep_until(deadline) => return Some(job),
-            }
-        }
     }
 
     /// Feeds core progress into one job item.
@@ -380,6 +337,16 @@ mod tests {
 
     use super::backend::cancel;
 
+    /// Waits for the latest `kind` job to finish.
+    async fn finished(kind: JobKind) -> Job {
+        loop {
+            if let Some(job) = latest_all().into_iter().find(|j| j.kind == kind && j.finished) {
+                return job;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    }
+
     // One test: jobs are global and only one runs at a time.
     #[tokio::test(flavor = "multi_thread")]
     async fn runs_items_in_order_and_reports() {
@@ -395,18 +362,12 @@ mod tests {
         })
         .unwrap();
         assert!(!started.finished);
+        assert_eq!(running().map(|j| j.kind), Some(JobKind::Download), "the status bar sees it");
 
         // A second job can't start while this one runs.
         assert!(start(JobKind::Download, vec!["x".into()], |_| Ok(None)).is_err());
 
-        let mut since = 0;
-        let job = loop {
-            let job = backend::status(JobKind::Download, since).await.unwrap();
-            if job.finished {
-                break job;
-            }
-            since = job.version;
-        };
+        let job = finished(JobKind::Download).await;
         assert_eq!(job.items[0].status, ItemStatus::Done);
         assert_eq!(job.items[0].output.as_deref(), Some("out"));
         assert_eq!(job.items[0].message.as_deref(), Some("item 0"));
@@ -424,12 +385,7 @@ mod tests {
         })
         .unwrap();
         cancel(JobKind::Import).unwrap();
-        let job = loop {
-            let job = backend::status(JobKind::Import, 0).await.unwrap();
-            if job.finished {
-                break job;
-            }
-        };
+        let job = finished(JobKind::Import).await;
         assert!(job.cancel_requested);
         assert_eq!(job.items[0].status, ItemStatus::Cancelled);
         assert_eq!(job.items[0].error, None);
