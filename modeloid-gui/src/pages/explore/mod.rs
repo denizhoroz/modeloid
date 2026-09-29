@@ -9,9 +9,9 @@ use dioxus::prelude::*;
 use crate::api::datasets::list_datasets;
 use crate::api::explore::{dataset_stats, GalleryFilter};
 use crate::api::error_message;
-use crate::components::ChooseDataset;
+use crate::components::{PrimaryNote, SelectDatasetHint};
 use crate::routes::Route;
-use crate::state::{use_datasets_version, use_selected_dataset, use_workspace, use_workspace_checked};
+use crate::state::{use_datasets_version, use_primary_dataset, use_selected_datasets, use_workspace, use_workspace_checked};
 
 use gallery::Gallery;
 use statistics::Statistics;
@@ -26,7 +26,8 @@ enum Tab {
 pub fn Explore() -> Element {
     let workspace = use_workspace();
     let checked = use_workspace_checked();
-    let selected = use_selected_dataset();
+    let primary = use_primary_dataset();
+    let selected = use_selected_datasets();
 
     rsx! {
         document::Title { "Explore · Modeloid" }
@@ -35,9 +36,9 @@ pub fn Explore() -> Element {
             h1 { "Explore" }
             p { class: "page-lead", "Class balance, object sizes and positions, and the images themselves." }
 
-            match (workspace(), selected()) {
-                (Some(_), Some(id)) => rsx! { ExploreDataset { key: "{id}", id } },
-                (Some(_), None) => rsx! { ChooseDataset {} },
+            match (workspace(), primary()) {
+                (Some(_), Some(id)) => rsx! { ExploreDataset { key: "{id}", id, selected_count: selected.read().len() } },
+                (Some(_), None) => rsx! { SelectDatasetHint { text: "Select a dataset in the datasets panel to explore it." } },
                 (None, _) if !checked() => rsx! {},
                 (None, _) => rsx! {
                     div { class: "notice",
@@ -51,8 +52,7 @@ pub fn Explore() -> Element {
 }
 
 #[component]
-fn ExploreDataset(id: u32) -> Element {
-    let mut selected = use_selected_dataset();
+fn ExploreDataset(id: u32, selected_count: usize) -> Element {
     let mut tab = use_signal(|| Tab::Statistics);
     let filter = use_signal(GalleryFilter::default);
     let mut recompute = use_signal(|| 0u32);
@@ -84,6 +84,7 @@ fn ExploreDataset(id: u32) -> Element {
     };
 
     rsx! {
+        PrimaryNote { count: selected_count }
         div { class: "explore-head",
             div { class: "explore-title",
                 h2 { class: "explore-name", {row.as_ref().map(|r| r.name.clone()).unwrap_or_else(|| format!("Dataset #{id}"))} }
@@ -99,12 +100,6 @@ fn ExploreDataset(id: u32) -> Element {
                     disabled: stats.read().is_none(),
                     onclick: move |_| *recompute.write() += 1,
                     "Recompute"
-                }
-                button {
-                    class: "button button-ghost button-sm",
-                    r#type: "button",
-                    onclick: move |_| selected.set(None),
-                    "Change dataset"
                 }
             }
         }

@@ -11,16 +11,17 @@ use crate::api::error_message;
 use crate::api::explore::thumb_url;
 use crate::api::health::{health_report, start_health_check, start_health_fix, HealthFixes, HealthView};
 use crate::api::jobs::JobKind;
-use crate::components::{set_if_newer, use_job, ChooseDataset, JobProgress, OutputChoice, OutputSelect, StatTile};
+use crate::components::{set_if_newer, use_job, JobProgress, OutputChoice, OutputSelect, PrimaryNote, SelectDatasetHint, StatTile};
 use crate::routes::Route;
-use crate::state::{use_datasets_version, use_selected_dataset, use_workspace, use_workspace_checked};
+use crate::state::{use_datasets_version, use_primary_dataset, use_selected_datasets, use_workspace, use_workspace_checked};
 use crate::util::format_count;
 
 #[component]
 pub fn HealthCheck() -> Element {
     let workspace = use_workspace();
     let checked = use_workspace_checked();
-    let selected = use_selected_dataset();
+    let primary = use_primary_dataset();
+    let selected = use_selected_datasets();
 
     rsx! {
         document::Title { "Health Check · Modeloid" }
@@ -30,9 +31,9 @@ pub fn HealthCheck() -> Element {
             p { class: "page-lead",
                 "Finds corrupt images, broken boxes, unknown classes, label files without images and duplicate images, including duplicates that leak across splits."
             }
-            match (workspace(), selected()) {
-                (Some(_), Some(id)) => rsx! { HealthDataset { key: "{id}", id } },
-                (Some(_), None) => rsx! { ChooseDataset {} },
+            match (workspace(), primary()) {
+                (Some(_), Some(id)) => rsx! { HealthDataset { key: "{id}", id, selected_count: selected.read().len() } },
+                (Some(_), None) => rsx! { SelectDatasetHint { text: "Select a dataset in the datasets panel to check it." } },
                 (None, _) if !checked() => rsx! {},
                 (None, _) => rsx! {
                     div { class: "notice",
@@ -46,8 +47,7 @@ pub fn HealthCheck() -> Element {
 }
 
 #[component]
-fn HealthDataset(id: u32) -> Element {
-    let mut selected = use_selected_dataset();
+fn HealthDataset(id: u32, selected_count: usize) -> Element {
     let datasets_version = use_datasets_version();
     let (check_job, check_poll_error) = use_job(JobKind::HealthCheck);
     let (fix_job, _) = use_job(JobKind::HealthFix);
@@ -82,6 +82,7 @@ fn HealthDataset(id: u32) -> Element {
     };
 
     rsx! {
+        PrimaryNote { count: selected_count }
         div { class: "explore-head",
             div { class: "explore-title",
                 h2 { class: "explore-name", "{name}" }
@@ -96,9 +97,7 @@ fn HealthDataset(id: u32) -> Element {
                     disabled: running,
                     onclick: run_check,
                     if has_report { "Check again" } else { "Run Health Check" }
-                }
-                button { class: "button button-ghost button-sm", r#type: "button", onclick: move |_| selected.set(None), "Change dataset" }
-            }
+                }            }
         }
 
         if let Some(message) = start_error() {

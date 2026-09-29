@@ -1,22 +1,24 @@
 use dioxus::prelude::*;
 
-use crate::components::DatasetPicker;
-use crate::state::use_selected_dataset;
-
-/// Shown by single-dataset tools while nothing is selected: pick here, or
-/// click a row in the datasets panel. The choice becomes the app-wide selection.
+/// Shown while a tool has no input: datasets are chosen in the datasets panel.
 #[component]
-pub fn ChooseDataset() -> Element {
-    let mut selected = use_selected_dataset();
-    let picked = use_signal(Vec::<u32>::new);
-
-    use_effect(move || {
-        if let Some(id) = picked.read().first() {
-            selected.set(Some(*id));
-        }
-    });
-
+pub fn SelectDatasetHint(#[props(into)] text: String) -> Element {
     rsx! {
-        DatasetPicker { title: "Dataset", selected: picked }
+        div { class: "notice select-hint", role: "status",
+            p { "{text}" }
+            span { class: "select-hint-arrow", aria_hidden: "true", "→" }
+        }
+    }
+}
+
+/// For single-dataset tools when several datasets are selected.
+#[component]
+pub fn PrimaryNote(count: usize) -> Element {
+    rsx! {
+        if count > 1 {
+            p { class: "field-hint primary-note",
+                "{count} datasets are selected; this tool uses the one selected last."
+            }
+        }
     }
 }

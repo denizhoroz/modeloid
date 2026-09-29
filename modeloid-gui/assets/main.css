@@ -1021,26 +1021,6 @@ a.workspace-button {
     border-color: var(--color-border);
 }
 
-/* DatasetPicker: long lists scroll inside the card */
-.choice-list-scroll {
-    max-height: 320px;
-    overflow-y: auto;
-}
-
-.choice-order {
-    display: inline-grid;
-    place-items: center;
-    min-width: 16px;
-    height: 16px;
-    margin-right: var(--space-1);
-    border-radius: 8px;
-    background: var(--color-accent);
-    color: var(--color-bg);
-    font-size: 10px;
-    font-weight: 700;
-    vertical-align: 1px;
-}
-
 /* Checkbox with a sentence, e.g. overwrite confirmation */
 .check {
     display: flex;
@@ -2111,6 +2091,54 @@ button.bar-row:hover,
     opacity: 0.5;
 }
 
+/* Datasets panel: selection bar and checkbox column */
+.panel-selection {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    padding: var(--space-1) var(--space-3);
+    border-bottom: 1px solid var(--color-border);
+}
+
+.panel-selection .section-card-meta {
+    margin-left: auto;
+}
+
+.data-table .check-col {
+    width: 28px;
+    padding-right: 0;
+    text-align: center;
+}
+
+.data-table .check-col input {
+    margin: 0;
+    accent-color: var(--color-accent);
+    cursor: pointer;
+}
+
+/* Tools without input point at the datasets panel */
+.notice.select-hint {
+    justify-content: flex-start;
+}
+
+.select-hint-arrow {
+    margin-left: auto;
+    color: var(--color-accent-fg);
+    font-size: var(--text-xl);
+}
+
+.primary-note,
+.inputs-line {
+    margin: 0 0 var(--space-2);
+}
+
+@media (max-width: 767px) {
+    /* The panel sits below the page on narrow screens. */
+    .select-hint-arrow {
+        transform: rotate(90deg);
+    }
+}
+
 /* Datasets panel: rescan status line */
 .panel-status {
     margin: 0;
@@ -2208,9 +2236,21 @@ button.bar-row:hover,
 
 .mapping-table .select {
     width: 100%;
-    min-width: 180px;
+    min-width: 140px;
+    max-width: 220px;
     height: 24px;
     font-size: var(--text-xs);
+}
+
+/* Dataset-name columns: long names are cut, the full name is in the tooltip */
+.mapping-table thead th.num {
+    max-width: 96px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.mapping-table .name {
+    max-width: 180px;
 }
 
 .mapping-table tbody tr {

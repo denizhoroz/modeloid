@@ -1,7 +1,6 @@
 mod charts;
 mod choose_dataset;
 mod credential_field;
-mod dataset_picker;
 mod datasets_panel;
 mod fonts;
 mod icon;
@@ -13,9 +12,8 @@ mod sidebar;
 mod workspace_card;
 
 pub use charts::{Bar, BarList, Heatmap, HistogramChart, StatTile};
-pub use choose_dataset::ChooseDataset;
+pub use choose_dataset::{PrimaryNote, SelectDatasetHint};
 pub use credential_field::CredentialField;
-pub use dataset_picker::DatasetPicker;
 pub use datasets_panel::DatasetsPanel;
 pub use fonts::Fonts;
 pub use icon::{Icon, IconName};

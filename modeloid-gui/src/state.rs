@@ -14,19 +14,10 @@ pub struct WorkspaceState {
     pub checked: Signal<bool>,
     /// Bumped when the workspace's datasets change (e.g. a download finished).
     pub datasets_version: Signal<u64>,
-    /// Dataset the user focused by clicking it in the datasets panel.
-    /// Cleared when the workspace changes or the dataset disappears.
-    pub selected_dataset: Signal<Option<u32>>,
-}
-
-/// Links the datasets panel to a `DatasetPicker` on the page: clicking a panel
-/// row puts its id in `picked`, and the picker takes it from there.
-#[derive(Clone, Copy)]
-pub struct DatasetPick {
-    /// Number of pickers on screen; panel rows are clickable only when > 0.
-    pub pickers: Signal<u32>,
-    /// Dataset id clicked in the panel, not yet taken by a picker.
-    pub picked: Signal<Option<u32>>,
+    /// Datasets selected in the datasets panel, in the order they were
+    /// selected. Every tool takes its input from here. Cleared when the
+    /// workspace changes; datasets that disappear are dropped from it.
+    pub selected_datasets: Signal<Vec<u32>>,
 }
 
 /// Call once near the root. Asks the server which workspace is open, so the
@@ -36,11 +27,10 @@ pub fn provide_workspace_state() {
         workspace: Signal::new(None),
         checked: Signal::new(false),
         datasets_version: Signal::new(0),
-        selected_dataset: Signal::new(None),
+        selected_datasets: Signal::new(Vec::new()),
     });
-    use_context_provider(|| DatasetPick { pickers: Signal::new(0), picked: Signal::new(None) });
     let (mut workspace, mut checked) = (state.workspace, state.checked);
-    let (mut datasets_version, mut selected) = (state.datasets_version, state.selected_dataset);
+    let (mut datasets_version, mut selected) = (state.datasets_version, state.selected_datasets);
 
     use_future(move || async move {
         if let Ok(current) = current_workspace().await {
@@ -72,7 +62,7 @@ pub fn provide_workspace_state() {
         let path = workspace.read().as_ref().map(|w| w.path.clone());
         if *selected_in.peek() != path {
             selected_in.set(path);
-            selected.set(None);
+            selected.set(Vec::new());
         }
     });
 }
@@ -91,11 +81,13 @@ pub fn use_workspace_checked() -> Signal<bool> {
     use_context::<WorkspaceState>().checked
 }
 
-pub fn use_dataset_pick() -> DatasetPick {
-    use_context::<DatasetPick>()
+/// Datasets selected in the datasets panel, in selection order.
+pub fn use_selected_datasets() -> Signal<Vec<u32>> {
+    use_context::<WorkspaceState>().selected_datasets
 }
 
-/// The dataset focused in the datasets panel, if any.
-pub fn use_selected_dataset() -> Signal<Option<u32>> {
-    use_context::<WorkspaceState>().selected_dataset
+/// The dataset single-dataset tools work on: the most recently selected one.
+pub fn use_primary_dataset() -> Memo<Option<u32>> {
+    let selected = use_selected_datasets();
+    use_memo(move || selected.read().last().copied())
 }

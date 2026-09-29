@@ -13,9 +13,9 @@ use crate::api::classes::{
 use crate::api::datasets::{list_datasets, DatasetRow};
 use crate::api::error_message;
 use crate::api::jobs::JobKind;
-use crate::components::{set_if_newer, use_job, Bar, BarList, DatasetPicker, JobProgress, OutputChoice, OutputSelect};
+use crate::components::{set_if_newer, use_job, Bar, BarList, JobProgress, OutputChoice, OutputSelect, SelectDatasetHint};
 use crate::routes::Route;
-use crate::state::{use_datasets_version, use_selected_dataset, use_workspace, use_workspace_checked};
+use crate::state::{use_datasets_version, use_selected_datasets, use_workspace, use_workspace_checked};
 use crate::util::format_count;
 
 use edit::Choice;
@@ -31,7 +31,7 @@ pub fn ClassesMerge() -> Element {
             p { class: "page-eyebrow", "Dataset Manager" }
             h1 { "Classes & Merge" }
             p { class: "page-lead",
-                "Rename, merge, drop and reorder classes. Choose several datasets to merge them; their classes are matched by name."
+                "Rename, merge, drop and reorder classes. Select several datasets in the panel to merge them; their classes are matched by name."
             }
             match workspace() {
                 Some(_) => rsx! { Editor {} },
@@ -49,14 +49,11 @@ pub fn ClassesMerge() -> Element {
 
 #[component]
 fn Editor() -> Element {
-    let selected = use_selected_dataset();
+    // Inputs are the datasets selected in the panel, in selection order.
+    let inputs = use_selected_datasets();
     let datasets_version = use_datasets_version();
-    // Start from the dataset selected in the panel.
-    let inputs = use_signal(move || {
-        let first: Option<u32> = *selected.peek();
-        first.map(|id| vec![id]).unwrap_or_default()
-    });
     let mut plan = use_signal(|| None::<MergePlan>);
+    let mut preview = use_signal(|| None::<MergePreview>);
     let mut load_error = use_signal(|| None::<String>);
 
     // New inputs: fresh suggestion, keeping earlier edits that still apply.
@@ -65,6 +62,7 @@ fn Editor() -> Element {
         spawn(async move {
             if ids.is_empty() {
                 plan.set(None);
+                preview.set(None);
                 return;
             }
             match class_merge_suggestion(ids).await {
@@ -82,7 +80,6 @@ fn Editor() -> Element {
     });
 
     // Preview of the current plan; the last one stays shown while the next loads.
-    let mut preview = use_signal(|| None::<MergePreview>);
     let preview_now = use_resource(move || async move {
         let _ = datasets_version();
         match plan() {
@@ -105,13 +102,19 @@ fn Editor() -> Element {
 
     rsx! {
         div { class: "section-stack",
-            DatasetPicker { title: "Datasets", selected: inputs, multiple: true }
+            if !names.is_empty() {
+                p { class: "field-hint inputs-line",
+                    if names.len() == 1 { "Editing " } else { "Merging, in this order: " }
+                    strong { {names.join(" + ")} }
+                    ". Change the selection in the datasets panel."
+                }
+            }
             if let Some(message) = load_error() {
                 p { class: "form-error", role: "alert", "{message}" }
             }
             match (plan(), preview()) {
-                (None, _) if inputs.read().is_empty() => rsx! {
-                    p { class: "field-hint", "Choose one dataset to edit its classes, or several to merge them." }
+                _ if inputs.read().is_empty() => rsx! {
+                    SelectDatasetHint { text: "Select one dataset in the datasets panel to edit its classes, or several to merge them." }
                 },
                 (Some(_), Some(p)) => rsx! {
                     TargetsCard { plan, sources: p.sources.iter().map(|s| s.name.clone()).collect::<Vec<_>>() }

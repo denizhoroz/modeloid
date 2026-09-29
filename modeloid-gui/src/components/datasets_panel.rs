@@ -5,7 +5,7 @@ use crate::api::error_message;
 use crate::api::health::start_rescan;
 use crate::api::jobs::{ItemStatus, JobKind};
 use crate::components::{set_if_newer, use_job, Icon, IconName};
-use crate::state::{use_dataset_pick, use_datasets_version, use_selected_dataset, use_workspace, DatasetPick};
+use crate::state::{use_datasets_version, use_selected_datasets, use_workspace};
 use crate::util::{format_bytes, format_count, plural};
 
 /// Right-hand panel listing the open workspace's datasets.
@@ -42,15 +42,22 @@ pub fn DatasetsPanel() -> Element {
         _ => None,
     };
 
-    // Drop the selection when its dataset is gone (deleted, or moved outside the app).
-    let mut selected = use_selected_dataset();
+    // Drop selected datasets that are gone (deleted, or moved outside the app).
+    let mut selected = use_selected_datasets();
     use_effect(move || {
         if let Some(Ok(rows)) = &*datasets.read() {
-            if selected.peek().is_some_and(|id| !rows.iter().any(|r| r.id == id)) {
-                selected.set(None);
+            let gone = selected.peek().iter().any(|id| !rows.iter().any(|r| r.id == *id));
+            if gone {
+                selected.write().retain(|id| rows.iter().any(|r| r.id == *id));
             }
         }
     });
+    let all_ids: Vec<u32> = match &*datasets.read() {
+        Some(Ok(rows)) => rows.iter().map(|r| r.id).collect(),
+        _ => Vec::new(),
+    };
+    let selected_count = selected.read().len();
+    let total = all_ids.len();
 
     rsx! {
         aside { id: "datasets-panel", class: "datasets-panel", aria_labelledby: "datasets-panel-title",
@@ -81,6 +88,33 @@ pub fn DatasetsPanel() -> Element {
             if let Some(message) = rescan_error() {
                 p { class: "field-error panel-status", role: "alert", "{message}" }
             }
+            if total > 0 {
+                div { class: "panel-selection", role: "group", aria_label: "Dataset selection",
+                    button {
+                        class: "button button-ghost button-sm",
+                        r#type: "button",
+                        disabled: selected_count == total,
+                        onclick: move |_| {
+                            // Keep the current order and add the rest after it.
+                            let mut ids = selected();
+                            let rest: Vec<u32> = all_ids.iter().filter(|id| !ids.contains(id)).copied().collect();
+                            ids.extend(rest);
+                            selected.set(ids);
+                        },
+                        "Select all"
+                    }
+                    button {
+                        class: "button button-ghost button-sm",
+                        r#type: "button",
+                        disabled: selected_count == 0,
+                        onclick: move |_| selected.set(Vec::new()),
+                        "None"
+                    }
+                    span { class: "section-card-meta", aria_live: "polite",
+                        if selected_count == 0 { "Nothing selected" } else { "{selected_count} selected" }
+                    }
+                }
+            }
 
             div { class: "datasets-panel-body",
                 match &*datasets.read() {
@@ -101,18 +135,18 @@ pub fn DatasetsPanel() -> Element {
     }
 }
 
+/// Datasets with a checkbox each. The checkbox adds or removes a dataset from
+/// the selection; clicking elsewhere on a row selects only that dataset
+/// (clicking it again when it's the only one clears the selection).
 #[component]
 fn DatasetsTable(rows: Vec<DatasetRow>) -> Element {
-    let DatasetPick { pickers, mut picked } = use_dataset_pick();
-    let mut selected = use_selected_dataset();
-    // With a DatasetPicker on the page, a click also picks the dataset as input.
-    let pickable = pickers() > 0;
-    let hint = if pickable { "Select, and use as input" } else { "Select" };
+    let mut selected = use_selected_datasets();
 
     rsx! {
         table { class: "data-table",
             thead {
                 tr {
+                    th { class: "check-col", scope: "col", span { class: "visually-hidden", "Selected" } }
                     th { class: "num", scope: "col", abbr: "ID", "#" }
                     th { scope: "col", "Name" }
                     th { scope: "col", "Task" }
@@ -125,25 +159,43 @@ fn DatasetsTable(rows: Vec<DatasetRow>) -> Element {
             }
             tbody {
                 for row in rows {
+                    {
+                        let id = row.id;
+                        let is_selected = selected.read().contains(&id);
+                        rsx! {
                     tr {
-                        key: "{row.id}",
-                        class: if selected() == Some(row.id) { "is-selected" },
-                        // Clicking a selected row again clears the selection; picking always adds.
+                        key: "{id}",
+                        class: if is_selected { "is-selected" },
                         onclick: move |_| {
-                            let id = row.id;
-                            selected.set(if selected() == Some(id) { None } else { Some(id) });
-                            if pickable {
-                                picked.set(Some(id));
-                            }
+                            let only_this = *selected.peek() == [id];
+                            selected.set(if only_this { Vec::new() } else { vec![id] });
                         },
-                        td { class: "num muted", "{row.id}" }
+                        td { class: "check-col",
+                            input {
+                                r#type: "checkbox",
+                                aria_label: "Select {row.name}",
+                                checked: is_selected,
+                                // Toggle without the row's "select only this".
+                                onclick: move |e| e.stop_propagation(),
+                                onchange: move |e| {
+                                    if e.checked() {
+                                        if !selected.peek().contains(&id) {
+                                            selected.write().push(id);
+                                        }
+                                    } else {
+                                        selected.write().retain(|s| *s != id);
+                                    }
+                                },
+                            }
+                        }
+                        td { class: "num muted", "{id}" }
                         th { class: "name", scope: "row",
                             // Keyboard access; the click bubbles to the row.
                             button {
                                 class: "row-pick",
                                 r#type: "button",
-                                title: "{hint}: {row.name}",
-                                aria_pressed: if selected() == Some(row.id) { "true" } else { "false" },
+                                title: "Select only {row.name}",
+                                aria_pressed: if is_selected { "true" } else { "false" },
                                 "{row.name}"
                             }
                         }
@@ -153,6 +205,8 @@ fn DatasetsTable(rows: Vec<DatasetRow>) -> Element {
                         td { class: "num", "{row.classes}" }
                         td { class: "muted", "{row.format}" }
                         td { class: "num muted", "{format_bytes(row.size_bytes)}" }
+                    }
+                        }
                     }
                 }
             }
