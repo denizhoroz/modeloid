@@ -113,8 +113,16 @@ pub fn HistogramChart(
     }
 }
 
-/// Blue sequential steps, dark (near the surface) to light (most).
-const RAMP: [&str; 6] = ["#0d366b", "#184f95", "#256abf", "#3987e5", "#86b6ef", "#cde2fb"];
+/// Sequential steps, near the surface (fewest) to strongest (most). Colours
+/// come from the theme (`--viz-ramp-*` in themes.css).
+const RAMP: [&str; 6] = [
+    "var(--viz-ramp-1)",
+    "var(--viz-ramp-2)",
+    "var(--viz-ramp-3)",
+    "var(--viz-ramp-4)",
+    "var(--viz-ramp-5)",
+    "var(--viz-ramp-6)",
+];
 
 /// Square grid of counts (`size` × `size`, row by row). Empty cells stay the
 /// surface colour; others step through the ramp by their share of the maximum.

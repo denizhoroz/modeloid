@@ -2,6 +2,7 @@
 
 use dioxus::prelude::*;
 
+use crate::api::appearance::Appearance;
 use crate::api::watch::workspace_changes;
 use crate::api::workspace::{current_workspace, WorkspaceInfo};
 
@@ -90,4 +91,13 @@ pub fn use_selected_datasets() -> Signal<Vec<u32>> {
 pub fn use_primary_dataset() -> Memo<Option<u32>> {
     let selected = use_selected_datasets();
     use_memo(move || selected.read().last().copied())
+}
+
+/// Chosen theme, font and text size. Provided in `App`, above the router,
+/// from what the server has saved.
+#[derive(Clone, Copy)]
+pub struct AppearanceState(pub Signal<Appearance>);
+
+pub fn use_appearance() -> Signal<Appearance> {
+    use_context::<AppearanceState>().0
 }

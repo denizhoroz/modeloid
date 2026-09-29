@@ -1,36 +1,16 @@
 /* ==========================================================================
-   Tokens — change colors, spacing and sizes here, not in the rules below.
+   Tokens — change spacing and sizes here, not in the rules below.
+   Colors and fonts live in themes.css (one block per theme / font).
    ========================================================================== */
 :root {
-    color-scheme: dark;
-
-    /* Color */
-    --color-bg: #0f172a;
-    --color-surface: #0b1222;
-    --color-surface-hover: #1e293b;
-    --color-border: #1e293b;
-    --color-border-strong: #475569;
-    --color-fg: #f8fafc;
-    --color-fg-muted: #94a3b8;
-    --color-accent: #22c55e;
-    --color-accent-fg: #4ade80;
-    --color-accent-soft: rgb(34 197 94 / 0.12);
-    --color-focus: #4ade80;
-    --color-danger-fg: #f87171;
-    --color-danger-soft: rgb(248 113 113 / 0.1);
-    --color-warning: #fbbf24;
-    --color-warning-soft: rgb(251 191 36 / 0.08);
-    --color-info: #60a5fa;
-    --color-scrim: rgb(2 6 23 / 0.6);
-
-    /* Type (compact desktop scale; mobile bumps it back up below) */
-    --font-sans: "JetBrains Mono", "Cascadia Code", "Fira Code", "SF Mono", Menlo,
-        Consolas, "Liberation Mono", ui-monospace, monospace;
-    --text-xs: 0.6875rem; /* 11px, uppercase labels only */
-    --text-sm: 0.8125rem; /* 13px */
-    --text-base: 0.875rem; /* 14px */
-    --text-xl: 1.125rem;
-    --text-2xl: 1.375rem;
+    /* Type (compact desktop scale; mobile bumps it back up below).
+       Set the *-size tokens; rules use --text-*, which apply the text size
+       chosen in Settings (--font-scale, see themes.css). */
+    --text-xs-size: 0.6875rem; /* 11px, uppercase labels only */
+    --text-sm-size: 0.8125rem; /* 13px */
+    --text-base-size: 0.875rem; /* 14px */
+    --text-xl-size: 1.125rem;
+    --text-2xl-size: 1.375rem;
     --leading: 1.45;
 
     /* Spacing (2/4px scale) */
@@ -60,6 +40,17 @@
     --z-skip: 100;
 }
 
+/* Re-resolved wherever data-scale is set, so the app wrapper (rendered on
+   the server) and <html> both get the chosen size. */
+:root,
+[data-scale] {
+    --text-xs: calc(var(--text-xs-size) * var(--font-scale, 1));
+    --text-sm: calc(var(--text-sm-size) * var(--font-scale, 1));
+    --text-base: calc(var(--text-base-size) * var(--font-scale, 1));
+    --text-xl: calc(var(--text-xl-size) * var(--font-scale, 1));
+    --text-2xl: calc(var(--text-2xl-size) * var(--font-scale, 1));
+}
+
 /* ==========================================================================
    Base
    ========================================================================== */
@@ -69,7 +60,8 @@
     box-sizing: border-box;
 }
 
-body {
+body,
+.app-theme {
     margin: 0;
     background: var(--color-bg);
     color: var(--color-fg);
@@ -105,7 +97,7 @@ button {
     z-index: var(--z-skip);
     padding: var(--space-2) var(--space-4);
     background: var(--color-accent);
-    color: var(--color-bg);
+    color: var(--color-accent-on);
     font-weight: 600;
     border-radius: var(--radius-sm);
     transform: translateY(-200%);
@@ -620,7 +612,7 @@ a.workspace-button {
     border: 1px solid var(--color-accent);
     border-radius: var(--radius-sm);
     background: var(--color-accent);
-    color: var(--color-bg);
+    color: var(--color-accent-on);
     font-size: var(--text-sm);
     font-weight: 600;
     text-decoration: none;
@@ -1231,6 +1223,160 @@ fieldset.section-card:disabled {
     border-top: 1px solid var(--color-border);
 }
 
+/* Settings: appearance */
+.appearance-field {
+    margin: 0;
+    padding: 0;
+    border: 0;
+    min-width: 0;
+}
+
+.settings-card > .appearance-field + .appearance-field {
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--color-border);
+}
+
+.appearance-field > .field-label {
+    padding: 0;
+    margin-bottom: var(--space-1);
+}
+
+.theme-group + .theme-group {
+    margin-top: var(--space-3);
+}
+
+.theme-group-title {
+    margin: 0 0 var(--space-1);
+    color: var(--color-fg-muted);
+    font-size: var(--text-xs);
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.theme-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: var(--space-2);
+}
+
+.theme-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    padding: var(--space-1);
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: border-color var(--duration) var(--ease-out);
+}
+
+.theme-card:hover {
+    border-color: var(--color-fg-muted);
+}
+
+.theme-card:has(input:checked) {
+    border-color: var(--color-accent);
+    box-shadow: inset 0 0 0 1px var(--color-accent);
+}
+
+.theme-card:has(input:focus-visible) {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+}
+
+/* Tiny mock of the app, painted with the card's own theme */
+.theme-preview {
+    display: flex;
+    height: 56px;
+    overflow: hidden;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg);
+}
+
+.theme-preview-side {
+    width: 28%;
+    background: var(--color-surface);
+    border-right: 1px solid var(--color-border);
+}
+
+.theme-preview-main {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    justify-content: center;
+    gap: var(--space-1);
+    padding: 0 var(--space-2);
+}
+
+.theme-preview-text {
+    color: var(--color-fg);
+    font-size: var(--text-sm);
+    font-weight: 700;
+    line-height: 1;
+}
+
+.theme-preview-line {
+    width: 70%;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--color-fg-muted);
+}
+
+.theme-preview-accent {
+    width: 40%;
+    height: 8px;
+    border-radius: 2px;
+    background: var(--color-accent);
+}
+
+.theme-card-name {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-2);
+    padding: 0 var(--space-1);
+    font-size: var(--text-sm);
+    font-weight: 600;
+}
+
+.font-option-note {
+    color: var(--color-fg-muted);
+    font-size: var(--text-xs);
+    font-weight: 400;
+}
+
+.font-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-0-5);
+}
+
+.font-option {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-height: var(--nav-item-height);
+    padding: 0 var(--space-2);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+}
+
+.font-option:hover {
+    background: var(--color-surface-hover);
+}
+
+.font-option input {
+    margin: 0;
+    accent-color: var(--color-accent);
+}
+
+.font-option-name {
+    flex: 1;
+    font-size: var(--text-base);
+}
+
 /* Import: pick button + chosen path on one line */
 .folder-pick-row {
     display: flex;
@@ -1275,7 +1421,7 @@ fieldset.section-card:disabled {
     padding: var(--space-2) var(--space-3);
     border: 1px solid var(--color-danger-fg);
     border-radius: var(--radius-sm);
-    background: rgb(248 113 113 / 0.08);
+    background: var(--color-danger-soft);
     color: var(--color-danger-fg);
     font-size: var(--text-sm);
     overflow-wrap: anywhere;
@@ -1309,8 +1455,8 @@ fieldset.section-card:disabled {
 @media (max-width: 767px) {
     /* Touch screens: readable text and 44px tap targets */
     :root {
-        --text-sm: 0.875rem;
-        --text-base: 1rem;
+        --text-sm-size: 0.875rem;
+        --text-base-size: 1rem;
         --nav-item-height: 44px;
         --control-height: 44px;
         --input-height: 44px;
@@ -1401,14 +1547,8 @@ fieldset.section-card:disabled {
 
 /* ==========================================================================
    Explore: charts, gallery, image detail
-   Data colour: one hue (reference palette, dark step), validated >= 3:1 on
-   --color-surface. The heatmap ramp lives in components/charts.rs.
+   Data colours (--viz-*) are per theme, in themes.css.
    ========================================================================== */
-:root {
-    --viz-series: #3987e5;
-    --viz-track: #1e293b;
-    --viz-overlay: #4ade80;
-}
 
 .page.page-wide {
     max-width: 1200px;
@@ -1775,7 +1915,7 @@ button.bar-row:hover,
 }
 
 .overlay-shape {
-    fill: rgb(74 222 128 / 0.08);
+    fill: var(--viz-overlay-fill);
     stroke: var(--viz-overlay);
     stroke-width: 1.5px;
     vector-effect: non-scaling-stroke;
@@ -1783,7 +1923,7 @@ button.bar-row:hover,
 
 .overlay-shape.is-dim {
     fill: none;
-    stroke: rgb(248 250 252 / 0.35);
+    stroke: var(--viz-outline);
 }
 
 .gallery-caption {
@@ -1882,7 +2022,7 @@ button.bar-row:hover,
     padding: 0 4px;
     border-radius: 2px 2px 0 0;
     background: var(--viz-overlay);
-    color: #052e16;
+    color: var(--viz-overlay-on);
     font-size: var(--text-xs);
     font-weight: 600;
     white-space: nowrap;

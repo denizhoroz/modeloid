@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 
 use crate::api::settings::ServiceId;
-use crate::components::CredentialField;
+use crate::components::{AppearanceSettings, CredentialField};
 
 #[component]
 pub fn Settings() -> Element {
@@ -9,6 +9,12 @@ pub fn Settings() -> Element {
         document::Title { "Settings · Modeloid" }
         div { class: "page",
             h1 { "Settings" }
+
+            section { class: "settings-section", aria_labelledby: "settings-appearance",
+                h2 { id: "settings-appearance", class: "settings-section-title", "Appearance" }
+                p { class: "settings-section-lead", "How Modeloid looks on this computer." }
+                AppearanceSettings {}
+            }
 
             section { class: "settings-section", aria_labelledby: "settings-api-keys",
                 h2 { id: "settings-api-keys", class: "settings-section-title", "API Keys" }

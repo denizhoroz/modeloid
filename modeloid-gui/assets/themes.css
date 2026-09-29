@@ -1,0 +1,674 @@
+/* ==========================================================================
+   Themes, fonts and text sizes, chosen in Settings → Appearance.
+
+   The app wrapper and <html> carry data-theme / data-font / data-scale.
+   A block applies to any element with the attribute, so the theme cards in
+   Settings preview each theme by setting data-theme on themselves.
+
+   Adding a theme: copy a block, fill EVERY token below, then add it to
+   THEMES in src/api/appearance.rs. Check contrast: --color-fg and
+   --color-fg-muted >= 4.5:1 on --color-bg and --color-surface,
+   --color-accent-on >= 4.5:1 on --color-accent, --viz-* >= 3:1 on surface.
+
+   Tokens:
+     color-scheme
+     --color-bg, --color-surface, --color-surface-hover
+     --color-border, --color-border-strong
+     --color-fg, --color-fg-muted
+     --color-accent (fills), --color-accent-on (text on accent),
+     --color-accent-fg (accent text), --color-accent-soft, --color-focus
+     --color-danger-fg, --color-danger-soft
+     --color-warning, --color-warning-soft, --color-info, --color-scrim
+     --viz-series, --viz-track, --viz-ramp-1..6 (few → many)
+     --viz-overlay, --viz-overlay-fill, --viz-overlay-on, --viz-outline
+       (label boxes drawn over photos, so usually the same in every theme)
+   ========================================================================== */
+
+/* ==========================================================================
+   Dark themes
+   ========================================================================== */
+/* Lime (default): near-black + lime, the old app's palette. It had no warning or chart
+   colours; those are picked to match (pastel amber, lime ramp). */
+:root,
+[data-theme="lime"] {
+    color-scheme: dark;
+
+    --color-bg: #0a0a0a;
+    --color-surface: #141414;
+    --color-surface-hover: #1c1c1c;
+    --color-border: #2a2a2a;
+    --color-border-strong: #3a3a3a;
+    --color-fg: #e6e6e6;
+    --color-fg-muted: #9a9a9a;
+    --color-accent: #c8f47a;
+    --color-accent-on: #0a0a0a;
+    --color-accent-fg: #c8f47a;
+    --color-accent-soft: rgb(200 244 122 / 0.14);
+    --color-focus: #d7f897;
+    --color-danger-fg: #f2b5b5;
+    --color-danger-soft: rgb(242 181 181 / 0.1);
+    --color-warning: #f2d49b;
+    --color-warning-soft: rgb(242 212 155 / 0.1);
+    --color-info: #cfcfcf;
+    --color-scrim: rgb(0 0 0 / 0.6);
+
+    --viz-series: #c8f47a;
+    --viz-track: #242424;
+    --viz-ramp-1: #3c452a;
+    --viz-ramp-2: #5c6e3d;
+    --viz-ramp-3: #7c964f;
+    --viz-ramp-4: #9dbe62;
+    --viz-ramp-5: #bae272;
+    --viz-ramp-6: #d6eeab;
+    --viz-overlay: #4ade80;
+    --viz-overlay-fill: rgb(74 222 128 / 0.08);
+    --viz-overlay-on: #052e16;
+    --viz-outline: rgb(248 250 252 / 0.35);
+}
+
+/* Catppuccin Mocha: accent mauve, data blue */
+[data-theme="catppuccin"] {
+    color-scheme: dark;
+
+    --color-bg: #1e1e2e;
+    --color-surface: #181825;
+    --color-surface-hover: #313244;
+    --color-border: #313244;
+    --color-border-strong: #585b70;
+    --color-fg: #cdd6f4;
+    --color-fg-muted: #a6adc8;
+    --color-accent: #cba6f7;
+    --color-accent-on: #11111b;
+    --color-accent-fg: #cba6f7;
+    --color-accent-soft: rgb(203 166 247 / 0.14);
+    --color-focus: #b4befe;
+    --color-danger-fg: #f38ba8;
+    --color-danger-soft: rgb(243 139 168 / 0.1);
+    --color-warning: #f9e2af;
+    --color-warning-soft: rgb(249 226 175 / 0.1);
+    --color-info: #89b4fa;
+    --color-scrim: rgb(17 17 27 / 0.6);
+
+    --viz-series: #89b4fa;
+    --viz-track: #313244;
+    --viz-ramp-1: #313a54;
+    --viz-ramp-2: #45567a;
+    --viz-ramp-3: #5a72a1;
+    --viz-ramp-4: #6e8fc7;
+    --viz-ramp-5: #80a8e9;
+    --viz-ramp-6: #a8c3f7;
+    --viz-overlay: #4ade80;
+    --viz-overlay-fill: rgb(74 222 128 / 0.08);
+    --viz-overlay-on: #052e16;
+    --viz-outline: rgb(248 250 252 / 0.35);
+}
+
+/* Rosé Pine (main): accent rose, data foam */
+[data-theme="rose-pine"] {
+    color-scheme: dark;
+
+    --color-bg: #191724;
+    --color-surface: #1f1d2e;
+    --color-surface-hover: #26233a;
+    --color-border: #26233a;
+    --color-border-strong: #524f67;
+    --color-fg: #e0def4;
+    --color-fg-muted: #908caa;
+    --color-accent: #ebbcba;
+    --color-accent-on: #191724;
+    --color-accent-fg: #ebbcba;
+    --color-accent-soft: rgb(235 188 186 / 0.14);
+    --color-focus: #c4a7e7;
+    --color-danger-fg: #eb6f92;
+    --color-danger-soft: rgb(235 111 146 / 0.1);
+    --color-warning: #f6c177;
+    --color-warning-soft: rgb(246 193 119 / 0.1);
+    --color-info: #9ccfd8;
+    --color-scrim: rgb(25 23 36 / 0.6);
+
+    --viz-series: #9ccfd8;
+    --viz-track: #26233a;
+    --viz-ramp-1: #3a4453;
+    --viz-ramp-2: #516472;
+    --viz-ramp-3: #688491;
+    --viz-ramp-4: #7ea4af;
+    --viz-ramp-5: #92c1ca;
+    --viz-ramp-6: #bbd6e5;
+    --viz-overlay: #4ade80;
+    --viz-overlay-fill: rgb(74 222 128 / 0.08);
+    --viz-overlay-on: #052e16;
+    --viz-outline: rgb(248 250 252 / 0.35);
+}
+
+/* Tokyo Night (night): accent and data blue */
+[data-theme="tokyo-night"] {
+    color-scheme: dark;
+
+    --color-bg: #1a1b26;
+    --color-surface: #16161e;
+    --color-surface-hover: #292e42;
+    --color-border: #292e42;
+    --color-border-strong: #414868;
+    --color-fg: #c0caf5;
+    --color-fg-muted: #a9b1d6;
+    --color-accent: #7aa2f7;
+    --color-accent-on: #1a1b26;
+    --color-accent-fg: #7aa2f7;
+    --color-accent-soft: rgb(122 162 247 / 0.14);
+    --color-focus: #7dcfff;
+    --color-danger-fg: #f7768e;
+    --color-danger-soft: rgb(247 118 142 / 0.1);
+    --color-warning: #e0af68;
+    --color-warning-soft: rgb(224 175 104 / 0.1);
+    --color-info: #7dcfff;
+    --color-scrim: rgb(22 22 30 / 0.6);
+
+    --viz-series: #7aa2f7;
+    --viz-track: #292e42;
+    --viz-ramp-1: #2c354e;
+    --viz-ramp-2: #3e4e75;
+    --viz-ramp-3: #50679c;
+    --viz-ramp-4: #6280c3;
+    --viz-ramp-5: #7297e6;
+    --viz-ramp-6: #9ab4f6;
+    --viz-overlay: #4ade80;
+    --viz-overlay-fill: rgb(74 222 128 / 0.08);
+    --viz-overlay-on: #052e16;
+    --viz-outline: rgb(248 250 252 / 0.35);
+}
+
+/* Gruvbox Dark (medium): accent yellow, data blue */
+[data-theme="gruvbox"] {
+    color-scheme: dark;
+
+    --color-bg: #282828;
+    --color-surface: #1d2021;
+    --color-surface-hover: #3c3836;
+    --color-border: #3c3836;
+    --color-border-strong: #665c54;
+    --color-fg: #ebdbb2;
+    --color-fg-muted: #a89984;
+    --color-accent: #fabd2f;
+    --color-accent-on: #282828;
+    --color-accent-fg: #fabd2f;
+    --color-accent-soft: rgb(250 189 47 / 0.14);
+    --color-focus: #fe8019;
+    --color-danger-fg: #fb4934;
+    --color-danger-soft: rgb(251 73 52 / 0.1);
+    --color-warning: #fe8019;
+    --color-warning-soft: rgb(254 128 25 / 0.1);
+    --color-info: #83a598;
+    --color-scrim: rgb(29 32 33 / 0.6);
+
+    --viz-series: #83a598;
+    --viz-track: #3c3836;
+    --viz-ramp-1: #333d3b;
+    --viz-ramp-2: #465551;
+    --viz-ramp-3: #586d66;
+    --viz-ramp-4: #6b857b;
+    --viz-ramp-5: #7b9a8e;
+    --viz-ramp-6: #b2bda4;
+    --viz-overlay: #4ade80;
+    --viz-overlay-fill: rgb(74 222 128 / 0.08);
+    --viz-overlay-on: #052e16;
+    --viz-outline: rgb(248 250 252 / 0.35);
+}
+
+/* Dracula: accent purple, data cyan. Its comment grey (#6272a4) is too dim
+   for text, so muted text is a lighter blue-grey. */
+[data-theme="dracula"] {
+    color-scheme: dark;
+
+    --color-bg: #282a36;
+    --color-surface: #21222c;
+    --color-surface-hover: #44475a;
+    --color-border: #343746;
+    --color-border-strong: #6272a4;
+    --color-fg: #f8f8f2;
+    --color-fg-muted: #9ea8c7;
+    --color-accent: #bd93f9;
+    --color-accent-on: #282a36;
+    --color-accent-fg: #bd93f9;
+    --color-accent-soft: rgb(189 147 249 / 0.14);
+    --color-focus: #ff79c6;
+    --color-danger-fg: #ff5555;
+    --color-danger-soft: rgb(255 85 85 / 0.1);
+    --color-warning: #ffb86c;
+    --color-warning-soft: rgb(255 184 108 / 0.1);
+    --color-info: #8be9fd;
+    --color-scrim: rgb(25 26 33 / 0.6);
+
+    --viz-series: #8be9fd;
+    --viz-track: #343746;
+    --viz-ramp-1: #384e5a;
+    --viz-ramp-2: #4b7280;
+    --viz-ramp-3: #5e95a5;
+    --viz-ramp-4: #72b9cb;
+    --viz-ramp-5: #83d9ec;
+    --viz-ramp-6: #bcf0f8;
+    --viz-overlay: #4ade80;
+    --viz-overlay-fill: rgb(74 222 128 / 0.08);
+    --viz-overlay-on: #052e16;
+    --viz-outline: rgb(248 250 252 / 0.35);
+}
+
+/* Nord: accent frost cyan, data frost blue. Muted text is a mid Snow Storm grey */
+[data-theme="nord"] {
+    color-scheme: dark;
+
+    --color-bg: #2e3440;
+    --color-surface: #3b4252;
+    --color-surface-hover: #434c5e;
+    --color-border: #434c5e;
+    --color-border-strong: #848ea2;
+    --color-fg: #eceff4;
+    --color-fg-muted: #aeb5c3;
+    --color-accent: #88c0d0;
+    --color-accent-on: #000000;
+    --color-accent-fg: #88c0d0;
+    --color-accent-soft: rgb(136 192 208 / 0.14);
+    --color-focus: #8fbcbb;
+    --color-danger-fg: #d89fa4;
+    --color-danger-soft: rgb(216 159 164 / 0.1);
+    --color-warning: #ebcb8b;
+    --color-warning-soft: rgb(235 203 139 / 0.1);
+    --color-info: #96b1cc;
+    --color-scrim: rgb(36 41 51 / 0.6);
+
+    --viz-series: #81a1c1;
+    --viz-track: #434c5e;
+    --viz-ramp-1: #4a576a;
+    --viz-ramp-2: #57687e;
+    --viz-ramp-3: #647992;
+    --viz-ramp-4: #708aa6;
+    --viz-ramp-5: #7b99b8;
+    --viz-ramp-6: #bacbdd;
+    --viz-overlay: #4ade80;
+    --viz-overlay-fill: rgb(74 222 128 / 0.08);
+    --viz-overlay-on: #052e16;
+    --viz-outline: rgb(248 250 252 / 0.35);
+}
+
+/* Everforest Dark (medium): accent green, data blue */
+[data-theme="everforest"] {
+    color-scheme: dark;
+
+    --color-bg: #2d353b;
+    --color-surface: #232a2e;
+    --color-surface-hover: #343f44;
+    --color-border: #3d484d;
+    --color-border-strong: #7a8478;
+    --color-fg: #d3c6aa;
+    --color-fg-muted: #9da9a0;
+    --color-accent: #a7c080;
+    --color-accent-on: #000000;
+    --color-accent-fg: #a7c080;
+    --color-accent-soft: rgb(167 192 128 / 0.14);
+    --color-focus: #83c092;
+    --color-danger-fg: #e67e80;
+    --color-danger-soft: rgb(230 126 128 / 0.1);
+    --color-warning: #dbbc7f;
+    --color-warning-soft: rgb(219 188 127 / 0.1);
+    --color-info: #7fbbb3;
+    --color-scrim: rgb(30 35 38 / 0.6);
+
+    --viz-series: #7fbbb3;
+    --viz-track: #343f44;
+    --viz-ramp-1: #374a4b;
+    --viz-ramp-2: #486463;
+    --viz-ramp-3: #587e7b;
+    --viz-ramp-4: #699893;
+    --viz-ramp-5: #78afa8;
+    --viz-ramp-6: #b9dad5;
+    --viz-overlay: #4ade80;
+    --viz-overlay-fill: rgb(74 222 128 / 0.08);
+    --viz-overlay-on: #052e16;
+    --viz-outline: rgb(248 250 252 / 0.35);
+}
+
+/* ==========================================================================
+   Light themes. The official light palettes are pale, so colours used as
+   text are darkened, same hue, just enough to pass the contrast rules above,
+   and the accent is darkened to >= 3:1 on the background (it also draws
+   borders, the active-nav bar and checkboxes).
+   ========================================================================== */
+
+/* Lime Light: the Lime theme on white. #c8f47a is too pale for borders and
+   markers on white, so the accent is a stronger lime (still black text on
+   it); red and amber are saturated versions of the old pastel ones */
+[data-theme="lime-light"] {
+    color-scheme: light;
+
+    --color-bg: #f7f7f5;
+    --color-surface: #ffffff;
+    --color-surface-hover: #efefec;
+    --color-border: #e2e2de;
+    --color-border-strong: #8f8f8b;
+    --color-fg: #141414;
+    --color-fg-muted: #5c5c5c;
+    --color-accent: #629e0d;
+    --color-accent-on: #0a0a0a;
+    --color-accent-fg: #4d7c0f;
+    --color-accent-soft: rgb(98 158 13 / 0.14);
+    --color-focus: #4d7c0f;
+    --color-danger-fg: #b91c1c;
+    --color-danger-soft: rgb(185 28 28 / 0.08);
+    --color-warning: #a16207;
+    --color-warning-soft: rgb(161 98 7 / 0.1);
+    --color-info: #5c5c5c;
+    --color-scrim: rgb(10 10 10 / 0.4);
+
+    --viz-series: #629e0d;
+    --viz-track: #e8e8e4;
+    --viz-ramp-1: #dceaca;
+    --viz-ramp-2: #c0d89e;
+    --viz-ramp-3: #a4c773;
+    --viz-ramp-4: #88b547;
+    --viz-ramp-5: #6fa620;
+    --viz-ramp-6: #406708;
+    --viz-overlay: #4ade80;
+    --viz-overlay-fill: rgb(74 222 128 / 0.08);
+    --viz-overlay-on: #052e16;
+    --viz-outline: rgb(248 250 252 / 0.35);
+}
+
+/* Catppuccin Latte: accent mauve, data blue */
+[data-theme="catppuccin-latte"] {
+    color-scheme: light;
+
+    --color-bg: #eff1f5;
+    --color-surface: #e6e9ef;
+    --color-surface-hover: #ccd0da;
+    --color-border: #ccd0da;
+    --color-border-strong: #818592;
+    --color-fg: #4c4f69;
+    --color-fg-muted: #64677c;
+    --color-accent: #8839ef;
+    --color-accent-on: #ffffff;
+    --color-accent-fg: #8738ed;
+    --color-accent-soft: rgb(136 57 239 / 0.12);
+    --color-focus: #697ce9;
+    --color-danger-fg: #d00f38;
+    --color-danger-soft: rgb(208 15 56 / 0.08);
+    --color-warning: #915c13;
+    --color-warning-soft: rgb(145 92 19 / 0.1);
+    --color-info: #1c5fe4;
+    --color-scrim: rgb(76 79 105 / 0.4);
+
+    --viz-series: #1e66f5;
+    --viz-track: #ccd0da;
+    --viz-ramp-1: #baccf0;
+    --viz-ramp-2: #96b5f1;
+    --viz-ramp-3: #729df2;
+    --viz-ramp-4: #4e85f4;
+    --viz-ramp-5: #2e70f5;
+    --viz-ramp-6: #14429f;
+    --viz-overlay: #4ade80;
+    --viz-overlay-fill: rgb(74 222 128 / 0.08);
+    --viz-overlay-on: #052e16;
+    --viz-outline: rgb(248 250 252 / 0.35);
+}
+
+/* Rosé Pine Dawn: accent rose, data foam */
+[data-theme="rose-pine-dawn"] {
+    color-scheme: light;
+
+    --color-bg: #faf4ed;
+    --color-surface: #fffaf3;
+    --color-surface-hover: #f2e9e1;
+    --color-border: #dfdad9;
+    --color-border-strong: #8f8a9b;
+    --color-fg: #575279;
+    --color-fg-muted: #716d89;
+    --color-accent: #a66461;
+    --color-accent-on: #ffffff;
+    --color-accent-fg: #a45a6f;
+    --color-accent-soft: rgb(166 100 97 / 0.12);
+    --color-focus: #907aa9;
+    --color-danger-fg: #a45a6f;
+    --color-danger-soft: rgb(164 90 111 / 0.08);
+    --color-warning: #986622;
+    --color-warning-soft: rgb(152 102 34 / 0.1);
+    --color-info: #286983;
+    --color-scrim: rgb(87 82 121 / 0.4);
+
+    --viz-series: #56949f;
+    --viz-track: #f2e9e1;
+    --viz-ramp-1: #dae4e1;
+    --viz-ramp-2: #bbd1d1;
+    --viz-ramp-3: #9dbfc2;
+    --viz-ramp-4: #7facb3;
+    --viz-ramp-5: #649ca6;
+    --viz-ramp-6: #386067;
+    --viz-overlay: #4ade80;
+    --viz-overlay-fill: rgb(74 222 128 / 0.08);
+    --viz-overlay-on: #052e16;
+    --viz-outline: rgb(248 250 252 / 0.35);
+}
+
+/* Tokyo Night Day: accent and data blue */
+[data-theme="tokyo-night-day"] {
+    color-scheme: light;
+
+    --color-bg: #e1e2e7;
+    --color-surface: #d0d5e3;
+    --color-surface-hover: #c4c8da;
+    --color-border: #c4c8da;
+    --color-border-strong: #72768c;
+    --color-fg: #3358b0;
+    --color-fg-muted: #4d5a8b;
+    --color-accent: #2b74d9;
+    --color-accent-on: #ffffff;
+    --color-accent-fg: #225baa;
+    --color-accent-soft: rgb(43 116 217 / 0.12);
+    --color-focus: #007197;
+    --color-danger-fg: #b01e49;
+    --color-danger-soft: rgb(176 30 73 / 0.08);
+    --color-warning: #8f4b00;
+    --color-warning-soft: rgb(143 75 0 / 0.1);
+    --color-info: #006385;
+    --color-scrim: rgb(51 88 176 / 0.4);
+
+    --viz-series: #2b76db;
+    --viz-track: #c4c8da;
+    --viz-ramp-1: #acc0e1;
+    --viz-ramp-2: #8eafe0;
+    --viz-ramp-3: #709ede;
+    --viz-ramp-4: #538ddd;
+    --viz-ramp-5: #387edc;
+    --viz-ramp-6: #1c4d8e;
+    --viz-overlay: #4ade80;
+    --viz-overlay-fill: rgb(74 222 128 / 0.08);
+    --viz-overlay-on: #052e16;
+    --viz-outline: rgb(248 250 252 / 0.35);
+}
+
+/* Gruvbox Light (medium): accent yellow, data blue */
+[data-theme="gruvbox-light"] {
+    color-scheme: light;
+
+    --color-bg: #fbf1c7;
+    --color-surface: #f2e5bc;
+    --color-surface-hover: #ebdbb2;
+    --color-border: #ebdbb2;
+    --color-border-strong: #8e826e;
+    --color-fg: #3c3836;
+    --color-fg-muted: #70645a;
+    --color-accent: #a36a12;
+    --color-accent-on: #ffffff;
+    --color-accent-fg: #8d5c10;
+    --color-accent-soft: rgb(163 106 18 / 0.12);
+    --color-focus: #af3a03;
+    --color-danger-fg: #9d0006;
+    --color-danger-soft: rgb(157 0 6 / 0.08);
+    --color-warning: #af3a03;
+    --color-warning-soft: rgb(175 58 3 / 0.1);
+    --color-info: #076678;
+    --color-scrim: rgb(60 56 54 / 0.4);
+
+    --viz-series: #076678;
+    --viz-track: #ebdbb2;
+    --viz-ramp-1: #bec9ad;
+    --viz-ramp-2: #94b2a1;
+    --viz-ramp-3: #6a9b95;
+    --viz-ramp-4: #3f8488;
+    --viz-ramp-5: #1a707d;
+    --viz-ramp-6: #05424e;
+    --viz-overlay: #4ade80;
+    --viz-overlay-fill: rgb(74 222 128 / 0.08);
+    --viz-overlay-on: #052e16;
+    --viz-outline: rgb(248 250 252 / 0.35);
+}
+
+/* Nord Light: not an official Nord theme; built from Nord's Snow Storm
+   and Frost colours */
+[data-theme="nord-light"] {
+    color-scheme: light;
+
+    --color-bg: #eceff4;
+    --color-surface: #e5e9f0;
+    --color-surface-hover: #d8dee9;
+    --color-border: #d8dee9;
+    --color-border-strong: #79859e;
+    --color-fg: #2e3440;
+    --color-fg-muted: #4c566a;
+    --color-accent: #5e81ac;
+    --color-accent-on: #000000;
+    --color-accent-fg: #4e6b8f;
+    --color-accent-soft: rgb(94 129 172 / 0.12);
+    --color-focus: #5e81ac;
+    --color-danger-fg: #a05159;
+    --color-danger-soft: rgb(160 81 89 / 0.08);
+    --color-warning: #8d5c4c;
+    --color-warning-soft: rgb(141 92 76 / 0.1);
+    --color-info: #4e6b8f;
+    --color-scrim: rgb(46 52 64 / 0.4);
+
+    --viz-series: #5e81ac;
+    --viz-track: #d8dee9;
+    --viz-ramp-1: #c7d2e1;
+    --viz-ramp-2: #afbfd5;
+    --viz-ramp-3: #97adc9;
+    --viz-ramp-4: #7e9abc;
+    --viz-ramp-5: #6989b1;
+    --viz-ramp-6: #3d5470;
+    --viz-overlay: #4ade80;
+    --viz-overlay-fill: rgb(74 222 128 / 0.08);
+    --viz-overlay-on: #052e16;
+    --viz-outline: rgb(248 250 252 / 0.35);
+}
+
+/* Everforest Light (medium): accent green, data blue */
+[data-theme="everforest-light"] {
+    color-scheme: light;
+
+    --color-bg: #fdf6e3;
+    --color-surface: #f4f0d9;
+    --color-surface-hover: #efebd4;
+    --color-border: #e6e2cc;
+    --color-border-strong: #818c80;
+    --color-fg: #5c6a72;
+    --color-fg-muted: #647063;
+    --color-accent: #809301;
+    --color-accent-on: #000000;
+    --color-accent-fg: #667401;
+    --color-accent-soft: rgb(128 147 1 / 0.12);
+    --color-focus: #319b73;
+    --color-danger-fg: #bf413f;
+    --color-danger-soft: rgb(191 65 63 / 0.08);
+    --color-warning: #a9561a;
+    --color-warning-soft: rgb(169 86 26 / 0.1);
+    --color-info: #2d739a;
+    --color-scrim: rgb(92 106 114 / 0.4);
+
+    --viz-series: #3991c1;
+    --viz-track: #efebd4;
+    --viz-ramp-1: #cbdbd4;
+    --viz-ramp-2: #a9cacf;
+    --viz-ramp-3: #88b9cb;
+    --viz-ramp-4: #66a8c7;
+    --viz-ramp-5: #4899c3;
+    --viz-ramp-6: #255e7d;
+    --viz-overlay: #4ade80;
+    --viz-overlay-fill: rgb(74 222 128 / 0.08);
+    --viz-overlay-on: #052e16;
+    --viz-outline: rgb(248 250 252 / 0.35);
+}
+
+/* Solarized Light: accent and data blue. Body text is base01 (base00 is
+   too light on base3 for small text) */
+[data-theme="solarized-light"] {
+    color-scheme: light;
+
+    --color-bg: #fdf6e3;
+    --color-surface: #eee8d5;
+    --color-surface-hover: #dedbcc;
+    --color-border: #d3d3c5;
+    --color-border-strong: #7b8787;
+    --color-fg: #566c73;
+    --color-fg-muted: #586b72;
+    --color-accent: #217ab9;
+    --color-accent-on: #ffffff;
+    --color-accent-fg: #1e6ca4;
+    --color-accent-soft: rgb(33 122 185 / 0.12);
+    --color-focus: #6c71c4;
+    --color-danger-fg: #c42c2a;
+    --color-danger-soft: rgb(196 44 42 / 0.08);
+    --color-warning: #b54314;
+    --color-warning-soft: rgb(181 67 20 / 0.1);
+    --color-info: #1e746d;
+    --color-scrim: rgb(7 54 66 / 0.4);
+
+    --viz-series: #268bd2;
+    --viz-track: #dedbcc;
+    --viz-ramp-1: #c2d4d4;
+    --viz-ramp-2: #9ec3d4;
+    --viz-ramp-3: #7ab2d3;
+    --viz-ramp-4: #56a1d3;
+    --viz-ramp-5: #3692d2;
+    --viz-ramp-6: #195a88;
+    --viz-overlay: #4ade80;
+    --viz-overlay-fill: rgb(74 222 128 / 0.08);
+    --viz-overlay-on: #052e16;
+    --viz-outline: rgb(248 250 252 / 0.35);
+}
+
+/* ==========================================================================
+   Fonts (faces registered in src/components/fonts.rs)
+   ========================================================================== */
+:root,
+[data-font="jetbrains-mono"] {
+    --font-sans: "JetBrains Mono", "Cascadia Code", "Fira Code", "SF Mono", Menlo,
+        Consolas, "Liberation Mono", ui-monospace, monospace;
+}
+
+[data-font="inter"] {
+    --font-sans: "Inter", "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+}
+
+[data-font="ibm-plex-sans"] {
+    --font-sans: "IBM Plex Sans", "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+}
+
+[data-font="atkinson"] {
+    --font-sans: "Atkinson Hyperlegible Next", Verdana, "Segoe UI", system-ui, sans-serif;
+}
+
+[data-font] {
+    font-family: var(--font-sans);
+}
+
+/* ==========================================================================
+   Text size (multiplies the --text-* tokens in main.css)
+   ========================================================================== */
+[data-scale="small"] {
+    --font-scale: 0.9;
+}
+
+[data-scale="default"] {
+    --font-scale: 1;
+}
+
+[data-scale="large"] {
+    --font-scale: 1.125;
+}

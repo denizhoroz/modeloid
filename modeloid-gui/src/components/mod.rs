@@ -1,3 +1,4 @@
+mod appearance_settings;
 mod charts;
 mod choose_dataset;
 mod credential_field;
@@ -11,6 +12,7 @@ mod resize_handle;
 mod sidebar;
 mod workspace_card;
 
+pub use appearance_settings::AppearanceSettings;
 pub use charts::{Bar, BarList, Heatmap, HistogramChart, StatTile};
 pub use choose_dataset::{PrimaryNote, SelectDatasetHint};
 pub use credential_field::CredentialField;

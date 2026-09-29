@@ -104,6 +104,21 @@ pub struct Settings {
     /// the next one starts there.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     last_folders: BTreeMap<String, PathBuf>,
+    /// How the GUI looks. The ids mean nothing to the core; the GUI falls back
+    /// to its defaults for ones it doesn't know.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    appearance: Option<AppearancePrefs>,
+}
+
+/// GUI look: theme, font family and text size, as ids.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AppearancePrefs {
+    #[serde(default)]
+    pub theme: String,
+    #[serde(default)]
+    pub font: String,
+    #[serde(default)]
+    pub scale: String,
 }
 
 impl Settings {
@@ -153,6 +168,14 @@ impl Settings {
 
     pub fn set_last_folder(&mut self, purpose: &str, dir: PathBuf) {
         self.last_folders.insert(purpose.to_string(), dir);
+    }
+
+    pub fn appearance(&self) -> Option<&AppearancePrefs> {
+        self.appearance.as_ref()
+    }
+
+    pub fn set_appearance(&mut self, prefs: AppearancePrefs) {
+        self.appearance = Some(prefs);
     }
 
     /// Saves validated credentials for `service`, or removes them with `None`.
@@ -252,5 +275,20 @@ mod tests {
 
         let text = toml::to_string(&settings).unwrap();
         assert_eq!(toml::from_str::<Settings>(&text).unwrap(), settings);
+    }
+    #[test]
+    fn appearance_round_trips_and_is_optional() {
+        let old: Settings = toml::from_str("roboflow_api_key = \"abcdefgh1234\"
+").unwrap();
+        assert_eq!(old.appearance(), None);
+
+        let mut settings = old.clone();
+        let prefs = AppearancePrefs { theme: "dracula".into(), font: "inter".into(), scale: "large".into() };
+        settings.set_appearance(prefs.clone());
+        let text = toml::to_string(&settings).unwrap();
+        assert!(text.contains("[appearance]"));
+        let loaded = toml::from_str::<Settings>(&text).unwrap();
+        assert_eq!(loaded.appearance(), Some(&prefs));
+        assert_eq!(loaded.roboflow_api_key(), Some("abcdefgh1234"));
     }
 }

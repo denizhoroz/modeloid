@@ -1,6 +1,7 @@
 //! Server functions. Their bodies run on the server (the user's machine),
 //! which is where the `modeloid` core and the filesystem live.
 
+pub mod appearance;
 pub mod classes;
 pub mod datasets;
 pub mod dialogs;
