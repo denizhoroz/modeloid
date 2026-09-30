@@ -26,10 +26,11 @@ pub async fn class_merge_preview(plan: MergePlan) -> Result<MergePreview, Server
     .await
 }
 
-/// Starts writing the mapped (and merged) dataset.
+/// Starts writing the mapped (and merged) dataset. `delete_inputs` deletes
+/// the input datasets once the new one is written (merges into a new dataset only).
 #[post("/api/classes/run")]
-pub async fn start_class_merge(plan: MergePlan, output: OutputTarget) -> Result<Job, ServerFnError> {
-    backend::run(plan, output).map_err(ServerFnError::new)
+pub async fn start_class_merge(plan: MergePlan, output: OutputTarget, delete_inputs: bool) -> Result<Job, ServerFnError> {
+    backend::run(plan, output, delete_inputs).map_err(ServerFnError::new)
 }
 
 #[get("/api/classes/lists")]
@@ -82,8 +83,11 @@ mod backend {
             .map_err(ServerFnError::new)
     }
 
-    pub fn run(plan: MergePlan, output: OutputTarget) -> Result<Job, String> {
+    pub fn run(plan: MergePlan, output: OutputTarget, delete_inputs: bool) -> Result<Job, String> {
         let ws = open()?;
+        if delete_inputs && (plan.inputs.len() < 2 || matches!(output, OutputTarget::Overwrite)) {
+            return Err("Deleting the inputs works only when merging several datasets into a new one.".into());
+        }
         let output = resolve_output(output, &plan.inputs)?;
         let preview = ws.class_merge_preview(&plan, &Silent).map_err(|e| e.to_string())?;
         if let Some(problem) = preview.problems.first() {
@@ -92,11 +96,23 @@ mod backend {
         if let Some((_, class)) = preview.unmapped.first() {
             return Err(format!("Choose what happens to \"{class}\" first."));
         }
-        let label = preview.input_names.join(" + ");
+        let label = match preview.input_names.as_slice() {
+            [one] => one.clone(),
+            many => format!("{} datasets", many.len()),
+        };
         jobs::start(JobKind::ClassesMerge, vec![label], jobs::Touches::Datasets(plan.inputs.clone()), move |ctx| {
             let reporter = ctx.reporter();
             let (dir, s) = ws.apply_class_merge(&plan, &output, reporter.as_ref()).map_err(|e| e.to_string())?;
-            reporter.message(&format!("{} images, {} removed, {} objects dropped", s.images, s.removed_images, s.dropped_objects));
+            let mut message = format!("{} images, {} removed, {} objects dropped", s.images, s.removed_images, s.dropped_objects);
+            if delete_inputs {
+                // The merged dataset is written; a failure here leaves it and says which inputs stayed.
+                let failed: Vec<String> = plan.inputs.iter().filter_map(|&id| ws.delete_dataset(id).err().map(|e| format!("#{id}: {e}"))).collect();
+                if !failed.is_empty() {
+                    return Err(format!("Merged into {}, but couldn't delete {}", dir.display(), failed.join("; ")));
+                }
+                message.push_str(&format!(", {} source datasets deleted", plan.inputs.len()));
+            }
+            reporter.message(&message);
             Ok(Some(dir.display().to_string()))
         })
     }

@@ -9,14 +9,19 @@ use std::{
     collections::{BTreeSet, HashMap, HashSet},
     fs, io,
     path::{Path, PathBuf},
+    sync::{
+        Mutex,
+        atomic::{AtomicU64, Ordering::Relaxed},
+    },
 };
 
 use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::core::{
-    progress::{Progress, check_cancel},
-    scan::{IMAGE_EXTENSIONS, parse_yaml_names},
+    io::run_parallel,
+    progress::{Cancelled, Progress, check_cancel},
+    scan::{DatasetStats, IMAGE_EXTENSIONS, parse_yaml_names},
 };
 
 /// Name of the COCO annotation file in each split folder (Roboflow's layout).
@@ -140,9 +145,17 @@ pub fn read(dir: &Path, format: LabelFormat, progress: &dyn Progress) -> io::Res
     }
 }
 
+/// What `write` put on disk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Written {
+    /// Size of every file written: images, label files, `data.yaml`.
+    pub bytes: u64,
+}
+
 /// Writes `set` into `dir` (created if missing): images are copied and labels
-/// written in `format`'s layout, one folder per split.
-pub fn write(set: &LabelSet, dir: &Path, format: LabelFormat, progress: &dyn Progress) -> io::Result<()> {
+/// written in `format`'s layout, one folder per split. Files are copied on
+/// the worker threads.
+pub fn write(set: &LabelSet, dir: &Path, format: LabelFormat, progress: &dyn Progress) -> io::Result<Written> {
     progress.set_total(set.images.len() as u64);
     fs::create_dir_all(dir)?;
     match format {
@@ -150,6 +163,99 @@ pub fn write(set: &LabelSet, dir: &Path, format: LabelFormat, progress: &dyn Pro
         LabelFormat::Coco => write_coco(set, dir, progress),
         LabelFormat::Voc => write_voc(set, dir, progress),
     }
+}
+
+/// What `scan_dataset` would find in the folder `set` was just written into
+/// in `format`, without reading the folder again. `None` when there are no
+/// images to go by; scan the folder then.
+pub fn describe(set: &LabelSet, format: LabelFormat, written: Written) -> Option<DatasetStats> {
+    // The scanner counts files with an image extension.
+    let images: Vec<&ImageLabels> = set.images.iter().filter(|i| is_image(Path::new(&i.name))).collect();
+    if images.is_empty() {
+        return None;
+    }
+    let in_split = |split: Split| images.iter().filter(|i| i.split == Some(split)).count() as u32;
+    let formats: BTreeSet<String> = images.iter().map(|i| extension(Path::new(&i.name))).collect();
+    // VOC files name the class of each object, so only classes in use are found.
+    let used: HashSet<usize> = set.images.iter().flat_map(|i| &i.objects).map(|o| o.class).collect();
+    let mut seen = HashSet::new();
+    let class_names = set
+        .classes
+        .iter()
+        .enumerate()
+        .filter(|(id, name)| !name.is_empty() && (format != LabelFormat::Voc || used.contains(id)))
+        .filter(|(_, name)| seen.insert(name.as_str()))
+        .map(|(_, name)| name.clone())
+        .collect();
+    let outlines = format != LabelFormat::Voc && set.has_polygons();
+
+    Some(DatasetStats {
+        dataset_type: if outlines { "instance-segmentation" } else { "object-detection" }.into(),
+        image_format: formats.into_iter().collect::<Vec<_>>().join(","),
+        annotation_format: format.name().into(),
+        image_count: images.len() as u32,
+        label_count: set.images.iter().map(|i| i.objects.len() as u32).sum(),
+        class_names,
+        size_bytes: written.bytes,
+        train_count: in_split(Split::Train),
+        test_count: in_split(Split::Test),
+        val_count: in_split(Split::Val),
+    })
+}
+
+/// `io::run_parallel` for label files: `work` runs over `items` on the worker
+/// threads, counting each on `progress`. A cancel comes back as `Interrupted`.
+fn in_parallel<T: Sync>(items: &[T], progress: &dyn Progress, work: impl Fn(&T) -> io::Result<()> + Sync) -> io::Result<()> {
+    run_parallel(items, progress, || Ok(()), |_, item| Ok(work(item)?)).map_err(|e| {
+        if e.downcast_ref::<Cancelled>().is_some() {
+            return io::Error::new(io::ErrorKind::Interrupted, e);
+        }
+        match e.downcast::<io::Error>() {
+            Ok(error) => *error,
+            Err(other) => io::Error::other(other),
+        }
+    })
+}
+
+/// Reads every file of `files` with `read` on the worker threads. Results
+/// come back in the order of `files`, each with the warnings it raised.
+fn read_each<T: Send>(
+    files: &[&PathBuf],
+    progress: &dyn Progress,
+    read: impl Fn(&Path, &mut Vec<String>) -> io::Result<T> + Sync,
+) -> io::Result<Vec<(T, Vec<String>)>> {
+    let slots: Vec<Mutex<Option<(T, Vec<String>)>>> = files.iter().map(|_| Mutex::new(None)).collect();
+    let indexes: Vec<usize> = (0..files.len()).collect();
+    in_parallel(&indexes, progress, |&i| {
+        let mut warnings = Vec::new();
+        let value = read(files[i], &mut warnings)?;
+        *slots[i].lock().unwrap() = Some((value, warnings));
+        Ok(())
+    })?;
+    Ok(slots.into_iter().filter_map(|slot| slot.into_inner().unwrap()).collect())
+}
+
+/// One image to copy into the output, with its label file if it has its own.
+struct FileJob<'a> {
+    from: &'a Path,
+    to: PathBuf,
+    label: Option<(PathBuf, String)>,
+}
+
+/// Copies the images (and writes their label files) on the worker threads.
+/// Returns the bytes written.
+fn write_files(jobs: &[FileJob], progress: &dyn Progress) -> io::Result<u64> {
+    let bytes = AtomicU64::new(0);
+    in_parallel(jobs, progress, |job| {
+        let mut written = fs::copy(job.from, &job.to)?;
+        if let Some((path, text)) = &job.label {
+            fs::write(path, text)?;
+            written += text.len() as u64;
+        }
+        bytes.fetch_add(written, Relaxed);
+        Ok(())
+    })?;
+    Ok(bytes.into_inner())
 }
 
 // ---------- YOLO ----------
@@ -170,10 +276,11 @@ fn read_yolo(dir: &Path, progress: &dyn Progress) -> io::Result<LabelSet> {
         }
     }
 
-    for file in files.iter().filter(|p| is_image(p)) {
-        tick(progress)?;
+    // Each image's size (from its header) and label file, read on the worker threads.
+    let images: Vec<&PathBuf> = files.iter().filter(|p| is_image(p)).collect();
+    let read = read_each(&images, progress, |file, warnings| {
         let rel = file.strip_prefix(dir).unwrap_or(file);
-        let Some((width, height)) = image_size(file, &mut set.warnings) else { continue };
+        let Some((width, height)) = image_size(file, warnings) else { return Ok(None) };
         let mut image = new_image(file, rel, width, height);
 
         let label_path = yolo_label_path(file);
@@ -184,11 +291,15 @@ fn read_yolo(dir: &Path, progress: &dyn Progress) -> io::Result<LabelSet> {
                 }
                 match parse_yolo_line(line, width as f64, height as f64) {
                     Some(object) => image.objects.push(object),
-                    None => set.warnings.push(format!("{}:{}: invalid label line", label_path.display(), n + 1)),
+                    None => warnings.push(format!("{}:{}: invalid label line", label_path.display(), n + 1)),
                 }
             }
         }
-        set.images.push(image);
+        Ok(Some(image))
+    })?;
+    for (image, warnings) in read {
+        set.warnings.extend(warnings);
+        set.images.extend(image);
     }
 
     // No names found: number the classes that appear.
@@ -236,19 +347,21 @@ fn parse_yolo_line(line: &str, width: f64, height: f64) -> Option<Object> {
     None
 }
 
-fn write_yolo(set: &LabelSet, dir: &Path, progress: &dyn Progress) -> io::Result<()> {
+fn write_yolo(set: &LabelSet, dir: &Path, progress: &dyn Progress) -> io::Result<Written> {
     let mut names = UniqueNames::default();
     let mut splits = BTreeSet::new();
+    // Names, folders and label text first, in order; the files are then written on every thread.
+    let mut jobs = Vec::with_capacity(set.images.len());
 
     for image in &set.images {
         let split_dir = split_dir(dir, image.split);
         let (images_dir, labels_dir) = (split_dir.join("images"), split_dir.join("labels"));
-        fs::create_dir_all(&images_dir)?;
-        fs::create_dir_all(&labels_dir)?;
-        splits.insert(image.split);
+        if splits.insert(image.split) {
+            fs::create_dir_all(&images_dir)?;
+            fs::create_dir_all(&labels_dir)?;
+        }
 
         let name = names.take(image.split, &image.name);
-        fs::copy(&image.file, images_dir.join(&name))?;
 
         let (w, h) = (image.width.max(1) as f64, image.height.max(1) as f64);
         let mut text = String::new();
@@ -268,11 +381,13 @@ fn write_yolo(set: &LabelSet, dir: &Path, progress: &dyn Progress) -> io::Result
             }
             text.push('\n');
         }
-        fs::write(labels_dir.join(Path::new(&name).with_extension("txt")), text)?;
-        progress.add(1);
+        let label = labels_dir.join(Path::new(&name).with_extension("txt"));
+        jobs.push(FileJob { from: &image.file, to: images_dir.join(&name), label: Some((label, text)) });
     }
 
-    fs::write(dir.join("data.yaml"), data_yaml(&set.classes, &splits))
+    let yaml = data_yaml(&set.classes, &splits);
+    fs::write(dir.join("data.yaml"), &yaml)?;
+    Ok(Written { bytes: write_files(&jobs, progress)? + yaml.len() as u64 })
 }
 
 /// Ultralytics `data.yaml`. Split paths are relative to the yaml's folder.
@@ -406,16 +521,19 @@ fn largest_polygon(segmentation: &Value) -> Option<Vec<[f64; 2]>> {
     (values.len() >= 6).then(|| values.chunks_exact(2).map(|p| [p[0], p[1]]).collect())
 }
 
-fn write_coco(set: &LabelSet, dir: &Path, progress: &dyn Progress) -> io::Result<()> {
+fn write_coco(set: &LabelSet, dir: &Path, progress: &dyn Progress) -> io::Result<Written> {
     let mut names = UniqueNames::default();
     let mut splits: HashMap<Option<Split>, (Vec<Value>, Vec<Value>)> = HashMap::new();
     let mut annotation_id = 0;
+    let mut jobs = Vec::with_capacity(set.images.len());
 
     for (image_id, image) in set.images.iter().enumerate() {
         let split_dir = split_dir(dir, image.split);
-        fs::create_dir_all(&split_dir)?;
+        if !splits.contains_key(&image.split) {
+            fs::create_dir_all(&split_dir)?;
+        }
         let name = names.take(image.split, &image.name);
-        fs::copy(&image.file, split_dir.join(&name))?;
+        jobs.push(FileJob { from: &image.file, to: split_dir.join(&name), label: None });
 
         let (images, annotations) = splits.entry(image.split).or_default();
         images.push(json!({ "id": image_id, "file_name": name, "width": image.width, "height": image.height }));
@@ -436,8 +554,8 @@ fn write_coco(set: &LabelSet, dir: &Path, progress: &dyn Progress) -> io::Result
             }));
             annotation_id += 1;
         }
-        progress.add(1);
     }
+    let mut bytes = write_files(&jobs, progress)?;
 
     let categories: Vec<Value> = set
         .classes
@@ -448,9 +566,10 @@ fn write_coco(set: &LabelSet, dir: &Path, progress: &dyn Progress) -> io::Result
     for (split, (images, annotations)) in splits {
         let file = json!({ "images": images, "annotations": annotations, "categories": categories });
         let text = serde_json::to_string(&file).map_err(io::Error::other)?;
+        bytes += text.len() as u64;
         fs::write(split_dir(dir, split).join(COCO_FILE), text)?;
     }
-    Ok(())
+    Ok(Written { bytes })
 }
 
 fn polygon_area(points: &[[f64; 2]]) -> f64 {
@@ -464,8 +583,11 @@ fn polygon_area(points: &[[f64; 2]]) -> f64 {
 fn read_voc(dir: &Path, progress: &dyn Progress) -> io::Result<LabelSet> {
     let mut set = LabelSet::default();
 
-    for file in walk(dir)?.iter().filter(|p| is_image(p)) {
-        tick(progress)?;
+    let files = walk(dir)?;
+    let images: Vec<&PathBuf> = files.iter().filter(|p| is_image(p)).collect();
+    // Each image with its objects as (class name, box); class ids are given
+    // afterwards, in image order, so they don't depend on thread timing.
+    let read = read_each(&images, progress, |file, warnings| {
         let rel = file.strip_prefix(dir).unwrap_or(file);
         let xml_path = file.with_extension("xml");
         let xml = if xml_path.is_file() { Some(read_lossy(&xml_path)?) } else { None };
@@ -476,12 +598,13 @@ fn read_voc(dir: &Path, progress: &dyn Progress) -> io::Result<LabelSet> {
         });
         let (width, height) = match size.filter(|&(w, h): &(u32, u32)| w > 0 && h > 0) {
             Some(size) => size,
-            None => match image_size(file, &mut set.warnings) {
+            None => match image_size(file, warnings) {
                 Some(size) => size,
-                None => continue,
+                None => return Ok(None),
             },
         };
-        let mut image = new_image(file, rel, width, height);
+        let image = new_image(file, rel, width, height);
+        let mut objects = Vec::new();
 
         for object in xml.as_deref().unwrap_or_default().split("<object>").skip(1) {
             let parsed = (|| {
@@ -492,26 +615,35 @@ fn read_voc(dir: &Path, progress: &dyn Progress) -> io::Result<LabelSet> {
                 Some((unescape_xml(name), BBox { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }))
             })();
             match parsed {
-                Some((name, bbox)) => {
-                    let class = set.class_index(&name);
-                    image.objects.push(Object { class, bbox, polygon: None });
-                }
-                None => set.warnings.push(format!("{}: invalid <object> skipped", xml_path.display())),
+                Some(found) => objects.push(found),
+                None => warnings.push(format!("{}: invalid <object> skipped", xml_path.display())),
             }
+        }
+        Ok(Some((image, objects)))
+    })?;
+    for (found, warnings) in read {
+        set.warnings.extend(warnings);
+        let Some((mut image, objects)) = found else { continue };
+        for (name, bbox) in objects {
+            let class = set.class_index(&name);
+            image.objects.push(Object { class, bbox, polygon: None });
         }
         set.images.push(image);
     }
     Ok(set)
 }
 
-fn write_voc(set: &LabelSet, dir: &Path, progress: &dyn Progress) -> io::Result<()> {
+fn write_voc(set: &LabelSet, dir: &Path, progress: &dyn Progress) -> io::Result<Written> {
     let mut names = UniqueNames::default();
+    let mut splits = HashSet::new();
+    let mut jobs = Vec::with_capacity(set.images.len());
 
     for image in &set.images {
         let split_dir = split_dir(dir, image.split);
-        fs::create_dir_all(&split_dir)?;
+        if splits.insert(image.split) {
+            fs::create_dir_all(&split_dir)?;
+        }
         let name = names.take(image.split, &image.name);
-        fs::copy(&image.file, split_dir.join(&name))?;
 
         let mut xml = format!(
             "<annotation>\n\t<filename>{}</filename>\n\t<size>\n\t\t<width>{}</width>\n\t\t<height>{}</height>\n\t\t<depth>3</depth>\n\t</size>\n",
@@ -532,10 +664,10 @@ fn write_voc(set: &LabelSet, dir: &Path, progress: &dyn Progress) -> io::Result<
             ));
         }
         xml.push_str("</annotation>\n");
-        fs::write(split_dir.join(Path::new(&name).with_extension("xml")), xml)?;
-        progress.add(1);
+        let label = split_dir.join(Path::new(&name).with_extension("xml"));
+        jobs.push(FileJob { from: &image.file, to: split_dir.join(&name), label: Some((label, xml)) });
     }
-    Ok(())
+    Ok(Written { bytes: write_files(&jobs, progress)? })
 }
 
 /// Text inside the first `<tag>...</tag>`. Enough for VOC files, not a general XML parser.
@@ -813,6 +945,23 @@ mod tests {
         }
         assert!(!set.has_polygons());
         assert!(out.0.join("yolo/data.yaml").is_file());
+    }
+
+    #[test]
+    fn describes_what_a_scan_would_find() {
+        use crate::core::scan::scan_dataset;
+
+        let tmp = yolo_dataset("describe-src");
+        let set = read(&tmp.0, LabelFormat::Yolo, &Silent).unwrap();
+        let out = TempDir::new("describe-out");
+        for format in [LabelFormat::Yolo, LabelFormat::Coco, LabelFormat::Voc] {
+            let dir = out.0.join(format.name());
+            let written = write(&set, &dir, format, &Silent).unwrap();
+            let described = describe(&set, format, written).unwrap();
+            let scanned = scan_dataset(&dir, &Silent).unwrap();
+            assert_eq!(described, scanned, "{format:?}");
+        }
+        assert_eq!(describe(&LabelSet::default(), LabelFormat::Yolo, Written { bytes: 0 }), None);
     }
 
     #[test]

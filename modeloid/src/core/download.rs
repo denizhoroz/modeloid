@@ -14,7 +14,7 @@ use serde_json::Value;
 use url::Url;
 
 use crate::core::{
-    io,
+    io::{self, unless_cancelled},
     labels::LabelFormat,
     progress::{Progress, Reporter, Unit, check_cancel},
 };
@@ -385,9 +385,15 @@ impl Downloader {
 
     /// One Roboflow API call: the status and the JSON answer (`Null` when it isn't JSON).
     async fn roboflow_call(&self, request: reqwest::RequestBuilder, api_key: &str) -> Result<(StatusCode, Value), crate::Error> {
-        let resp = request.query(&[("api_key", api_key)]).send().await?;
+        let stop = || self.reporter.is_cancelled();
+        let resp = unless_cancelled(stop, request.query(&[("api_key", api_key)]).send()).await??;
         let status = resp.status();
-        Ok((status, resp.json().await.unwrap_or(Value::Null)))
+        Ok((status, unless_cancelled(stop, resp.json()).await?.unwrap_or(Value::Null)))
+    }
+
+    /// Waits `time` between polls; Stop ends the wait at once.
+    async fn pause(&self, time: Duration) -> Result<(), crate::Error> {
+        Ok(unless_cancelled(|| self.reporter.is_cancelled(), tokio::time::sleep(time)).await?)
     }
 
     /// The answer of a Roboflow API call, or its error message.
@@ -443,7 +449,7 @@ impl Downloader {
                 if tokio::time::Instant::now() >= deadline {
                     return Err("Roboflow took too long to copy the project; it may still appear in your Roboflow workspace".into());
                 }
-                tokio::time::sleep(ROBOFLOW_POLL_INTERVAL).await;
+                self.pause(ROBOFLOW_POLL_INTERVAL).await?;
             }
         }
         .await;
@@ -478,7 +484,7 @@ impl Downloader {
                 if tokio::time::Instant::now() >= deadline {
                     return Err("Roboflow took too long to generate the version".into());
                 }
-                tokio::time::sleep(ROBOFLOW_POLL_INTERVAL).await;
+                self.pause(ROBOFLOW_POLL_INTERVAL).await?;
             }
         }
         .await;
@@ -544,7 +550,7 @@ impl Downloader {
                         p
                     })
                     .add(1);
-                tokio::time::sleep(EXPORT_POLL_INTERVAL).await;
+                self.pause(EXPORT_POLL_INTERVAL).await?;
             }
             Err("Roboflow export was not ready in time, try again later".into())
         }

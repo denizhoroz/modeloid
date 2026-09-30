@@ -24,6 +24,9 @@ pub struct WorkspaceState {
     /// selected. Every tool takes its input from here. Cleared when the
     /// workspace changes; datasets that disappear are dropped from it.
     pub selected_datasets: Signal<Vec<u32>>,
+    /// Whether the selection was last changed with the checkboxes (or Select
+    /// all), adding to it, rather than replaced by a click on a row.
+    pub batch_selected: Signal<bool>,
 }
 
 /// Call once near the root. Asks the server which workspace is open, so the
@@ -34,6 +37,7 @@ pub fn provide_workspace_state() {
         checked: Signal::new(false),
         datasets_version: Signal::new(0),
         selected_datasets: Signal::new(Vec::new()),
+        batch_selected: Signal::new(false),
     });
     let (mut workspace, mut checked) = (state.workspace, state.checked);
     let (mut datasets_version, mut selected) = (state.datasets_version, state.selected_datasets);
@@ -90,6 +94,11 @@ pub fn use_workspace_checked() -> Signal<bool> {
 /// Datasets selected in the datasets panel, in selection order.
 pub fn use_selected_datasets() -> Signal<Vec<u32>> {
     use_context::<WorkspaceState>().selected_datasets
+}
+
+/// See `WorkspaceState::batch_selected`.
+pub fn use_batch_selected() -> Signal<bool> {
+    use_context::<WorkspaceState>().batch_selected
 }
 
 /// The dataset single-dataset tools work on: the most recently selected one.

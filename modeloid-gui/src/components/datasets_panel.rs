@@ -5,7 +5,7 @@ use crate::api::error_message;
 use crate::api::health::start_rescan;
 use crate::api::jobs::{ItemStatus, JobKind};
 use crate::components::{set_if_newer, use_job, Icon, IconName};
-use crate::state::{use_datasets_version, use_selected_datasets, use_workspace};
+use crate::state::{use_batch_selected, use_datasets_version, use_selected_datasets, use_workspace};
 use crate::util::{format_bytes, format_count, plural};
 
 /// Right-hand panel listing the open workspace's datasets.
@@ -56,6 +56,7 @@ pub fn DatasetsPanel() -> Element {
         Some(Ok(rows)) => rows.iter().map(|r| r.id).collect(),
         _ => Vec::new(),
     };
+    let mut batch = use_batch_selected();
     let selected_count = selected.read().len();
     let total = all_ids.len();
 
@@ -99,6 +100,7 @@ pub fn DatasetsPanel() -> Element {
                             let mut ids = selected();
                             let rest: Vec<u32> = all_ids.iter().filter(|id| !ids.contains(id)).copied().collect();
                             ids.extend(rest);
+                            batch.set(true);
                             selected.set(ids);
                         },
                         "Select all"
@@ -107,7 +109,10 @@ pub fn DatasetsPanel() -> Element {
                         class: "button button-ghost button-sm",
                         r#type: "button",
                         disabled: selected_count == 0,
-                        onclick: move |_| selected.set(Vec::new()),
+                        onclick: move |_| {
+                            batch.set(false);
+                            selected.set(Vec::new());
+                        },
                         "None"
                     }
                     span { class: "section-card-meta", aria_live: "polite",
@@ -141,6 +146,7 @@ pub fn DatasetsPanel() -> Element {
 #[component]
 fn DatasetsTable(rows: Vec<DatasetRow>) -> Element {
     let mut selected = use_selected_datasets();
+    let mut batch = use_batch_selected();
 
     rsx! {
         table { class: "data-table",
@@ -168,6 +174,7 @@ fn DatasetsTable(rows: Vec<DatasetRow>) -> Element {
                         class: if is_selected { "is-selected" },
                         onclick: move |_| {
                             let only_this = *selected.peek() == [id];
+                            batch.set(false);
                             selected.set(if only_this { Vec::new() } else { vec![id] });
                         },
                         td { class: "check-col",
@@ -178,6 +185,7 @@ fn DatasetsTable(rows: Vec<DatasetRow>) -> Element {
                                 // Toggle without the row's "select only this".
                                 onclick: move |e| e.stop_propagation(),
                                 onchange: move |e| {
+                                    batch.set(true);
                                     if e.checked() {
                                         if !selected.peek().contains(&id) {
                                             selected.write().push(id);

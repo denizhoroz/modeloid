@@ -5,14 +5,18 @@
 
 use std::{
     collections::{HashMap, HashSet},
-    fs,
-    hash::{Hash, Hasher},
+    fs, io,
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{
+        Mutex,
+        atomic::{AtomicUsize, Ordering::Relaxed},
+    },
 };
 
+use serde::{Deserialize, Serialize};
+
 use crate::core::{
-    io::run_parallel,
+    io::{rename, run_parallel},
     labels::{BBox, LabelSet},
     progress::Progress,
     stats::split_slot,
@@ -28,6 +32,88 @@ const BANDS: usize = 4;
 /// Boxes may overshoot the image edge by this much (rounding) before counting.
 const EDGE_TOLERANCE: f64 = 0.5;
 
+/// Bump when what is remembered per image changes (e.g. another look-alike hash).
+const IMAGE_CACHE_VERSION: u32 = 1;
+
+/// What decoding an image found.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+enum Seen {
+    Ok { width: u32, height: u32, dhash: u64 },
+    /// Can't be decoded, and why.
+    Bad(String),
+}
+
+#[derive(Serialize, Deserialize)]
+struct CacheFile {
+    version: u32,
+    /// (file length, content hash, what decoding found).
+    images: Vec<(u64, u64, Seen)>,
+}
+
+/// Remembers what decoding each image found, by the image's content: a file
+/// with the same bytes isn't decoded again, in this dataset or in one made
+/// from it (merged, split, fixed). Decoding is the slow part of a check.
+#[derive(Default)]
+pub struct ImageCache {
+    known: HashMap<(u64, u64), Seen>,
+    /// Decoded during this check; added to the file by `save`.
+    fresh: Mutex<Vec<((u64, u64), Seen)>>,
+    hits: AtomicUsize,
+}
+
+impl ImageCache {
+    /// The cache stored at `path`; empty when there is none or it is of another version.
+    pub fn load(path: &Path) -> Self {
+        let file = fs::read(path).ok().and_then(|bytes| serde_json::from_slice::<CacheFile>(&bytes).ok());
+        let known = match file {
+            Some(file) if file.version == IMAGE_CACHE_VERSION => file.images.into_iter().map(|(len, hash, seen)| ((len, hash), seen)).collect(),
+            _ => HashMap::new(),
+        };
+        ImageCache { known, ..Default::default() }
+    }
+
+    /// Adds what this check decoded to the file at `path`. The file is read
+    /// again first, so checks running at the same time keep each other's results.
+    pub fn save(&self, path: &Path) -> io::Result<()> {
+        let fresh = self.fresh.lock().unwrap();
+        if fresh.is_empty() {
+            return Ok(());
+        }
+        let mut all = ImageCache::load(path).known;
+        all.extend(fresh.iter().cloned());
+        let file = CacheFile { version: IMAGE_CACHE_VERSION, images: all.into_iter().map(|((len, hash), seen)| (len, hash, seen)).collect() };
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let part = path.with_extension("part");
+        fs::write(&part, serde_json::to_vec(&file).map_err(io::Error::other)?)?;
+        rename(&part, path)
+    }
+
+    /// Images this check didn't have to decode.
+    pub fn hits(&self) -> usize {
+        self.hits.load(Relaxed)
+    }
+
+    fn get(&self, key: (u64, u64)) -> Option<&Seen> {
+        let seen = self.known.get(&key);
+        if seen.is_some() {
+            self.hits.fetch_add(1, Relaxed);
+        }
+        seen
+    }
+}
+
+/// FNV-1a over the file's bytes. Stable across Rust versions (the cache is
+/// kept on disk), unlike `DefaultHasher`.
+fn content_hash(bytes: &[u8]) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    for &byte in bytes {
+        hash = (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
+
 /// What reading one image file found.
 #[derive(Default)]
 struct Scan {
@@ -39,19 +125,21 @@ struct Scan {
 }
 
 /// Checks every image of `set` (read from `dir`) and its labels. Decoding
-/// every image is the slow part; it runs on all cores and counts on `progress`.
+/// images is the slow part: it runs on the worker threads, and only for
+/// images `cache` hasn't seen. Counts on `progress`.
 pub fn check(
     dir: &Path,
     set: &LabelSet,
     orphans: Vec<PathBuf>,
     stamp: String,
+    cache: &ImageCache,
     progress: &dyn Progress,
 ) -> Result<HealthReport, crate::Error> {
     progress.set_total(set.images.len() as u64);
     let scans: Mutex<Vec<Scan>> = Mutex::new((0..set.images.len()).map(|_| Scan::default()).collect());
     let indexes: Vec<usize> = (0..set.images.len()).collect();
     run_parallel(&indexes, progress, || Ok(()), |_, &i| {
-        let scan = scan_image(&set.images[i].file);
+        let scan = scan_image(&set.images[i].file, cache);
         scans.lock().unwrap()[i] = scan;
         Ok(())
     })?;
@@ -104,20 +192,31 @@ pub fn check(
     Ok(report)
 }
 
-fn scan_image(path: &Path) -> Scan {
+fn scan_image(path: &Path, cache: &ImageCache) -> Scan {
     let bytes = match fs::read(path) {
         Ok(bytes) => bytes,
         Err(e) => return Scan { error: Some(format!("can't read the file: {e}")), ..Default::default() },
     };
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    bytes.hash(&mut hasher);
-    let mut scan = Scan { len: bytes.len() as u64, hash: hasher.finish(), ..Default::default() };
-    match image::load_from_memory(&bytes) {
-        Ok(img) => {
-            scan.size = Some((img.width(), img.height()));
-            scan.dhash = Some(dhash(&img));
+    let key = (bytes.len() as u64, content_hash(&bytes));
+    let mut scan = Scan { len: key.0, hash: key.1, ..Default::default() };
+
+    let seen = match cache.get(key) {
+        Some(seen) => seen.clone(),
+        None => {
+            let seen = match image::load_from_memory(&bytes) {
+                Ok(img) => Seen::Ok { width: img.width(), height: img.height(), dhash: dhash(&img) },
+                Err(e) => Seen::Bad(format!("can't decode: {e}")),
+            };
+            cache.fresh.lock().unwrap().push((key, seen.clone()));
+            seen
         }
-        Err(e) => scan.error = Some(format!("can't decode: {e}")),
+    };
+    match seen {
+        Seen::Ok { width, height, dhash } => {
+            scan.size = Some((width, height));
+            scan.dhash = Some(dhash);
+        }
+        Seen::Bad(error) => scan.error = Some(error),
     }
     scan
 }
@@ -366,8 +465,34 @@ mod tests {
     fn checked(tmp: &TempDir) -> (LabelSet, HealthReport) {
         let set = labels::read(&tmp.0, LabelFormat::Yolo, &Silent).unwrap();
         let orphans = labels::orphan_labels(&tmp.0, LabelFormat::Yolo).unwrap();
-        let report = check(&tmp.0, &set, orphans, "stamp".into(), &Silent).unwrap();
+        let report = check(&tmp.0, &set, orphans, "stamp".into(), &ImageCache::default(), &Silent).unwrap();
         (set, report)
+    }
+
+    #[test]
+    fn remembers_decoded_images() {
+        let tmp = broken_dataset("remember");
+        let set = labels::read(&tmp.0, LabelFormat::Yolo, &Silent).unwrap();
+        let file = tmp.0.join("cache/checked.json");
+        let run = || {
+            let cache = ImageCache::load(&file);
+            let report = check(&tmp.0, &set, Vec::new(), "stamp".into(), &cache, &Silent).unwrap();
+            cache.save(&file).unwrap();
+            (report, cache.hits())
+        };
+
+        let (first, hits) = run();
+        assert_eq!(hits, 0);
+        let (again, hits) = run();
+        assert_eq!(hits, set.images.len(), "nothing is decoded a second time");
+        assert_eq!(again.counts(), first.counts());
+        assert_eq!(again.corrupt_images[0].detail, first.corrupt_images[0].detail, "a bad image is remembered as bad");
+
+        fs::write(&file, "not json").unwrap();
+        assert_eq!(run().1, 0, "an unreadable cache is started again");
+
+        assert_eq!(content_hash(b""), 0xcbf2_9ce4_8422_2325);
+        assert_eq!(content_hash(b"a"), 0xaf63_dc4c_8601_ec8c, "FNV-1a test vector");
     }
 
     #[test]

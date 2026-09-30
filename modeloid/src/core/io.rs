@@ -1,5 +1,7 @@
 use std::{
     collections::HashSet,
+    future::Future,
+    pin::pin,
     fs::{self, File, OpenOptions},
     io::{self, BufWriter, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
@@ -11,19 +13,41 @@ use std::{
     time::{Duration, Instant},
 };
 
-use futures_util::{StreamExt, future::try_join_all};
+use futures_util::{
+    StreamExt,
+    future::{Either, select, try_join_all},
+};
 use reqwest::{StatusCode, header};
 use tokio::sync::mpsc;
 use zip::ZipArchive;
 
 use crate::core::limits;
-use crate::core::progress::{Progress, Reporter, Unit, check_cancel};
+use crate::core::progress::{Cancelled, Progress, Reporter, Unit, check_cancel};
 
 /// Files at least this large are fetched over several connections when the server supports ranges.
 const PARALLEL_THRESHOLD: u64 = 16 * 1024 * 1024;
 const WRITE_BUF: usize = 1024 * 1024;
 const FILE_BUF: usize = 256 * 1024;
 const CHANNEL_CAP: usize = 64;
+
+/// How often a wait that can't stop by itself looks whether the user cancelled.
+const CANCEL_POLL: Duration = Duration::from_millis(100);
+
+/// Runs `future` to its end, unless `cancelled` turns true first: then
+/// `Cancelled`, and the future is dropped. For waits that don't look at the
+/// cancel flag themselves: a request to a slow server, a stalled download, a
+/// pause between polls. Without it, Stop waits until the network answers.
+pub(crate) async fn unless_cancelled<T>(cancelled: impl Fn() -> bool, future: impl Future<Output = T>) -> Result<T, Cancelled> {
+    let watch = async {
+        while !cancelled() {
+            tokio::time::sleep(CANCEL_POLL).await;
+        }
+    };
+    match select(pin!(future), pin!(watch)).await {
+        Either::Left((value, _)) => Ok(value),
+        Either::Right(_) => Err(Cancelled),
+    }
+}
 
 /// How long a rename or delete keeps trying while another program holds the files.
 const BUSY_PATIENCE: Duration = Duration::from_secs(10);
@@ -101,12 +125,8 @@ pub async fn download_into(client: &reqwest::Client, url: &str, dest: &Path, pro
 
 async fn download_to(client: &reqwest::Client, url: &str, part: &Path, progress: &dyn Progress) -> Result<u64, crate::Error> {
     // Probe with a 1-byte range: a 206 reveals the size and range support, a 200 is the full body.
-    let probe = client
-        .get(url)
-        .header(header::RANGE, "bytes=0-0")
-        .send()
-        .await?
-        .error_for_status()?;
+    let stop = || progress.is_cancelled();
+    let probe = unless_cancelled(stop, client.get(url).header(header::RANGE, "bytes=0-0").send()).await??.error_for_status()?;
 
     if probe.status() == StatusCode::PARTIAL_CONTENT {
         let total = content_range_total(probe.headers());
@@ -115,7 +135,7 @@ async fn download_to(client: &reqwest::Client, url: &str, part: &Path, progress:
             progress.set_total(total);
             return download_ranged(client, url, part, total, progress).await;
         }
-        let resp = client.get(url).send().await?.error_for_status()?;
+        let resp = unless_cancelled(stop, client.get(url).send()).await??.error_for_status()?;
         let total = resp.content_length();
         if let Some(t) = total {
             progress.set_total(t);
@@ -141,12 +161,8 @@ async fn download_ranged(
 
     let connections = limits::download_connections();
     let parts = split_ranges(total, connections).into_iter().map(|(start, end)| async move {
-        let resp = client
-            .get(url)
-            .header(header::RANGE, format!("bytes={start}-{end}"))
-            .send()
-            .await?
-            .error_for_status()?;
+        let request = client.get(url).header(header::RANGE, format!("bytes={start}-{end}")).send();
+        let resp = unless_cancelled(|| progress.is_cancelled(), request).await??.error_for_status()?;
         if resp.status() != StatusCode::PARTIAL_CONTENT {
             return Err(format!("server ignored range request for bytes {start}-{end}").into());
         }
@@ -174,8 +190,8 @@ async fn stream_to_file(
     let mut received: u64 = 0;
     let mut stream = resp.bytes_stream();
     let network: Result<(), crate::Error> = async {
-        while let Some(chunk) = stream.next().await {
-            check_cancel(progress.is_cancelled())?;
+        // A stalled connection doesn't hold up Stop.
+        while let Some(chunk) = unless_cancelled(|| progress.is_cancelled(), stream.next()).await? {
             let chunk = chunk?;
             received += chunk.len() as u64;
             progress.add(chunk.len() as u64);
@@ -305,8 +321,30 @@ pub(crate) fn copy_dir_blocking(src: &Path, dst: &Path, progress: &dyn Progress)
     })
 }
 
-/// Runs `work` over `items` on the worker threads the system settings allow (one per core by default). Threads pull the next item from a shared
-/// counter, so large and small items balance out; the first error stops all workers.
+/// Parallel sections (`run_parallel`) running right now, e.g. in two jobs at once.
+static RUNNING_SECTIONS: AtomicUsize = AtomicUsize::new(0);
+
+/// Counts a running parallel section for as long as it lives.
+struct Section;
+
+impl Section {
+    /// Enters a section; returns it and how many are running with it.
+    fn enter() -> (Section, usize) {
+        (Section, RUNNING_SECTIONS.fetch_add(1, Relaxed) + 1)
+    }
+}
+
+impl Drop for Section {
+    fn drop(&mut self) {
+        RUNNING_SECTIONS.fetch_sub(1, Relaxed);
+    }
+}
+
+/// Runs `work` over `items` on the worker threads the system settings allow
+/// (one per core by default). Sections running at the same time (jobs at
+/// once) share those threads instead of each taking all of them. Threads
+/// pull the next item from a shared counter, so large and small items balance
+/// out; the first error stops all workers.
 pub(crate) fn run_parallel<T, S>(
     items: &[T],
     progress: &dyn Progress,
@@ -319,6 +357,8 @@ where
     let next = AtomicUsize::new(0);
     let failed = AtomicBool::new(false);
     let first_error: Mutex<Option<crate::Error>> = Mutex::new(None);
+    let (_section, sections) = Section::enter();
+    let threads = (parallelism() / sections).max(1);
 
     let worker = || -> Result<(), crate::Error> {
         let mut state = init()?;
@@ -332,7 +372,7 @@ where
     };
 
     thread::scope(|scope| {
-        for _ in 0..parallelism().min(items.len()) {
+        for _ in 0..threads.min(items.len()) {
             scope.spawn(|| {
                 if let Err(e) = worker() {
                     failed.store(true, Relaxed);
@@ -449,6 +489,32 @@ mod tests {
             zip.write_all(data).unwrap();
         }
         zip.finish().unwrap();
+    }
+
+    #[test]
+    fn stop_ends_a_wait_at_once() {
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_time().build().unwrap();
+        runtime.block_on(async {
+            let cancelled = AtomicBool::new(false);
+            let started = Instant::now();
+            // A wait that never ends by itself, like a stalled download.
+            let never = std::future::pending::<()>();
+            let stop_soon = async {
+                tokio::time::sleep(Duration::from_millis(150)).await;
+                cancelled.store(true, Relaxed);
+            };
+            let (result, ()) = futures_util::future::join(unless_cancelled(|| cancelled.load(Relaxed), never), stop_soon).await;
+            assert!(result.is_err());
+            assert!(started.elapsed() < Duration::from_millis(600), "{:?}", started.elapsed());
+            assert_eq!(unless_cancelled(|| false, async { 7 }).await.unwrap(), 7);
+        });
+    }
+
+    #[test]
+    fn parallel_sections_share_the_threads() {
+        let (_one, count) = Section::enter();
+        let (_two, count_two) = Section::enter();
+        assert!(count >= 1 && count_two == count + 1);
     }
 
     #[test]

@@ -12,7 +12,7 @@ use crate::core::{
     io,
     labels::{self, LabelFormat, LabelSet},
     progress::{Progress, Reporter, Unit, check_cancel},
-    scan::scan_dataset,
+    scan::{DatasetStats, scan_dataset},
     stats::{self, ExploreStats, STATS_VERSION},
 };
 use crate::models::dataset::{DATASET_FILE, Dataset, Lineage};
@@ -289,8 +289,13 @@ impl Workspace {
         self.path.join(".cache").join("health").join(format!("{id}.json"))
     }
 
-    /// Runs Health Check on dataset `id` (decodes every image) and caches the
-    /// report in `.cache/health/<id>.json`.
+    /// Where Health Check remembers which images it has decoded, for every dataset of the workspace.
+    fn image_cache(&self) -> PathBuf {
+        self.path.join(".cache").join("images").join("checked.json")
+    }
+
+    /// Runs Health Check on dataset `id` and caches the report in
+    /// `.cache/health/<id>.json`. Every image it hasn't seen before is decoded.
     pub fn health_check(&self, id: u32, reporter: &dyn Reporter) -> Result<HealthReport, crate::Error> {
         let (dir, _) = self.find_dataset(id)?;
         let stamp = dataset_stamp(&dir)?;
@@ -301,10 +306,15 @@ impl Workspace {
         let format = LabelFormat::parse(dataset.annotation_format()).ok_or("unsupported label format")?;
         let orphans = labels::orphan_labels(&dir, format)?;
 
+        let images = health::ImageCache::load(&self.image_cache());
         let checking = reporter.start("Checking images", Unit::Files);
-        let report = health::check(&dir, &set, orphans, stamp, checking.as_ref());
+        let report = health::check(&dir, &set, orphans, stamp, &images, checking.as_ref());
         checking.finish();
         let report = report?;
+        // Losing the cache only costs time on the next check.
+        if let Err(e) = images.save(&self.image_cache()) {
+            reporter.message(&format!("Couldn't save the image cache: {e}"));
+        }
 
         let cache = self.health_cache(id);
         fs::create_dir_all(cache.parent().unwrap_or(&self.path))?;
@@ -350,17 +360,20 @@ impl Workspace {
         let writing = reporter.start("Writing", Unit::Files);
         let written = labels::write(&set, &staging, format, writing.as_ref());
         writing.finish();
-        if let Err(e) = written {
-            let _ = fs::remove_dir_all(&staging);
-            return Err(e.into());
-        }
+        let described = match written {
+            Ok(written) => labels::describe(&set, format, written),
+            Err(e) => {
+                let _ = fs::remove_dir_all(&staging);
+                return Err(e.into());
+            }
+        };
 
         let lineage = Lineage::new("health-fix", &[&dataset])
             .with_param("removed_images", summary.removed_images as i64)
             .with_param("dropped_objects", summary.dropped_objects as i64)
             .with_param("clipped_objects", summary.clipped_objects as i64)
             .with_param("fixes", fix_names(fixes));
-        match self.save_output(&staging, output, lineage, reporter) {
+        match self.save_described(&staging, output, lineage, described, reporter) {
             Ok(dir) => Ok((dir, summary)),
             Err(e) => {
                 let _ = fs::remove_dir_all(&staging);
@@ -482,10 +495,13 @@ impl Workspace {
         let writing = reporter.start("Writing", Unit::Files);
         let written = labels::write(&set, &staging, format, writing.as_ref());
         writing.finish();
-        if let Err(e) = written {
-            let _ = fs::remove_dir_all(&staging);
-            return Err(e.into());
-        }
+        let described = match written {
+            Ok(written) => labels::describe(&set, format, written),
+            Err(e) => {
+                let _ = fs::remove_dir_all(&staging);
+                return Err(e.into());
+            }
+        };
 
         let parent_refs: Vec<&Dataset> = parents.iter().collect();
         let lineage = Lineage::new(if plan.inputs.len() > 1 { "merge" } else { "classes" }, &parent_refs)
@@ -494,7 +510,7 @@ impl Workspace {
             .with_param("split", if plan.split == SplitMode::AllTrain { "all-train" } else { "keep" })
             .with_param("removed_images", summary.removed_images as i64)
             .with_param("dropped_objects", summary.dropped_objects as i64);
-        match self.save_output(&staging, output, lineage, reporter) {
+        match self.save_described(&staging, output, lineage, described, reporter) {
             Ok(dir) => Ok((dir, summary)),
             Err(e) => {
                 let _ = fs::remove_dir_all(&staging);
@@ -539,10 +555,13 @@ impl Workspace {
         let writing = reporter.start("Writing", Unit::Files);
         let written = labels::write(&set, &staging, format, writing.as_ref());
         writing.finish();
-        if let Err(e) = written {
-            let _ = fs::remove_dir_all(&staging);
-            return Err(e.into());
-        }
+        let described = match written {
+            Ok(written) => labels::describe(&set, format, written),
+            Err(e) => {
+                let _ = fs::remove_dir_all(&staging);
+                return Err(e.into());
+            }
+        };
 
         let seed: toml::Value = i64::try_from(summary.seed).map_or_else(|_| summary.seed.to_string().into(), toml::Value::from);
         let mut lineage = Lineage::new("split-balance", &[&dataset])
@@ -567,7 +586,7 @@ impl Workspace {
         if let Some(cap) = plan.class_cap {
             lineage = lineage.with_param("class_cap", i64::from(cap));
         }
-        match self.save_output(&staging, output, lineage, reporter) {
+        match self.save_described(&staging, output, lineage, described, reporter) {
             Ok(dir) => Ok((dir, summary)),
             Err(e) => {
                 let _ = fs::remove_dir_all(&staging);
@@ -607,6 +626,8 @@ impl Workspace {
 
         let staging = self.staging_dir("convert")?;
         let mut summary = ConvertSummary::default();
+        // Known for a label format written here; class folders are scanned instead.
+        let mut described = None;
         let mut lineage = Lineage::new("convert", &[&dataset]).with_param("task", plan.task.name());
         let written: Result<(), crate::Error> = if plan.task == TargetTask::Classification {
             let cropping = reporter.start("Cutting out objects", Unit::Files);
@@ -627,7 +648,7 @@ impl Workspace {
             let writing = reporter.start("Writing", Unit::Files);
             let written = labels::write(&set, &staging, format, writing.as_ref());
             writing.finish();
-            written.map_err(Into::into)
+            written.map(|written| described = labels::describe(&set, format, written)).map_err(Into::into)
         };
         if let Err(e) = written {
             let _ = fs::remove_dir_all(&staging);
@@ -644,7 +665,7 @@ impl Workspace {
         } else {
             lineage = lineage.with_param("source_format", source.name()).with_param("outlines_to_boxes", i64::from(summary.outlines_lost));
         }
-        match self.save_output(&staging, output, lineage, reporter) {
+        match self.save_described(&staging, output, lineage, described, reporter) {
             Ok(dir) => Ok((dir, summary)),
             Err(e) => {
                 let _ = fs::remove_dir_all(&staging);
@@ -672,11 +693,11 @@ impl Workspace {
     }
 
     /// The folders of derived data that can be rebuilt at any time: image
-    /// previews and Explore statistics. Health Check reports and temporary
-    /// job folders aren't among them.
-    fn rebuildable_caches(&self) -> [PathBuf; 2] {
+    /// previews, Explore statistics and Health Check's memory of decoded
+    /// images. Health Check reports and temporary job folders aren't among them.
+    fn rebuildable_caches(&self) -> [PathBuf; 3] {
         let cache = self.path.join(".cache");
-        [cache.join("thumbs"), cache.join("stats")]
+        [cache.join("thumbs"), cache.join("stats"), cache.join("images")]
     }
 
     /// Bytes of cached previews and statistics.
@@ -738,6 +759,20 @@ impl Workspace {
         lineage: Lineage,
         reporter: &dyn Reporter,
     ) -> Result<PathBuf, crate::Error> {
+        self.save_described(staging, output, lineage, None, reporter)
+    }
+
+    /// `save_output` for a result whose statistics are known already
+    /// (`labels::describe`): the folder isn't read again to count them.
+    /// With `None` it is scanned.
+    pub fn save_described(
+        &self,
+        staging: &Path,
+        output: &Output,
+        lineage: Lineage,
+        described: Option<DatasetStats>,
+        reporter: &dyn Reporter,
+    ) -> Result<PathBuf, crate::Error> {
         // Check the target before the (slow) scan.
         let replaced = match output {
             Output::New { name } => {
@@ -750,10 +785,15 @@ impl Workspace {
             Output::Overwrite { id } => Some(self.find_dataset(*id)?),
         };
 
-        let progress = reporter.start("Scanning", Unit::Files);
-        let stats = scan_dataset(staging, progress.as_ref());
-        progress.finish();
-        let stats = stats?;
+        let stats = match described {
+            Some(stats) => stats,
+            None => {
+                let progress = reporter.start("Scanning", Unit::Files);
+                let stats = scan_dataset(staging, progress.as_ref());
+                progress.finish();
+                stats?
+            }
+        };
 
         let Some((dir, mut dataset)) = replaced else {
             let Output::New { name } = output else { unreachable!() };

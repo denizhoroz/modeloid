@@ -14,8 +14,8 @@ use crate::api::datasets::{list_datasets, DatasetRow};
 use crate::api::error_message;
 use crate::api::jobs::JobKind;
 use crate::components::{NoWorkspace, set_if_newer, use_job, Bar, BarList, JobProgress, OutputChoice, OutputSelect, SelectDatasetHint};
-use crate::state::{use_datasets_version, use_selected_datasets, use_workspace, use_workspace_checked};
-use crate::util::format_count;
+use crate::state::{use_batch_selected, use_datasets_version, use_selected_datasets, use_workspace, use_workspace_checked};
+use crate::util::{format_count, plural};
 
 use edit::Choice;
 
@@ -45,14 +45,17 @@ pub fn ClassesMerge() -> Element {
 fn Editor() -> Element {
     // Inputs are the datasets selected in the panel, in selection order.
     let inputs = use_selected_datasets();
+    let batch = use_batch_selected();
     let datasets_version = use_datasets_version();
     let mut plan = use_signal(|| None::<MergePlan>);
     let mut preview = use_signal(|| None::<MergePreview>);
     let mut load_error = use_signal(|| None::<String>);
 
-    // New inputs: fresh suggestion, keeping earlier edits that still apply.
+    // New inputs: fresh suggestion. Datasets added or removed with the
+    // checkboxes keep earlier edits that still apply; a row click starts over.
     use_effect(move || {
         let ids = inputs();
+        let keep_edits = *batch.peek();
         spawn(async move {
             if ids.is_empty() {
                 plan.set(None);
@@ -62,8 +65,8 @@ fn Editor() -> Element {
             match class_merge_suggestion(ids).await {
                 Ok(suggested) => {
                     let merged = match plan.peek().as_ref() {
-                        Some(old) => edit::carry_over(old, suggested),
-                        None => suggested,
+                        Some(old) if keep_edits => edit::carry_over(old, suggested),
+                        _ => suggested,
                     };
                     plan.set(Some(merged));
                     load_error.set(None);
@@ -93,6 +96,7 @@ fn Editor() -> Element {
     });
     let rows: Vec<DatasetRow> = datasets.read().as_ref().and_then(|r| r.as_ref().ok()).cloned().unwrap_or_default();
     let names: Vec<String> = inputs().iter().map(|id| rows.iter().find(|r| r.id == *id).map_or(format!("#{id}"), |r| r.name.clone())).collect();
+    let taken: Vec<String> = rows.iter().map(|r| r.name.clone()).collect();
 
     rsx! {
         div { class: "section-stack",
@@ -109,13 +113,15 @@ fn Editor() -> Element {
             match (plan(), preview()) {
                 _ if inputs.read().is_empty() => rsx! {
                     SelectDatasetHint {}
+                    // The last run stays visible, e.g. after it deleted its inputs.
+                    LastRun {}
                 },
                 (Some(_), Some(p)) => rsx! {
                     TargetsCard { plan, sources: p.sources.iter().map(|s| s.name.clone()).collect::<Vec<_>>() }
                     MappingCard { plan, preview: p.clone() }
                     OptionsCard { plan, multiple: inputs.read().len() > 1 }
                     PreviewCard { plan: plan().unwrap(), preview: p.clone() }
-                    RunCard { plan: plan().unwrap(), preview: p, names }
+                    RunCard { plan: plan().unwrap(), preview: p, names, taken }
                 },
                 _ => rsx! { p { class: "field-hint", "Reading class statistics…" } },
             }
@@ -328,6 +334,8 @@ fn MappingCard(plan: Signal<Option<MergePlan>>, preview: MergePreview) -> Elemen
     let mut checked = use_signal(Vec::<String>::new);
     let mut bulk = use_signal(String::new);
     let mut expanded = use_signal(|| None::<String>);
+    // Labels per input dataset as columns, instead of one total.
+    let mut per_input = use_signal(|| false);
 
     let Some(current) = plan() else { return rsx! {} };
     let inputs = current.inputs.clone();
@@ -353,6 +361,15 @@ fn MappingCard(plan: Signal<Option<MergePlan>>, preview: MergePreview) -> Elemen
             div { class: "section-card-header",
                 h2 { id: "mapping-title", class: "section-card-title", "Mapping" }
                 span { class: "section-card-meta", "{preview.sources.len()} source classes" }
+                if multiple {
+                    button {
+                        class: "button button-ghost button-sm",
+                        r#type: "button",
+                        aria_expanded: if per_input() { "true" } else { "false" },
+                        onclick: move |_| per_input.toggle(),
+                        if per_input() { "Hide labels per dataset" } else { "Show labels per dataset" }
+                    }
+                }
             }
             if !checked.read().is_empty() {
                 div { class: "bulk-bar", role: "group", aria_label: "Assign selected classes",
@@ -374,8 +391,12 @@ fn MappingCard(plan: Signal<Option<MergePlan>>, preview: MergePreview) -> Elemen
                         tr {
                             th { scope: "col", span { class: "visually-hidden", "Select" } }
                             th { scope: "col", "Source class" }
-                            for name in preview.input_names.iter() {
-                                th { key: "{name}", class: "num", scope: "col", title: "Labels in {name}", "{name}" }
+                            if per_input() {
+                                for name in preview.input_names.iter() {
+                                    th { key: "{name}", class: "num", scope: "col", title: "Labels in {name}", "{name}" }
+                                }
+                            } else {
+                                th { class: "num", scope: "col", title: "Labels in all input datasets", "Labels" }
                             }
                             th { scope: "col", "Becomes" }
                             if multiple {
@@ -416,8 +437,12 @@ fn MappingCard(plan: Signal<Option<MergePlan>>, preview: MergePreview) -> Elemen
                                                 span { class: "tag", title: "Joined by a similar name", "matched" }
                                             }
                                         }
-                                        for (i, labels) in source.labels.iter().enumerate() {
-                                            td { key: "{i}", class: "num muted", if *labels > 0 { "{format_count(*labels)}" } else { "–" } }
+                                        if per_input() {
+                                            for (i, labels) in source.labels.iter().enumerate() {
+                                                td { key: "{i}", class: "num muted", if *labels > 0 { "{format_count(*labels)}" } else { "–" } }
+                                            }
+                                        } else {
+                                            td { class: "num muted", "{format_count(source.labels.iter().map(|&n| u64::from(n)).sum::<u64>())}" }
                                         }
                                         td {
                                             select {
@@ -463,7 +488,7 @@ fn MappingCard(plan: Signal<Option<MergePlan>>, preview: MergePreview) -> Elemen
                                                     tr { key: "{name}-{dataset}", class: "override-row",
                                                         td {}
                                                         th { scope: "row", class: "muted", "in {label}" }
-                                                        td { colspan: "{preview.input_names.len()}" }
+                                                        td { colspan: if per_input() { preview.input_names.len().to_string() } else { "1".to_string() } }
                                                         td {
                                                             select {
                                                                 class: "input select",
@@ -617,18 +642,20 @@ fn PreviewCard(plan: MergePlan, preview: MergePreview) -> Element {
 }
 
 #[component]
-fn RunCard(plan: MergePlan, preview: MergePreview, names: Vec<String>) -> Element {
+fn RunCard(plan: MergePlan, preview: MergePreview, names: Vec<String>, taken: Vec<String>) -> Element {
     let output = use_signal(OutputChoice::default);
+    let mut delete_inputs = use_signal(|| false);
     let mut submitted = use_signal(|| false);
     let mut form_error = use_signal(|| None::<String>);
     let (job, _) = use_job(JobKind::ClassesMerge);
     let running = job.read().as_ref().is_some_and(|j| !j.finished);
 
     let single = names.len() == 1;
-    let suggested = if single { format!("{}-classes", names[0]) } else { names.join("-") };
+    let suggested = if single { format!("{}-classes", names[0]) } else { free_name("new-dataset", &taken) };
     let source_name = single.then(|| names[0].clone());
     let can_run = preview.can_run() && !running;
     let progress_title = if single { "Applying" } else { "Merging" };
+    let sources_text = plural(names.len(), "source dataset");
 
     let suggested_for_run = suggested.clone();
     let submit = move |e: FormEvent| {
@@ -639,10 +666,11 @@ fn RunCard(plan: MergePlan, preview: MergePreview, names: Vec<String>) -> Elemen
             submitted.set(true);
             form_error.set(None);
             let Ok(target) = output.read().resolve(&suggested, single) else { return };
-            match start_class_merge(plan, target).await {
+            match start_class_merge(plan, target, !single && delete_inputs()).await {
                 Ok(started) => {
                     set_if_newer(job, started);
                     submitted.set(false);
+                    delete_inputs.set(false);
                 }
                 Err(e) => form_error.set(Some(error_message(&e))),
             }
@@ -652,12 +680,23 @@ fn RunCard(plan: MergePlan, preview: MergePreview, names: Vec<String>) -> Elemen
     rsx! {
         form { class: "section-stack", novalidate: true, onsubmit: submit,
             OutputSelect { choice: output, suggested_name: suggested, source_name, show_errors: submitted(), disabled: running }
+            if !single {
+                label { class: "check",
+                    input {
+                        r#type: "checkbox",
+                        checked: delete_inputs(),
+                        disabled: running,
+                        onchange: move |e| delete_inputs.set(e.checked()),
+                    }
+                    span { "Delete the {sources_text} once the merged one is saved. This can't be undone." }
+                }
+            }
             if let Some(message) = form_error() {
                 p { class: "form-error", role: "alert", "{message}" }
             }
             div { class: "form-actions",
                 button { class: "button", r#type: "submit", disabled: !can_run,
-                    if running { "Working…" } else if single { "Apply" } else { "Merge" }
+                    if running { "Working…" } else if single { "Apply" } else if delete_inputs() { "Merge and delete sources" } else { "Merge" }
                 }
                 if !preview.can_run() {
                     span { class: "form-actions-note", "Resolve the problems in Result first." }
@@ -667,5 +706,34 @@ fn RunCard(plan: MergePlan, preview: MergePreview, names: Vec<String>) -> Elemen
         if let Some(current) = job() {
             JobProgress { job: current, title: progress_title, noun: "dataset", verb: "written" }
         }
+    }
+}
+
+/// The latest run, for when no dataset is selected.
+#[component]
+fn LastRun() -> Element {
+    let (job, _) = use_job(JobKind::ClassesMerge);
+    rsx! {
+        if let Some(current) = job() {
+            JobProgress { job: current, title: "Last run", noun: "dataset", verb: "written" }
+        }
+    }
+}
+
+/// `base`, or `base-2`, `base-3`… if a dataset already has that name.
+fn free_name(base: &str, taken: &[String]) -> String {
+    let free = |name: &String| !taken.iter().any(|t| t.eq_ignore_ascii_case(name));
+    std::iter::once(base.to_string()).chain((2..).map(|n| format!("{base}-{n}"))).find(free).unwrap()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::free_name;
+
+    #[test]
+    fn picks_a_free_name() {
+        assert_eq!(free_name("new-dataset", &[]), "new-dataset");
+        let taken = vec!["New-Dataset".to_string(), "new-dataset-2".to_string()];
+        assert_eq!(free_name("new-dataset", &taken), "new-dataset-3");
     }
 }
