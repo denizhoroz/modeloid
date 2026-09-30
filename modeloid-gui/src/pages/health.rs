@@ -11,8 +11,7 @@ use crate::api::error_message;
 use crate::api::explore::thumb_url;
 use crate::api::health::{health_report, start_health_check, start_health_fix, HealthFixes, HealthView};
 use crate::api::jobs::JobKind;
-use crate::components::{set_if_newer, use_job, JobProgress, OutputChoice, OutputSelect, PrimaryNote, SelectDatasetHint, StatTile};
-use crate::routes::Route;
+use crate::components::{NoWorkspace, set_if_newer, use_job, JobProgress, OutputChoice, OutputSelect, PrimaryNote, SelectDatasetHint, StatTile};
 use crate::state::{use_datasets_version, use_primary_dataset, use_selected_datasets, use_workspace, use_workspace_checked};
 use crate::util::format_count;
 
@@ -33,14 +32,9 @@ pub fn HealthCheck() -> Element {
             }
             match (workspace(), primary()) {
                 (Some(_), Some(id)) => rsx! { HealthDataset { key: "{id}", id, selected_count: selected.read().len() } },
-                (Some(_), None) => rsx! { SelectDatasetHint { text: "Select a dataset in the datasets panel to check it." } },
+                (Some(_), None) => rsx! { SelectDatasetHint {} },
                 (None, _) if !checked() => rsx! {},
-                (None, _) => rsx! {
-                    div { class: "notice",
-                        p { "Health Check looks at a workspace's datasets. Create one, or load one from the sidebar." }
-                        Link { class: "button", to: Route::CreateWorkspace {}, "Create workspace" }
-                    }
-                },
+                (None, _) => rsx! { NoWorkspace { text: "Health Check looks at a workspace's datasets." } },
             }
         }
     }

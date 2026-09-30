@@ -12,8 +12,7 @@ use crate::api::balance::{balance_preview, start_balance, BalancePlan, BalancePr
 use crate::api::datasets::list_datasets;
 use crate::api::error_message;
 use crate::api::jobs::JobKind;
-use crate::components::{set_if_newer, use_job, JobProgress, OutputChoice, OutputSelect, PrimaryNote, SelectDatasetHint};
-use crate::routes::Route;
+use crate::components::{NoWorkspace, set_if_newer, use_job, JobProgress, OutputChoice, OutputSelect, PrimaryNote, SelectDatasetHint};
 use crate::state::{use_datasets_version, use_primary_dataset, use_selected_datasets, use_workspace, use_workspace_checked};
 use crate::util::format_count;
 
@@ -43,14 +42,9 @@ pub fn SplitBalance() -> Element {
             }
             match (workspace(), primary()) {
                 (Some(_), Some(id)) => rsx! { Tabs { key: "{id}", id, selected_count: selected.read().len() } },
-                (Some(_), None) => rsx! { SelectDatasetHint { text: "Select a dataset in the datasets panel to split or balance it." } },
+                (Some(_), None) => rsx! { SelectDatasetHint {} },
                 (None, _) if !checked() => rsx! {},
-                (None, _) => rsx! {
-                    div { class: "notice",
-                        p { "Split & Balance works on a workspace's datasets. Create one, or load one from the sidebar." }
-                        Link { class: "button", to: Route::CreateWorkspace {}, "Create workspace" }
-                    }
-                },
+                (None, _) => rsx! { NoWorkspace { text: "Split & Balance works on a workspace's datasets." } },
             }
         }
     }

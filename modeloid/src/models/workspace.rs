@@ -7,7 +7,7 @@ use crate::core::{
     balance::{self, BalancePlan, BalancePreview, FilterMode, Resplit},
     classes::{self, ClassList, MergePlan, MergePreview, MergeSummary, SplitMode},
     convert::{self, ConvertPlan, ConvertPreview, CropSummary, TargetTask},
-    download::{DownloadOptions, Downloader, Source, SourceInfo},
+    download::{AlreadyExists, DownloadOptions, Downloader, Inspected, Source, SourceInfo},
     health::{self, FixSummary, HEALTH_VERSION, HealthFixes, HealthReport},
     io,
     labels::{self, LabelFormat, LabelSet},
@@ -67,7 +67,7 @@ fn default_version() -> u32 {
     1
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Workspace {
     name: String, 
     path: PathBuf,
@@ -76,6 +76,9 @@ pub struct Workspace {
     // created_at: DateTime<Utc>,
     seed: u64,
     description: String,
+    /// Label format tools start on ("yolo", "coco", "voc"); empty = follow the dataset.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    default_format: String,
 }
 impl Workspace {
     pub fn new(name: String, path: PathBuf) -> Self{
@@ -86,6 +89,7 @@ impl Workspace {
             // created_at: Utc::now(),
             seed: 42,
             description: String::new(),
+            default_format: String::new(),
         }
     }
 
@@ -95,6 +99,33 @@ impl Workspace {
 
     pub fn set_description(&mut self, description: String) {
         self.description = description;
+    }
+
+    pub fn set_seed(&mut self, seed: u64) {
+        self.seed = seed;
+    }
+
+    /// The label format tools start on, if the workspace sets one.
+    pub fn default_format(&self) -> Option<LabelFormat> {
+        LabelFormat::parse(&self.default_format)
+    }
+
+    /// Sets the label format tools start on (any name `LabelFormat::parse`
+    /// knows), or clears it with `None` so tools follow the dataset.
+    pub fn set_default_format(&mut self, format: Option<&str>) -> Result<(), crate::Error> {
+        self.default_format = match format.map(str::trim).filter(|f| !f.is_empty()) {
+            Some(name) => LabelFormat::parse(name).ok_or_else(|| format!("unknown label format '{name}'; use yolo, coco or voc"))?.name().to_string(),
+            None => String::new(),
+        };
+        Ok(())
+    }
+
+    /// Writes `workspace.toml` of a loaded workspace again, after a change.
+    pub fn save(&self) -> Result<(), crate::Error> {
+        // The stored path isn't read back (loading uses the folder itself), so keep it portable.
+        let mut stored = self.clone();
+        stored.path = PathBuf::from(".");
+        stored._create_workspace_file(&self.path)
     }
 
     pub fn save_to_dir(&self) -> Result<(), crate::Error> {
@@ -398,10 +429,11 @@ impl Workspace {
     }
 
     /// A first class mapping for `ids` (same-looking names joined), writing
-    /// in the first input's format family.
+    /// in the workspace's default format, else the first input's format family.
     pub fn class_merge_suggestion(&self, ids: &[u32], progress: &dyn Progress) -> Result<MergePlan, crate::Error> {
         let inputs = self.merge_inputs(ids, progress)?;
         let format = match ids.first() {
+            _ if self.default_format().is_some() => self.default_format().map_or("", LabelFormat::name),
             Some(&id) => {
                 let (_, dataset) = self.find_dataset(id)?;
                 LabelFormat::parse(dataset.annotation_format()).unwrap_or(LabelFormat::Yolo).name()
@@ -744,24 +776,40 @@ impl Workspace {
         reporter: Arc<dyn Reporter>,
     ) -> Result<PathBuf, crate::Error> {
         let downloader = Downloader::new(reporter.clone())?;
-        let (source, info) = downloader.inspect(Source::from_link(link)?, opts).await?;
-        let name = source.name(opts);
+        let inspected = downloader.inspect(Source::from_link(link)?, opts).await?;
+        let result = self.download_inspected(&downloader, &inspected, link, opts, reporter).await;
+        // A copy made in the user's Roboflow workspace goes again, however the download ended.
+        downloader.cleanup(&inspected, opts).await;
+        result
+    }
 
-        let final_dir = self.datasets_dir().join(&name);
+    async fn download_inspected(
+        &self,
+        downloader: &Downloader,
+        inspected: &Inspected,
+        link: &str,
+        opts: &DownloadOptions,
+        reporter: Arc<dyn Reporter>,
+    ) -> Result<PathBuf, crate::Error> {
+        let Inspected { source, info, name, .. } = inspected;
+        // The format actually exported (the project's type may not offer the requested one).
+        let opts = &DownloadOptions { format: inspected.format.clone(), ..opts.clone() };
+
+        let final_dir = self.datasets_dir().join(name);
         if final_dir.exists() {
-            return Err(format!("dataset already exists: {}", final_dir.display()).into());
+            return Err(AlreadyExists { path: final_dir }.into());
         }
 
         let tmp_dir = self.tmp_dir();
         tokio::fs::create_dir_all(&tmp_dir).await?;
         let archive = tmp_dir.join(format!("{name}.zip"));
-        let extract_dir = tmp_dir.join(&name);
+        let extract_dir = tmp_dir.join(name);
         let _ = tokio::fs::remove_dir_all(&extract_dir).await; // leftovers of an earlier failed run
 
         let result: Result<(), crate::Error> = async {
-            downloader.fetch(&source, opts, &archive, &extract_dir).await?;
+            downloader.fetch(source, opts, &archive, &extract_dir).await?;
             check_cancel(reporter.is_cancelled())?;
-            self.describe_download(&extract_dir, &name, link, &source, &info, opts, reporter.as_ref()).await?;
+            self.describe_download(&extract_dir, name, link, source, info, opts, reporter.as_ref()).await?;
             check_cancel(reporter.is_cancelled())?;
             io::move_dir(&extract_dir, &final_dir, reporter.clone()).await
         }
@@ -1299,6 +1347,35 @@ mod tests {
         let again = ws.convert_preview(&ConvertPlan { input: cls.id(), ..plan(TargetTask::Same, "yolo") }, &Silent).unwrap();
         assert!(again.problems[0].contains("can't be converted"));
         assert_eq!(fs::read_dir(ws.tmp_dir()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn keeps_seed_and_default_format() {
+        let tmp = TempWorkspace::new("options");
+        let mut ws = Workspace::load_from_dir(tmp.0.path()).unwrap();
+        assert_eq!((ws.seed(), ws.default_format()), (42, None));
+        assert!(!fs::read_to_string(ws.path().join("workspace.toml")).unwrap().contains("default_format"));
+
+        ws.set_seed(7);
+        ws.set_default_format(Some("COCO")).unwrap();
+        ws.set_description("street scenes".into());
+        assert!(ws.set_default_format(Some("parquet")).is_err());
+        ws.save().unwrap();
+
+        let mut loaded = Workspace::load_from_dir(tmp.0.path()).unwrap();
+        assert_eq!((loaded.seed(), loaded.default_format(), loaded.description()), (7, Some(LabelFormat::Coco), "street scenes"));
+        assert_eq!(loaded.path(), tmp.0.path());
+
+        // A plan without its own seed, and a class mapping without inputs' say, follow the workspace.
+        let staging = tmp.staging_with(YOLO);
+        fs::remove_file(staging.join("train/images/a.jpg")).unwrap();
+        image::RgbImage::new(16, 16).save(staging.join("train/images/a.png")).unwrap();
+        loaded.save_output(&staging, &new_output("cats"), Lineage::new("import", &[]), &Silent).unwrap();
+        assert_eq!(loaded.class_merge_suggestion(&[1], &Silent).unwrap().format, "coco");
+        assert_eq!(loaded.balance_preview(&BalancePlan::new(1), &Silent).unwrap().seed, 7);
+
+        loaded.set_default_format(None).unwrap();
+        assert_eq!(loaded.class_merge_suggestion(&[1], &Silent).unwrap().format, "yolo");
     }
 
     #[test]

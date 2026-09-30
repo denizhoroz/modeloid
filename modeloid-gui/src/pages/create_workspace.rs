@@ -2,17 +2,20 @@ use dioxus::prelude::*;
 
 use crate::api::error_message;
 use crate::api::dialogs::{pick_folder, DialogPurpose};
-use crate::api::workspace::{create_workspace, validate_workspace_name};
-use crate::components::{Icon, IconName};
+use crate::api::workspace::{create_workspace, parse_seed, validate_workspace_name};
+use crate::components::{Icon, IconName, WorkspaceOptions};
 use crate::routes::Route;
 use crate::state::use_workspace;
 
-/// Form for a new workspace: name, description and the folder to create it in.
+/// Form for a new workspace: name, description, the folder to create it in,
+/// and its options (seed, default label format).
 #[component]
 pub fn CreateWorkspace() -> Element {
     let mut name = use_signal(String::new);
     let mut description = use_signal(String::new);
     let mut parent = use_signal(|| None::<String>);
+    let seed = use_signal(|| "42".to_string());
+    let format = use_signal(String::new);
 
     // Errors show once a field was left, or after a submit attempt.
     let mut name_touched = use_signal(|| false);
@@ -55,12 +58,13 @@ pub fn CreateWorkspace() -> Element {
         submitted.set(true);
         form_error.set(None);
         let Some(dir) = parent() else { return };
+        let Ok(seed) = parse_seed(&seed.read()) else { return };
         if name_error().is_some() || submitting() {
             return;
         }
 
         submitting.set(true);
-        match create_workspace(name(), description(), dir).await {
+        match create_workspace(name(), description(), dir, seed, format()).await {
             Ok(info) => {
                 workspace.set(Some(info));
                 navigator.push(Route::Home {});
@@ -152,6 +156,8 @@ pub fn CreateWorkspace() -> Element {
                         }
                     }
                 }
+
+                WorkspaceOptions { seed, format, show_errors: submitted() }
 
                 if let Some(message) = form_error() {
                     p { class: "form-error", role: "alert", "{message}" }

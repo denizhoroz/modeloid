@@ -13,8 +13,7 @@ use crate::api::classes::{
 use crate::api::datasets::{list_datasets, DatasetRow};
 use crate::api::error_message;
 use crate::api::jobs::JobKind;
-use crate::components::{set_if_newer, use_job, Bar, BarList, JobProgress, OutputChoice, OutputSelect, SelectDatasetHint};
-use crate::routes::Route;
+use crate::components::{NoWorkspace, set_if_newer, use_job, Bar, BarList, JobProgress, OutputChoice, OutputSelect, SelectDatasetHint};
 use crate::state::{use_datasets_version, use_selected_datasets, use_workspace, use_workspace_checked};
 use crate::util::format_count;
 
@@ -36,12 +35,7 @@ pub fn ClassesMerge() -> Element {
             match workspace() {
                 Some(_) => rsx! { Editor {} },
                 None if !checked() => rsx! {},
-                None => rsx! {
-                    div { class: "notice",
-                        p { "Classes & Merge works on a workspace's datasets. Create one, or load one from the sidebar." }
-                        Link { class: "button", to: Route::CreateWorkspace {}, "Create workspace" }
-                    }
-                },
+                None => rsx! { NoWorkspace { text: "Classes & Merge works on a workspace's datasets." } },
             }
         }
     }
@@ -114,7 +108,7 @@ fn Editor() -> Element {
             }
             match (plan(), preview()) {
                 _ if inputs.read().is_empty() => rsx! {
-                    SelectDatasetHint { text: "Select one dataset in the datasets panel to edit its classes, or several to merge them." }
+                    SelectDatasetHint {}
                 },
                 (Some(_), Some(p)) => rsx! {
                     TargetsCard { plan, sources: p.sources.iter().map(|s| s.name.clone()).collect::<Vec<_>>() }

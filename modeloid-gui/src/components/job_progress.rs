@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 
 use crate::api::error_message;
-use crate::api::jobs::{cancel_job, ItemStatus, Job, JobItem, JobKind, ProgressUnit, Stage};
+use crate::api::jobs::{cancel_job, ItemAction, ItemStatus, Job, JobItem, JobKind, ProgressUnit, Stage};
 use crate::state::use_activity;
 use crate::util::{format_bytes, plural};
 
@@ -50,19 +50,30 @@ pub fn JobProgress(
     /// Show a Cancel button while the job runs.
     #[props(default = true)]
     cancellable: bool,
+    /// Called with an item's position and the action its error offers, when
+    /// the user takes it. Without a handler, offered actions aren't shown.
+    #[props(default)]
+    on_action: Option<EventHandler<(usize, ItemAction)>>,
 ) -> Element {
     let mut cancel_error = use_signal(|| None::<String>);
     let total = job.items.len();
     let count = |status| job.items.iter().filter(|i| i.status == status).count();
     let (done, failed, cancelled) = (count(ItemStatus::Done), count(ItemStatus::Failed), count(ItemStatus::Cancelled));
+    let (warnings, skipped) = (count(ItemStatus::Warning), count(ItemStatus::Skipped));
 
     let summary = if job.finished {
         let mut parts = Vec::new();
-        if done > 0 || (failed == 0 && cancelled == 0) {
+        if done > 0 || (failed == 0 && cancelled == 0 && warnings == 0 && skipped == 0) {
             parts.push(format!("{} {verb}", plural(done, &noun)));
         }
         if failed > 0 {
             parts.push(format!("{failed} failed"));
+        }
+        if warnings > 0 {
+            parts.push(plural(warnings, "warning"));
+        }
+        if skipped > 0 {
+            parts.push(format!("{skipped} skipped"));
         }
         if cancelled > 0 {
             parts.push(format!("{cancelled} cancelled"));
@@ -71,7 +82,8 @@ pub fn JobProgress(
     } else if job.cancel_requested {
         "Cancelling…".to_string()
     } else {
-        format!("{} of {total} done{}", done + failed, if failed > 0 { format!(", {failed} failed") } else { String::new() })
+        let ended = done + failed + warnings + skipped;
+        format!("{ended} of {total} done{}", if failed > 0 { format!(", {failed} failed") } else { String::new() })
     };
 
     let kind = job.kind;
@@ -102,20 +114,39 @@ pub fn JobProgress(
             }
             ul { class: "progress-list",
                 for (index, item) in job.items.iter().enumerate() {
-                    ProgressRow { key: "{index}", item: item.clone(), output_label: output_label.clone() }
+                    ProgressRow { key: "{index}", index, item: item.clone(), output_label: output_label.clone(), busy: !job.finished, on_action }
                 }
             }
         }
     }
 }
 
+/// What an offered action does, and the button that starts it.
+fn action_text(action: ItemAction) -> (&'static str, &'static str) {
+    match action {
+        ItemAction::RoboflowFork => (
+            "Modeloid can copy this project into your Roboflow workspace, generate a version there, download it, and delete the copy again.",
+            "Copy, generate and download",
+        ),
+    }
+}
+
 #[component]
-fn ProgressRow(item: JobItem, output_label: String) -> Element {
+fn ProgressRow(
+    index: usize,
+    item: JobItem,
+    output_label: String,
+    /// The job is still running: actions wait.
+    busy: bool,
+    on_action: Option<EventHandler<(usize, ItemAction)>>,
+) -> Element {
     let (status_class, status_text) = match item.status {
         ItemStatus::Queued => ("is-queued", "Queued".to_string()),
         ItemStatus::Running => ("is-running", item.stage.as_ref().map_or("Starting".into(), |s| s.label.clone())),
         ItemStatus::Done => ("is-done", "Done".to_string()),
         ItemStatus::Failed => ("is-failed", "Failed".to_string()),
+        ItemStatus::Warning => ("is-warning", "Warning".to_string()),
+        ItemStatus::Skipped => ("is-skipped", "Skipped".to_string()),
         ItemStatus::Cancelled => ("is-cancelled", "Cancelled".to_string()),
     };
 
@@ -129,7 +160,8 @@ fn ProgressRow(item: JobItem, output_label: String) -> Element {
             if let Some(stage) = &item.stage {
                 StageBar { stage: stage.clone() }
             }
-            if item.status == ItemStatus::Running {
+            // A done item keeps its last note (e.g. which format was used instead).
+            if matches!(item.status, ItemStatus::Running | ItemStatus::Done) {
                 if let Some(message) = &item.message {
                     p { class: "progress-note", "{message}" }
                 }
@@ -140,7 +172,20 @@ fn ProgressRow(item: JobItem, output_label: String) -> Element {
                 }
             }
             if let Some(error) = &item.error {
-                p { class: "field-error", "{error}" }
+                // Red only for a real failure; warnings and skips carry their pill's colour.
+                p { class: if item.status == ItemStatus::Failed { "field-error" } else { "progress-reason" }, "{error}" }
+            }
+            if let (Some(action), Some(handler)) = (item.action, on_action) {
+                div { class: "progress-action",
+                    p { class: "progress-note", "{action_text(action).0}" }
+                    button {
+                        class: "button button-secondary button-sm",
+                        r#type: "button",
+                        disabled: busy,
+                        onclick: move |_| handler.call((index, action)),
+                        "{action_text(action).1}"
+                    }
+                }
             }
         }
     }

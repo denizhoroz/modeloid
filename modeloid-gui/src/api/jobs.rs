@@ -47,6 +47,11 @@ pub enum ItemStatus {
     Running,
     Done,
     Failed,
+    /// Didn't run to the end, but not because something broke: the user has
+    /// a choice to make (see `JobItem::action`).
+    Warning,
+    /// Nothing to do, e.g. the dataset is already there.
+    Skipped,
     /// Stopped by the user, or skipped because the job was cancelled.
     Cancelled,
 }
@@ -67,6 +72,14 @@ pub struct Stage {
     pub total: Option<u64>,
 }
 
+/// Something the user can do about a failed item; the tool's page offers it as a button.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ItemAction {
+    /// A Roboflow project without a dataset version: copy it into the user's
+    /// Roboflow workspace, generate a version, download it, delete the copy.
+    RoboflowFork,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct JobItem {
     /// What this item works on, e.g. a link or a dataset name.
@@ -78,6 +91,8 @@ pub struct JobItem {
     /// Result to show when done, e.g. the folder a dataset was saved to.
     pub output: Option<String>,
     pub error: Option<String>,
+    /// Offered with the error, when there is a way on from it.
+    pub action: Option<ItemAction>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -99,10 +114,11 @@ pub async fn cancel_job(kind: JobKind) -> Result<(), ServerFnError> {
 }
 
 #[cfg(feature = "server")]
-pub use backend::{latest_all, running, start};
+pub use backend::{latest_all, rerun_item, running, start, ItemCtx};
 
 #[cfg(feature = "server")]
 mod backend {
+    use std::cell::Cell;
     use std::collections::HashMap;
     use std::future::Future;
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -111,7 +127,7 @@ mod backend {
     use modeloid::{Progress, Reporter, Unit};
     use tokio::runtime::Handle;
 
-    use super::{ItemStatus, Job, JobItem, JobKind, ProgressUnit, Stage};
+    use super::{ItemAction, ItemStatus, Job, JobItem, JobKind, ProgressUnit, Stage};
 
     static VERSION: AtomicU64 = AtomicU64::new(0);
     /// Latest job of each kind.
@@ -181,6 +197,8 @@ mod backend {
         job: &'a Arc<Shared>,
         index: usize,
         runtime: &'a Handle,
+        /// How an item that returns an error ends, when not as `Failed`.
+        ends_as: Cell<Option<ItemStatus>>,
     }
 
     impl ItemCtx<'_> {
@@ -190,6 +208,19 @@ mod backend {
 
         pub fn reporter(&self) -> Arc<dyn Reporter> {
             Arc::new(JobReporter { job: self.job.clone(), index: self.index })
+        }
+
+        /// Offers `action` with this item's error (call before returning it).
+        /// The item then ends as a warning, not as failed.
+        pub fn offer(&self, action: ItemAction) {
+            self.job.item(self.index, |item| item.action = Some(action));
+            self.ends_as.set(Some(ItemStatus::Warning));
+        }
+
+        /// This item's error means there was nothing to do (call before
+        /// returning it): it ends as skipped, not as failed.
+        pub fn skip(&self) {
+            self.ends_as.set(Some(ItemStatus::Skipped));
         }
 
         /// Runs a future to completion on the server's runtime, blocking this
@@ -225,6 +256,7 @@ mod backend {
                         message: None,
                         output: None,
                         error: None,
+                        action: None,
                     })
                     .collect(),
                 finished: false,
@@ -242,33 +274,77 @@ mod backend {
         Ok(shared.snapshot())
     }
 
+    /// Runs item `index` of the finished latest `kind` job again, with
+    /// `work`, inside that job: the other items stay as they are, so the
+    /// page keeps its whole list. `label` must be the item's label (the page
+    /// may be looking at an older job). Returns the job's new state.
+    pub fn rerun_item<F>(kind: JobKind, index: usize, label: &str, work: F) -> Result<Job, String>
+    where
+        F: FnOnce(&ItemCtx) -> Result<Option<String>, String> + Send + 'static,
+    {
+        // Held while checking and marking, so two jobs can't start at once.
+        let jobs = JOBS.lock().unwrap();
+        if let Some(running) = jobs.values().find(|s| !s.finished()) {
+            let label = running.snapshot().kind.label();
+            return Err(format!("A {label} job is already running. Wait for it to finish."));
+        }
+        let shared = jobs.get(&kind).cloned().ok_or("That list is gone. Start again.")?;
+        if shared.snapshot().items.get(index).is_none_or(|item| item.label != label) {
+            return Err("That list has changed. Start again.".into());
+        }
+        let runtime = Handle::try_current().map_err(|e| format!("Couldn't start the job: {e}"))?;
+
+        shared.cancelled.store(false, Ordering::Relaxed);
+        shared.update(|job| {
+            job.finished = false;
+            job.cancel_requested = false;
+            let item = &mut job.items[index];
+            *item = JobItem { label: std::mem::take(&mut item.label), status: ItemStatus::Queued, stage: None, message: None, output: None, error: None, action: None };
+        });
+        drop(jobs);
+
+        let job = shared.clone();
+        runtime.clone().spawn_blocking(move || {
+            let mut work = Some(work);
+            run_item(&job, &runtime, index, &mut |ctx| work.take().map_or(Err("already ran".into()), |work| work(ctx)));
+            job.update(|j| j.finished = true);
+        });
+        Ok(shared.snapshot())
+    }
+
     fn run(job: &Arc<Shared>, runtime: &Handle, work: &mut dyn FnMut(&ItemCtx) -> Result<Option<String>, String>) {
         let count = job.snapshot().items.len();
         for index in 0..count {
-            if job.is_cancelled() {
-                job.item(index, |item| item.status = ItemStatus::Cancelled);
-                continue;
-            }
-            job.item(index, |item| item.status = ItemStatus::Running);
-            let result = work(&ItemCtx { job, index, runtime });
-            let cancelled = job.is_cancelled();
-            job.item(index, |item| {
-                item.stage = None;
-                match result {
-                    Ok(output) => {
-                        item.status = ItemStatus::Done;
-                        item.output = output;
-                    }
-                    // Whatever error cancelling caused, it's a cancel to the user.
-                    Err(_) if cancelled => item.status = ItemStatus::Cancelled,
-                    Err(e) => {
-                        item.status = ItemStatus::Failed;
-                        item.error = Some(e);
-                    }
-                }
-            });
+            run_item(job, runtime, index, work);
         }
         job.update(|j| j.finished = true);
+    }
+
+    fn run_item(job: &Arc<Shared>, runtime: &Handle, index: usize, work: &mut dyn FnMut(&ItemCtx) -> Result<Option<String>, String>) {
+        if job.is_cancelled() {
+            job.item(index, |item| item.status = ItemStatus::Cancelled);
+            return;
+        }
+        job.item(index, |item| item.status = ItemStatus::Running);
+        let ctx = ItemCtx { job, index, runtime, ends_as: Cell::new(None) };
+        let result = work(&ctx);
+        let ends_as = ctx.ends_as.get();
+        let cancelled = job.is_cancelled();
+        job.item(index, |item| {
+            item.stage = None;
+            match result {
+                Ok(output) => {
+                    item.status = ItemStatus::Done;
+                    item.output = output;
+                }
+                // Whatever error cancelling caused, it's a cancel to the user.
+                Err(_) if cancelled => item.status = ItemStatus::Cancelled,
+                Err(e) => {
+                    item.status = ends_as.unwrap_or(ItemStatus::Failed);
+                    item.error = Some(e);
+                }
+            }
+        });
     }
 
     /// Feeds core progress into one job item.
@@ -356,7 +432,7 @@ mod tests {
     // One test: jobs are global and only one runs at a time.
     #[tokio::test(flavor = "multi_thread")]
     async fn runs_items_in_order_and_reports() {
-        let labels = vec!["ok".to_string(), "fails".to_string()];
+        let labels = vec!["ok".to_string(), "fails".to_string(), "warns".to_string(), "skips".to_string()];
         let started = start(JobKind::Download, labels, |ctx| {
             let reporter = ctx.reporter();
             let n = ctx.block_on(async {
@@ -364,7 +440,13 @@ mod tests {
                 ctx.index()
             });
             reporter.message(&format!("item {n}"));
-            if n == 0 { Ok(Some("out".into())) } else { Err("boom".into()) }
+            match n {
+                0 => return Ok(Some("out".into())),
+                2 => ctx.offer(ItemAction::RoboflowFork),
+                3 => ctx.skip(),
+                _ => {}
+            }
+            Err("boom".into())
         })
         .unwrap();
         assert!(!started.finished);
@@ -379,6 +461,19 @@ mod tests {
         assert_eq!(job.items[0].message.as_deref(), Some("item 0"));
         assert_eq!(job.items[1].status, ItemStatus::Failed);
         assert_eq!(job.items[1].error.as_deref(), Some("boom"));
+        assert_eq!((job.items[2].status, job.items[2].action), (ItemStatus::Warning, Some(ItemAction::RoboflowFork)));
+        assert_eq!((job.items[3].status, job.items[3].error.as_deref()), (ItemStatus::Skipped, Some("boom")));
+        assert_eq!((job.items[0].action, job.items[1].action), (None, None));
+
+        // One item again, inside the same job: the others keep their state.
+        assert!(rerun_item(JobKind::Download, 2, "not its label", |_| Ok(None)).is_err());
+        let again = rerun_item(JobKind::Download, 2, "warns", |ctx| Ok(Some(format!("fixed {}", ctx.index())))).unwrap();
+        assert!(!again.finished);
+        assert_eq!((again.items[2].status, again.items[2].action, again.items[2].error.as_deref()), (ItemStatus::Queued, None, None));
+        let job = finished(JobKind::Download).await;
+        assert_eq!((job.items[2].status, job.items[2].output.as_deref()), (ItemStatus::Done, Some("fixed 2")));
+        assert_eq!((job.items[0].status, job.items[1].status, job.items[3].status), (ItemStatus::Done, ItemStatus::Failed, ItemStatus::Skipped));
+        assert_eq!(job.items[0].output.as_deref(), Some("out"));
 
         // Cancelling stops the running item (via the reporter) and skips the rest.
         let labels = vec!["slow".to_string(), "skipped".to_string()];

@@ -208,6 +208,7 @@ impl Settings {
             api_key: self.roboflow_api_key.clone(),
             kaggle: self.kaggle.clone(),
             hf_token: self.huggingface_token.clone(),
+            fork_unversioned: false,
         }
     }
 }

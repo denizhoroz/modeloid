@@ -1094,6 +1094,31 @@ fieldset.section-card:disabled {
     margin: 0;
 }
 
+/* A way on from a failed job item: what it does, and its button */
+.progress-action {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    margin-top: var(--space-1);
+}
+
+.progress-action .progress-note {
+    flex: 1 1 280px;
+    margin: 0;
+}
+
+.notice-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+}
+
+/* Takes its own line under the text and buttons */
+.notice-error {
+    flex-basis: 100%;
+}
+
 .notice-warning {
     border-color: var(--color-warning);
     background: var(--color-warning-soft);
@@ -1156,6 +1181,34 @@ fieldset.section-card:disabled {
     border-color: var(--color-danger-fg);
     background: var(--color-danger-soft);
     color: var(--color-danger-fg);
+}
+
+.is-warning .status-pill {
+    border-color: var(--color-warning);
+    background: var(--color-warning-soft);
+    color: var(--color-warning);
+}
+
+.is-skipped .status-pill {
+    border-color: var(--color-border-strong);
+    background: var(--color-surface-hover);
+    color: var(--color-fg-muted);
+}
+
+/* Why an item ended as a warning or was skipped */
+.progress-reason {
+    margin: 0;
+    font-size: var(--text-xs);
+    overflow-wrap: anywhere;
+}
+
+.is-warning .progress-reason {
+    color: var(--color-warning);
+}
+
+.is-skipped .progress-reason,
+.is-skipped .progress-link {
+    color: var(--color-fg-muted);
 }
 
 .is-cancelled .status-pill {

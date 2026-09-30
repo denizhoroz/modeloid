@@ -7,11 +7,11 @@ mod links;
 
 use dioxus::prelude::*;
 
-use crate::api::download::{link_service, parse_links, start_download};
-use crate::api::jobs::JobKind;
+use crate::api::download::{download_forking, link_service, parse_links, start_download};
+use crate::api::jobs::{ItemAction, JobKind};
 use crate::api::error_message;
 use crate::api::settings::{credential_status, KeyStatus, ServiceId};
-use crate::components::{set_if_newer, use_job, JobProgress};
+use crate::components::{NoWorkspace, set_if_newer, use_job, JobProgress};
 use crate::routes::Route;
 use crate::state::{use_workspace, use_workspace_checked};
 use crate::util::plural;
@@ -67,12 +67,7 @@ pub fn Download() -> Element {
                     }
                 },
                 None if !checked() => rsx! {}, // still asking the server
-                None => rsx! {
-                    div { class: "notice",
-                        p { "Datasets go into a workspace. Create one, or load one from the sidebar." }
-                        Link { class: "button", to: Route::CreateWorkspace {}, "Create workspace" }
-                    }
-                },
+                None => rsx! { NoWorkspace { text: "Datasets go into a workspace." } },
             }
         }
     }
@@ -136,6 +131,25 @@ fn DownloadForm(datasets_path: String) -> Element {
         starting.set(false);
     };
 
+    // The button on an item that ended as a warning: run that one link again,
+    // taking the offered way. It runs inside the same job, so the list stays.
+    let take_action = move |(index, action): (usize, ItemAction)| async move {
+        let ItemAction::RoboflowFork = action;
+        let format = format_value();
+        let link = job.read().as_ref().and_then(|j| j.items.get(index).map(|item| item.label.clone()));
+        let Some(link) = link else { return };
+        if format.is_empty() || running || starting() {
+            return;
+        }
+        form_error.set(None);
+        starting.set(true);
+        match download_forking(index, link, format).await {
+            Ok(started) => set_if_newer(job, started),
+            Err(e) => form_error.set(Some(error_message(&e))),
+        }
+        starting.set(false);
+    };
+
     rsx! {
         for service in missing {
             div { key: "{service.slug()}", class: "notice notice-warning", role: "status",
@@ -179,7 +193,7 @@ fn DownloadForm(datasets_path: String) -> Element {
             p { class: "form-error", role: "alert", "Lost track of download progress: {message}. Reload the page." }
         }
         if let Some(current) = job() {
-            JobProgress { job: current, title: "Downloads", noun: "dataset", verb: "downloaded" }
+            JobProgress { job: current, title: "Downloads", noun: "dataset", verb: "downloaded", on_action: take_action }
         }
     }
 }

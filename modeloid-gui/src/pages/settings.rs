@@ -1,10 +1,13 @@
 use dioxus::prelude::*;
 
 use crate::api::settings::ServiceId;
-use crate::components::{AppearanceSettings, CredentialField};
+use crate::components::{AppearanceSettings, CredentialField, WorkspaceSettings};
+use crate::state::use_workspace;
 
 #[component]
 pub fn Settings() -> Element {
+    let workspace = use_workspace();
+
     rsx! {
         document::Title { "Settings · Modeloid" }
         div { class: "page",
@@ -14,6 +17,24 @@ pub fn Settings() -> Element {
                 h2 { id: "settings-appearance", class: "settings-section-title", "Appearance" }
                 p { class: "settings-section-lead", "How Modeloid looks on this computer." }
                 AppearanceSettings {}
+            }
+
+            section { class: "settings-section", aria_labelledby: "settings-workspace",
+                h2 { id: "settings-workspace", class: "settings-section-title", "Workspace" }
+                if let Some(info) = workspace() {
+                    p { class: "settings-section-lead",
+                        "Options of the open workspace, "
+                        strong { "{info.folder}" }
+                        ". Stored in its workspace.toml."
+                    }
+                }
+                match workspace() {
+                    // Keyed by folder: another workspace starts from its own values.
+                    Some(info) => rsx! { WorkspaceSettings { key: "{info.path}", info } },
+                    None => rsx! {
+                        p { class: "settings-section-lead", "No workspace loaded. Create or load one to change its options." }
+                    },
+                }
             }
 
             section { class: "settings-section", aria_labelledby: "settings-api-keys",

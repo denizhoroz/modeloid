@@ -8,10 +8,9 @@ use crate::api::convert::{convert_preview, start_convert, ConvertPlan, ConvertPr
 use crate::api::datasets::list_datasets;
 use crate::api::error_message;
 use crate::api::jobs::JobKind;
-use crate::components::{
+use crate::components::{NoWorkspace, 
     set_if_newer, use_job, Bar, BarList, JobProgress, NumberInput, OutputChoice, OutputSelect, PrimaryNote, SelectDatasetHint, StatTile,
 };
-use crate::routes::Route;
 use crate::state::{use_datasets_version, use_primary_dataset, use_selected_datasets, use_workspace, use_workspace_checked};
 use crate::util::format_count;
 
@@ -39,14 +38,9 @@ pub fn Convert() -> Element {
             }
             match (workspace(), primary()) {
                 (Some(_), Some(id)) => rsx! { Converter { key: "{id}", id, selected_count: selected.read().len() } },
-                (Some(_), None) => rsx! { SelectDatasetHint { text: "Select a dataset in the datasets panel to convert it." } },
+                (Some(_), None) => rsx! { SelectDatasetHint {} },
                 (None, _) if !checked() => rsx! {},
-                (None, _) => rsx! {
-                    div { class: "notice",
-                        p { "Convert works on a workspace's datasets. Create one, or load one from the sidebar." }
-                        Link { class: "button", to: Route::CreateWorkspace {}, "Create workspace" }
-                    }
-                },
+                (None, _) => rsx! { NoWorkspace { text: "Convert works on a workspace's datasets." } },
             }
         }
     }
@@ -55,6 +49,7 @@ pub fn Convert() -> Element {
 #[component]
 fn Converter(id: u32, selected_count: usize) -> Element {
     let datasets_version = use_datasets_version();
+    let workspace = use_workspace();
     // The format starts empty and is set once the dataset's own format is known.
     let mut plan = use_signal(|| ConvertPlan {
         input: id,
@@ -71,8 +66,11 @@ fn Converter(id: u32, selected_count: usize) -> Element {
     use_effect(move || {
         if let Some(Ok(p)) = &*latest.read() {
             if plan.peek().format.is_empty() && !p.source_format.is_empty() {
-                // Start on a format the dataset isn't in; the next preview is the first shown.
-                plan.write().format = if p.source_format == "yolo" { "coco" } else { "yolo" }.to_string();
+                // Start on the workspace's default format, or, when the dataset is in it
+                // already or there is none, on another one. The next preview is the first shown.
+                let default = workspace.peek().as_ref().map(|w| w.default_format.clone()).unwrap_or_default();
+                let other = if p.source_format == "yolo" { "coco" } else { "yolo" };
+                plan.write().format = if default.is_empty() || default == p.source_format { other.to_string() } else { default };
             } else {
                 preview.set(Some(p.clone()));
             }

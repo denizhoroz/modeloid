@@ -15,6 +15,7 @@ use url::Url;
 
 use crate::core::{
     io,
+    labels::LabelFormat,
     progress::{Progress, Reporter, Unit, check_cancel},
 };
 use crate::models::settings::{HF_TOKEN_ENV, KAGGLE_KEY_ENV, KAGGLE_USERNAME_ENV, KaggleCredentials, ROBOFLOW_KEY_ENV};
@@ -22,8 +23,12 @@ use crate::models::settings::{HF_TOKEN_ENV, KAGGLE_KEY_ENV, KAGGLE_USERNAME_ENV,
 const ROBOFLOW_API: &str = "https://api.roboflow.com";
 const KAGGLE_API: &str = "https://www.kaggle.com/api/v1";
 const HF_HOST: &str = "https://huggingface.co";
+const ROBOFLOW_UNIVERSE: &str = "https://universe.roboflow.com";
 const EXPORT_POLL_ATTEMPTS: u32 = 20;
 const EXPORT_POLL_INTERVAL: Duration = Duration::from_secs(3);
+/// Copying a project and generating a version: asked about this often, for this long at most.
+const ROBOFLOW_POLL_INTERVAL: Duration = Duration::from_secs(3);
+const ROBOFLOW_POLL_LIMIT: Duration = Duration::from_secs(30 * 60);
 
 /// Export format and credentials. Missing credentials fall back to env vars
 /// (and `~/.kaggle/kaggle.json`) when needed; see `Settings::download_options`.
@@ -36,6 +41,65 @@ pub struct DownloadOptions {
     pub kaggle: Option<KaggleCredentials>,
     /// Only needed for private or gated Hugging Face datasets.
     pub hf_token: Option<String>,
+    /// A Roboflow project without a dataset version: copy it into the key's
+    /// own workspace, generate a version there, download that, and delete the
+    /// copy again. Off: such a project fails with `NoVersions`.
+    pub fork_unversioned: bool,
+}
+
+/// A Roboflow project that has images and annotations but no generated
+/// dataset version, so there is nothing to export. `DownloadOptions::fork_unversioned`
+/// downloads it anyway.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NoVersions {
+    pub workspace: String,
+    pub project: String,
+}
+
+impl std::fmt::Display for NoVersions {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Roboflow project {}/{} has no dataset version, only images and annotations", self.workspace, self.project)
+    }
+}
+
+impl std::error::Error for NoVersions {}
+
+/// The dataset a download would create is already in the workspace.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AlreadyExists {
+    pub path: PathBuf,
+}
+
+impl std::fmt::Display for AlreadyExists {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "dataset already exists: {}", self.path.display())
+    }
+}
+
+impl std::error::Error for AlreadyExists {}
+
+/// A Roboflow project, by workspace and project url names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RoboflowProject {
+    pub workspace: String,
+    pub project: String,
+}
+
+/// What `Downloader::inspect` found out about a link.
+#[derive(Debug, PartialEq)]
+pub struct Inspected {
+    /// Where to download from: the link's source with the version filled in,
+    /// or the copy made for a project without versions.
+    pub source: Source,
+    pub info: SourceInfo,
+    /// Roboflow export format actually used: the requested one, or another
+    /// when the project's type doesn't offer it.
+    pub format: String,
+    /// Folder name for the dataset.
+    pub name: String,
+    /// A copy made in the user's Roboflow workspace, to delete afterwards
+    /// (`Downloader::cleanup`).
+    pub cleanup: Option<RoboflowProject>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -116,7 +180,7 @@ impl Source {
     /// Folder name for the downloaded dataset.
     pub fn name(&self, opts: &DownloadOptions) -> String {
         let name = match self {
-            Source::Roboflow { project, version: Some(v), .. } => format!("{project}-v{v}-{}", opts.format),
+            Source::Roboflow { project, version: Some(v), .. } => return roboflow_name(project, *v, &opts.format),
             Source::Roboflow { project, version: None, .. } => format!("{project}-latest-{}", opts.format),
             Source::Kaggle { dataset, .. } => dataset.clone(),
             Source::HuggingFace { repo, .. } => repo.rsplit('/').next().unwrap_or(repo).to_string(),
@@ -140,6 +204,10 @@ impl Source {
             Source::Url(_) => "link",
         }
     }
+}
+
+fn roboflow_name(project: &str, version: u32, format: &str) -> String {
+    folder_name(&format!("{project}-v{version}-{format}"))
 }
 
 /// Makes `name` safe as a folder name; "dataset" if nothing is left.
@@ -171,25 +239,65 @@ impl Downloader {
     }
 
     /// Checks the dataset exists (and credentials work), reads its metadata and
-    /// replaces an unspecified Roboflow version with the latest one.
-    pub async fn inspect(&self, source: Source, opts: &DownloadOptions) -> Result<(Source, SourceInfo), crate::Error> {
+    /// settles what exactly is downloaded. For Roboflow: the latest version when
+    /// the link names none, a copy with a fresh version when the project has
+    /// none (`DownloadOptions::fork_unversioned`), and an export format the
+    /// project's type offers.
+    pub async fn inspect(&self, source: Source, opts: &DownloadOptions) -> Result<Inspected, crate::Error> {
+        let plain = |source: Source, info: SourceInfo| {
+            let name = source.name(opts);
+            Inspected { source, info, format: opts.format.clone(), name, cleanup: None }
+        };
         match source {
             Source::Roboflow { workspace, project, version } => {
                 let api_key = roboflow_api_key(opts)?;
                 let url = format!("{ROBOFLOW_API}/{workspace}/{project}");
                 let body = self.roboflow_get(&url, &api_key).await?;
-
-                let version = match version {
-                    Some(v) => v,
-                    None => {
-                        let latest = latest_roboflow_version(&body)
-                            .ok_or_else(|| format!("Roboflow project {workspace}/{project} has no versions"))?;
-                        self.reporter.message(&format!("Using latest version: {latest}"));
-                        latest
-                    }
-                };
                 let info = roboflow_info(&body);
-                Ok((Source::Roboflow { workspace, project, version: Some(version) }, info))
+
+                let listed = version.or_else(|| {
+                    let latest = latest_roboflow_version(&body)?;
+                    self.reporter.message(&format!("Using latest version: {latest}"));
+                    Some(latest)
+                });
+                // Where the version to download is: the project itself, or a copy made now.
+                let mut cleanup = None;
+                let settled: Result<(RoboflowProject, u32, String), crate::Error> = async {
+                    let mut at = RoboflowProject { workspace: workspace.clone(), project: project.clone() };
+                    let version = match listed {
+                        Some(version) => version,
+                        None if !opts.fork_unversioned => return Err(NoVersions { workspace: workspace.clone(), project: project.clone() }.into()),
+                        None => {
+                            let own = self.roboflow_own_workspace(&api_key).await?;
+                            if own != workspace {
+                                let copy = self.roboflow_fork(&own, &at, &api_key).await?;
+                                at = RoboflowProject { workspace: own, project: copy };
+                                cleanup = Some(at.clone());
+                            }
+                            self.roboflow_generate(&at, &api_key).await?
+                        }
+                    };
+                    let format = self.roboflow_format(&at, version, &opts.format, &info.dataset_type, &api_key).await?;
+                    Ok((at, version, format))
+                }
+                .await;
+
+                match settled {
+                    Ok((at, version, format)) => Ok(Inspected {
+                        // Named after the project in the link, also when a copy is downloaded.
+                        name: roboflow_name(&project, version, &format),
+                        source: Source::Roboflow { workspace: at.workspace, project: at.project, version: Some(version) },
+                        info,
+                        format,
+                        cleanup,
+                    }),
+                    Err(e) => {
+                        if let Some(copy) = &cleanup {
+                            self.roboflow_delete(copy, &api_key).await;
+                        }
+                        Err(e)
+                    }
+                }
             }
             Source::Kaggle { owner, dataset } => {
                 let creds = kaggle_credentials(opts)?;
@@ -205,7 +313,7 @@ impl Downloader {
                 };
                 let license = body["licenseName"].as_str().or_else(|| body["licenses"][0]["name"].as_str());
                 let info = SourceInfo { license: license.unwrap_or_default().to_string(), ..Default::default() };
-                Ok((Source::Kaggle { owner, dataset }, info))
+                Ok(plain(Source::Kaggle { owner, dataset }, info))
             }
             Source::HuggingFace { repo, revision } => {
                 let body = self.hf_info(&repo, &revision, opts).await?;
@@ -214,9 +322,18 @@ impl Downloader {
                     Value::Array(ls) => ls.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(", "),
                     _ => String::new(),
                 };
-                Ok((Source::HuggingFace { repo, revision }, SourceInfo { license, ..Default::default() }))
+                Ok(plain(Source::HuggingFace { repo, revision }, SourceInfo { license, ..Default::default() }))
             }
-            Source::Url(url) => Ok((Source::Url(url), SourceInfo::default())),
+            Source::Url(url) => Ok(plain(Source::Url(url), SourceInfo::default())),
+        }
+    }
+
+    /// Deletes the copy `inspect` made in the user's Roboflow workspace, if
+    /// any. Call it once the download ended, however it ended. A copy that
+    /// can't be deleted is reported as a message, not as an error.
+    pub async fn cleanup(&self, inspected: &Inspected, opts: &DownloadOptions) {
+        if let (Some(copy), Ok(api_key)) = (&inspected.cleanup, roboflow_api_key(opts)) {
+            self.roboflow_delete(copy, &api_key).await;
         }
     }
 
@@ -266,20 +383,145 @@ impl Downloader {
         Ok(())
     }
 
-    async fn roboflow_get(&self, url: &str, api_key: &str) -> Result<Value, crate::Error> {
-        let resp = self.client.get(url).query(&[("api_key", api_key)]).send().await?;
+    /// One Roboflow API call: the status and the JSON answer (`Null` when it isn't JSON).
+    async fn roboflow_call(&self, request: reqwest::RequestBuilder, api_key: &str) -> Result<(StatusCode, Value), crate::Error> {
+        let resp = request.query(&[("api_key", api_key)]).send().await?;
         let status = resp.status();
-        let body: Value = resp.json().await.unwrap_or(Value::Null);
+        Ok((status, resp.json().await.unwrap_or(Value::Null)))
+    }
 
+    /// The answer of a Roboflow API call, or its error message.
+    async fn roboflow_send(&self, request: reqwest::RequestBuilder, api_key: &str) -> Result<Value, crate::Error> {
+        let (status, body) = self.roboflow_call(request, api_key).await?;
         if !status.is_success() {
-            let msg = body["error"]["message"]
-                .as_str()
-                .or_else(|| body["error"].as_str())
-                .or_else(|| body["message"].as_str())
-                .unwrap_or("no details");
-            return Err(format!("Roboflow API returned {status}: {msg}").into());
+            return Err(format!("Roboflow API returned {status}: {}", roboflow_error(&body)).into());
         }
         Ok(body)
+    }
+
+    async fn roboflow_get(&self, url: &str, api_key: &str) -> Result<Value, crate::Error> {
+        self.roboflow_send(self.client.get(url), api_key).await
+    }
+
+    /// The workspace the API key belongs to.
+    async fn roboflow_own_workspace(&self, api_key: &str) -> Result<String, crate::Error> {
+        let body = self.roboflow_get(ROBOFLOW_API, api_key).await?;
+        Ok(body["workspace"].as_str().ok_or("Roboflow didn't say which workspace the API key belongs to")?.to_string())
+    }
+
+    /// Copies `source` (someone's public project) into workspace `own`, with
+    /// its images and annotations. Returns the copy's project name.
+    async fn roboflow_fork(&self, own: &str, source: &RoboflowProject, api_key: &str) -> Result<String, crate::Error> {
+        self.reporter.message(&format!("Copying {}/{} into your Roboflow workspace {own}", source.workspace, source.project));
+        let link = format!("{ROBOFLOW_UNIVERSE}/{}/{}", source.workspace, source.project);
+        let request = self.client.post(format!("{ROBOFLOW_API}/{own}/projects/fork")).json(&serde_json::json!({ "url": link }));
+        let started = self.roboflow_send(request, api_key).await?;
+        let task = started["taskId"].as_str().ok_or("Roboflow didn't start copying the project")?;
+        let url = format!("{ROBOFLOW_API}/{own}/asynctasks/{task}");
+
+        let progress = self.reporter.start("Copying project", Unit::Files);
+        let result = async {
+            let deadline = tokio::time::Instant::now() + ROBOFLOW_POLL_LIMIT;
+            let mut counted = 0;
+            loop {
+                // Cancelling stops waiting; Roboflow finishes the copy, and only then can it be deleted.
+                if self.reporter.is_cancelled() {
+                    self.reporter.message("Cancelled while Roboflow was copying the project: the copy may still appear in your Roboflow workspace");
+                }
+                check_cancel(self.reporter.is_cancelled())?;
+                match fork_task_state(&self.roboflow_get(&url, api_key).await?) {
+                    TaskState::Done(project) => return Ok(project),
+                    TaskState::Failed(why) => return Err(format!("Roboflow couldn't copy the project: {why}").into()),
+                    TaskState::Running { done, total } => {
+                        if total > 0 {
+                            progress.set_total(total);
+                        }
+                        progress.add(done.saturating_sub(counted));
+                        counted = counted.max(done);
+                    }
+                }
+                if tokio::time::Instant::now() >= deadline {
+                    return Err("Roboflow took too long to copy the project; it may still appear in your Roboflow workspace".into());
+                }
+                tokio::time::sleep(ROBOFLOW_POLL_INTERVAL).await;
+            }
+        }
+        .await;
+        progress.finish();
+        result
+    }
+
+    /// Generates a version of `project` as it is (no preprocessing, no
+    /// augmentation) and waits until it is ready. Returns its number.
+    async fn roboflow_generate(&self, project: &RoboflowProject, api_key: &str) -> Result<u32, crate::Error> {
+        let base = format!("{ROBOFLOW_API}/{}/{}", project.workspace, project.project);
+        let settings = serde_json::json!({ "preprocessing": {}, "augmentation": {} });
+        let started = self.roboflow_send(self.client.post(format!("{base}/generate")).json(&settings), api_key).await?;
+        let version = number(&started["version"]).ok_or("Roboflow didn't say which version it is generating")?;
+        self.reporter.message(&format!("Generating version {version}"));
+
+        let progress = self.reporter.start("Generating version", Unit::Steps);
+        progress.set_total(100);
+        let result = async {
+            let deadline = tokio::time::Instant::now() + ROBOFLOW_POLL_LIMIT;
+            let mut counted = 0;
+            loop {
+                check_cancel(self.reporter.is_cancelled())?;
+                let request = self.client.get(format!("{base}/{version}")).query(&[("nocache", "true")]);
+                let (generating, share) = generation_state(&self.roboflow_send(request, api_key).await?);
+                let percent = (share * 100.0) as u64;
+                progress.add(percent.saturating_sub(counted));
+                counted = counted.max(percent);
+                if !generating {
+                    return Ok(version);
+                }
+                if tokio::time::Instant::now() >= deadline {
+                    return Err("Roboflow took too long to generate the version".into());
+                }
+                tokio::time::sleep(ROBOFLOW_POLL_INTERVAL).await;
+            }
+        }
+        .await;
+        progress.finish();
+        result
+    }
+
+    /// The export format to use for `version`: `requested`, or, when the
+    /// project's type doesn't offer it, one it does (see `pick_format`).
+    async fn roboflow_format(
+        &self,
+        project: &RoboflowProject,
+        version: u32,
+        requested: &str,
+        project_type: &str,
+        api_key: &str,
+    ) -> Result<String, crate::Error> {
+        let url = format!("{ROBOFLOW_API}/{}/{}/{version}/{requested}", project.workspace, project.project);
+        let (status, body) = self.roboflow_call(self.client.get(&url), api_key).await?;
+        if status.is_success() {
+            return Ok(requested.to_string());
+        }
+        let error = roboflow_error(&body);
+        let fallback = parse_allowed_formats(error).and_then(|allowed| pick_format(requested, &allowed));
+        match fallback {
+            Some(format) if format != requested => {
+                let whose = if project_type.is_empty() { "this project".to_string() } else { format!("{project_type} projects") };
+                self.reporter.message(&format!("{requested} isn't available for {whose}; using {format}"));
+                Ok(format)
+            }
+            _ => Err(format!("Roboflow API returned {status}: {error}").into()),
+        }
+    }
+
+    /// Deletes a copy made by `roboflow_fork` (it goes to Roboflow's trash).
+    /// Failing is reported as a message: the download itself is what counts.
+    async fn roboflow_delete(&self, copy: &RoboflowProject, api_key: &str) {
+        let url = format!("{ROBOFLOW_API}/{}/{}", copy.workspace, copy.project);
+        let note = match self.roboflow_send(self.client.delete(&url), api_key).await {
+            Ok(_) => format!("Deleted the copy {}/{} from your Roboflow workspace", copy.workspace, copy.project),
+            Err(e) => format!("Couldn't delete the copy {}/{} from your Roboflow workspace ({e}); delete it there by hand", copy.workspace, copy.project),
+        };
+        self.reporter.message(&note);
     }
 
     // Roboflow generates exports on demand, so the link may not exist on the first request.
@@ -476,6 +718,71 @@ fn hf_token(opts: &DownloadOptions) -> Option<String> {
     opts.hf_token.clone().or_else(|| env::var(HF_TOKEN_ENV).ok().filter(|t| !t.is_empty()))
 }
 
+/// The message in a failed Roboflow answer.
+fn roboflow_error(body: &Value) -> &str {
+    body["error"]["message"].as_str().or_else(|| body["error"].as_str()).or_else(|| body["message"].as_str()).unwrap_or("no details")
+}
+
+/// The formats a Roboflow "invalid format" message lists after "Please use one of:".
+fn parse_allowed_formats(message: &str) -> Option<Vec<String>> {
+    let (_, list) = message.split_once("Please use one of:")?;
+    let formats: Vec<String> = list.split(',').map(|f| f.trim().trim_end_matches('.').to_string()).filter(|f| !f.is_empty()).collect();
+    (!formats.is_empty()).then_some(formats)
+}
+
+/// The format to export instead of `requested`, out of those the project
+/// allows: one of the same family (YOLO, COCO, VOC), else any the label
+/// reader knows, else class folders, else the first one.
+fn pick_format(requested: &str, allowed: &[String]) -> Option<String> {
+    if allowed.iter().any(|f| f == requested) {
+        return Some(requested.to_string());
+    }
+    let family = LabelFormat::parse(requested);
+    let readable = || allowed.iter().filter(|f| LabelFormat::parse(f).is_some());
+    readable()
+        .find(|f| family.is_some() && LabelFormat::parse(f) == family)
+        .or_else(|| readable().next())
+        .or_else(|| allowed.iter().find(|f| *f == "folder"))
+        .or_else(|| allowed.first())
+        .cloned()
+}
+
+/// A whole number Roboflow sends as a number or as text ("1").
+fn number(value: &Value) -> Option<u32> {
+    value.as_u64().and_then(|n| u32::try_from(n).ok()).or_else(|| value.as_str()?.parse().ok())
+}
+
+/// Where a Roboflow fork task stands.
+#[derive(Debug, PartialEq)]
+enum TaskState {
+    Running { done: u64, total: u64 },
+    /// Finished; the copy's project name.
+    Done(String),
+    Failed(String),
+}
+
+fn fork_task_state(body: &Value) -> TaskState {
+    let count = |key: &str| body["progress"][key].as_u64().unwrap_or(0);
+    match body["status"].as_str() {
+        Some("completed") => match body["result"]["datasetUrl"].as_str() {
+            Some(project) => TaskState::Done(project.to_string()),
+            None => TaskState::Failed("Roboflow didn't name the copy".into()),
+        },
+        Some("running" | "pending" | "queued" | "created") => TaskState::Running { done: count("current"), total: count("total") },
+        status => {
+            let why = body["error"]["message"].as_str().or_else(|| body["error"].as_str()).or_else(|| body["result"]["error"].as_str());
+            TaskState::Failed(why.or(status).unwrap_or("no details").to_string())
+        }
+    }
+}
+
+/// Whether a version is still being generated, and how far it is (0..1).
+fn generation_state(body: &Value) -> (bool, f64) {
+    let version = &body["version"];
+    let generating = version["generating"].as_bool().unwrap_or(false);
+    (generating, version["progress"].as_f64().unwrap_or(if generating { 0.0 } else { 1.0 }).clamp(0.0, 1.0))
+}
+
 fn roboflow_info(body: &Value) -> SourceInfo {
     let text = |v: &Value| v.as_str().unwrap_or_default().to_string();
     SourceInfo {
@@ -594,6 +901,46 @@ mod tests {
 
         let body = serde_json::json!({ "project": { "versions": 0 }, "versions": [] });
         assert_eq!(latest_roboflow_version(&body), None);
+    }
+
+    #[test]
+    fn falls_back_to_a_format_the_project_allows() {
+        let message = "yolov8 is an invalid format for project type semantic-segmentation. Please use one of: coco-segmentation, png-mask-semantic.";
+        let allowed = parse_allowed_formats(message).unwrap();
+        assert_eq!(allowed, ["coco-segmentation", "png-mask-semantic"]);
+        assert_eq!(pick_format("yolov8", &allowed).as_deref(), Some("coco-segmentation"));
+        assert_eq!(parse_allowed_formats("Unsupported request."), None);
+
+        let list = |names: &[&str]| names.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+        assert_eq!(pick_format("yolov8", &list(&["coco", "yolov5pytorch", "voc"])).as_deref(), Some("yolov5pytorch"), "same family first");
+        assert_eq!(pick_format("coco", &list(&["multiclass", "folder"])).as_deref(), Some("folder"));
+        assert_eq!(pick_format("coco", &list(&["coco", "voc"])).as_deref(), Some("coco"));
+        assert_eq!(pick_format("coco", &list(&["clip", "multiclass"])).as_deref(), Some("clip"));
+        assert_eq!(pick_format("coco", &[]), None);
+    }
+
+    #[test]
+    fn reads_fork_and_generation_progress() {
+        let running = serde_json::json!({ "status": "running", "progress": { "total": 2886, "current": 778 } });
+        assert_eq!(fork_task_state(&running), TaskState::Running { done: 778, total: 2886 });
+        let done = serde_json::json!({ "status": "completed", "result": { "forked": true, "datasetUrl": "car-parts-fd94l" } });
+        assert_eq!(fork_task_state(&done), TaskState::Done("car-parts-fd94l".into()));
+        let failed = serde_json::json!({ "status": "failed", "error": "Source project not found" });
+        assert_eq!(fork_task_state(&failed), TaskState::Failed("Source project not found".into()));
+        assert_eq!(fork_task_state(&serde_json::json!({})), TaskState::Failed("no details".into()));
+
+        assert_eq!(generation_state(&serde_json::json!({ "version": { "generating": true, "progress": 0.3 } })), (true, 0.3));
+        assert_eq!(generation_state(&serde_json::json!({ "version": { "generating": false, "progress": 1 } })), (false, 1.0));
+        assert_eq!(generation_state(&serde_json::json!({ "version": { "generating": true } })), (true, 0.0));
+        assert_eq!((number(&serde_json::json!("1")), number(&serde_json::json!(4)), number(&serde_json::json!("x"))), (Some(1), Some(4), None));
+    }
+
+    #[test]
+    fn no_versions_is_a_typed_error() {
+        let error: crate::Error = NoVersions { workspace: "acme".into(), project: "cats".into() }.into();
+        assert!(error.to_string().contains("acme/cats has no dataset version"));
+        assert_eq!(error.downcast_ref::<NoVersions>().map(|e| e.project.as_str()), Some("cats"));
+        assert_eq!(roboflow_name("car parts?", 1, "coco"), "car parts--v1-coco");
     }
 
     #[test]

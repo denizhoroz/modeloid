@@ -2,10 +2,10 @@ use dioxus::prelude::*;
 
 /// Shown while a tool has no input: datasets are chosen in the datasets panel.
 #[component]
-pub fn SelectDatasetHint(#[props(into)] text: String) -> Element {
+pub fn SelectDatasetHint() -> Element {
     rsx! {
         div { class: "notice select-hint", role: "status",
-            p { "{text}" }
+            p { "Select a dataset in the datasets panel" }
             span { class: "select-hint-arrow", aria_hidden: "true", "→" }
         }
     }

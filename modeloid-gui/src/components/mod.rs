@@ -13,6 +13,7 @@ mod resize_handle;
 mod sidebar;
 mod status_bar;
 mod workspace_card;
+mod workspace_options;
 
 pub use appearance_settings::AppearanceSettings;
 pub use charts::{Bar, BarList, Heatmap, HistogramChart, StatTile};
@@ -28,4 +29,5 @@ pub use output_choice::{OutputChoice, OutputSelect};
 pub use resize_handle::ResizeHandle;
 pub use sidebar::Sidebar;
 pub use status_bar::StatusBar;
-pub use workspace_card::WorkspaceCard;
+pub use workspace_card::{NoWorkspace, WorkspaceCard};
+pub use workspace_options::{WorkspaceOptions, WorkspaceSettings};

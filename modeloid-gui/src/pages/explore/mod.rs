@@ -9,8 +9,7 @@ use dioxus::prelude::*;
 use crate::api::datasets::list_datasets;
 use crate::api::explore::{dataset_stats, GalleryFilter};
 use crate::api::error_message;
-use crate::components::{PrimaryNote, SelectDatasetHint};
-use crate::routes::Route;
+use crate::components::{NoWorkspace, PrimaryNote, SelectDatasetHint};
 use crate::state::{use_datasets_version, use_primary_dataset, use_selected_datasets, use_workspace, use_workspace_checked};
 
 use gallery::Gallery;
@@ -38,14 +37,9 @@ pub fn Explore() -> Element {
 
             match (workspace(), primary()) {
                 (Some(_), Some(id)) => rsx! { ExploreDataset { key: "{id}", id, selected_count: selected.read().len() } },
-                (Some(_), None) => rsx! { SelectDatasetHint { text: "Select a dataset in the datasets panel to explore it." } },
+                (Some(_), None) => rsx! { SelectDatasetHint {} },
                 (None, _) if !checked() => rsx! {},
-                (None, _) => rsx! {
-                    div { class: "notice",
-                        p { "Explore looks at a workspace's datasets. Create one, or load one from the sidebar." }
-                        Link { class: "button", to: Route::CreateWorkspace {}, "Create workspace" }
-                    }
-                },
+                (None, _) => rsx! { NoWorkspace { text: "Explore looks at a workspace's datasets." } },
             }
         }
     }

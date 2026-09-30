@@ -45,6 +45,10 @@ enum Commands {
         /// Roboflow export format (e.g. coco, yolov8, voc)
         #[arg(long, default_value = "coco")]
         format: String,
+
+        /// If the Roboflow project has no version: copy it into your workspace, generate one, download it, delete the copy
+        #[arg(long)]
+        fork: bool,
     },
 
     /// Import a local dataset folder or zip file into the workspace
@@ -205,7 +209,7 @@ enum DatasetCommands {
     Convert {
         /// Dataset name or id
         dataset: String,
-        /// Label format to write: yolo, coco or voc (default: the dataset's own)
+        /// Label format to write: yolo, coco or voc (default: the workspace's default format, else the dataset's own)
         #[arg(long, value_name = "FORMAT")]
         to: Option<String>,
         /// detection: outlines become boxes. classification: one crop per object, in a folder per class
@@ -287,11 +291,12 @@ impl Cli {
             Commands::New { name } => cmd_new(&name),
             Commands::Init => cmd_init(),
             Commands::Info => cmd_info(),
-            Commands::Download { link, api_key, format } => {
+            Commands::Download { link, api_key, format, fork } => {
                 let mut opts = Settings::load_default().download_options(format);
                 if api_key.is_some() {
                     opts.api_key = api_key;
                 }
+                opts.fork_unversioned = fork;
                 cmd_download(&link, opts).await
             }
             Commands::Import { path, name, move_folder } => cmd_import(&path, name, move_folder),
@@ -366,7 +371,12 @@ fn cmd_info() -> Result<(), Error> {
 
 async fn cmd_download(link: &str, opts: DownloadOptions) -> Result<(), Error> {
     let ws = _get_workspace()?;
-    let dir = ws.download(link, &opts, Arc::new(TermReporter::new())).await?;
+    let dir = ws.download(link, &opts, Arc::new(TermReporter::new())).await.map_err(|e| -> Error {
+        match e.downcast_ref::<modeloid::NoVersions>() {
+            Some(_) => format!("{e}. Add --fork to copy it into your Roboflow workspace, generate a version, download it and delete the copy").into(),
+            None => e,
+        }
+    })?;
     println!("Dataset saved to {}", dir.display());
 
     Ok(())
@@ -615,7 +625,7 @@ fn cmd_dataset_convert(
     let family = |name: &str| modeloid::LabelFormat::parse(name).map(|f| f.name().to_string());
     let format = match to {
         Some(to) => family(&to).unwrap_or(to),
-        None => family(d.annotation_format()).unwrap_or_default(),
+        None => ws.default_format().map(|f| f.name().to_string()).or_else(|| family(d.annotation_format())).unwrap_or_default(),
     };
     let plan = ConvertPlan { input: d.id(), task, format, padding_percent: padding, min_size };
 
