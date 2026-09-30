@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 
 use crate::api::settings::ServiceId;
-use crate::components::{AppearanceSettings, CredentialField, WorkspaceSettings};
+use crate::components::{AppearanceSettings, CredentialField, SystemSettings, WorkspaceSettings};
 use crate::state::use_workspace;
 
 #[component]
@@ -35,6 +35,14 @@ pub fn Settings() -> Element {
                         p { class: "settings-section-lead", "No workspace loaded. Create or load one to change its options." }
                     },
                 }
+            }
+
+            section { class: "settings-section", aria_labelledby: "settings-system",
+                h2 { id: "settings-system", class: "settings-section-title", "System" }
+                p { class: "settings-section-lead",
+                    "How much of this computer Modeloid uses. Stored on this computer, for every workspace; the command line tool follows the thread and connection settings."
+                }
+                SystemSettings {}
             }
 
             section { class: "settings-section", aria_labelledby: "settings-api-keys",

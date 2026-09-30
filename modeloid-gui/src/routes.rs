@@ -35,8 +35,8 @@ mod tests {
         assert_eq!("/workspace/create".parse::<Route>().unwrap(), Route::CreateWorkspace {});
         assert_eq!("/settings".parse::<Route>().unwrap(), Route::Settings {});
         assert_eq!(
-            "/dataset/download".parse::<Route>().unwrap(),
-            Route::Tool { section: "dataset".into(), tool: "download".into() }
+            "/dataset/datasets".parse::<Route>().unwrap(),
+            Route::Tool { section: "dataset".into(), tool: "datasets".into() }
         );
     }
 }

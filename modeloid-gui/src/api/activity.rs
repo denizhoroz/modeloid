@@ -1,4 +1,4 @@
-//! What the server is busy with, for the status bar: the running job (see
+//! What the server is busy with, for the status bar: the running jobs (see
 //! `api/jobs.rs`) and background loads (label reading, gallery pages,
 //! previews...) started by pages.
 //!
@@ -15,13 +15,14 @@ use crate::api::jobs::{Job, JobKind, ProgressUnit};
 pub struct ActivitySnapshot {
     /// Pass back as `since`.
     pub version: u64,
-    pub job: Option<JobSummary>,
+    /// The jobs running now (one, unless the system settings allow more).
+    pub running: Vec<JobSummary>,
     pub tasks: Vec<TaskInfo>,
     /// Latest job of every kind that has run, for the tool pages' progress.
     pub jobs: Vec<Job>,
 }
 
-/// The running job, cut down to one line's worth.
+/// A running job, cut down to one line's worth.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct JobSummary {
     pub kind: JobKind,
@@ -247,7 +248,7 @@ mod backend {
                 cancelled: t.cancelled.load(Ordering::Relaxed),
             })
             .collect();
-        ActivitySnapshot { version, job: jobs::running().map(summarize), tasks, jobs: jobs::latest_all() }
+        ActivitySnapshot { version, running: jobs::running().into_iter().map(summarize).collect(), tasks, jobs: jobs::latest_all() }
     }
 
     pub async fn status(since: u64) -> ActivitySnapshot {

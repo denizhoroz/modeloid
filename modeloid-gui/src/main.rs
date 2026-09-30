@@ -18,6 +18,10 @@ const MAIN_CSS: Asset = asset!("/assets/main.css");
 const THEMES_CSS: Asset = asset!("/assets/themes.css");
 
 fn main() {
+    // Threads, connections and the other system settings saved on this computer.
+    #[cfg(feature = "server")]
+    modeloid::Settings::load_default().apply_system();
+
     // The server adds plain file routes (dataset images) next to the app.
     #[cfg(feature = "server")]
     dioxus::serve(|| async move { Ok(dioxus::server::router(App).merge(api::files::routes())) });

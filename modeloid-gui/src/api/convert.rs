@@ -59,7 +59,7 @@ mod backend {
         if let Some(problem) = preview.problems.first() {
             return Err(problem.clone());
         }
-        jobs::start(JobKind::Convert, vec![name], move |ctx| {
+        jobs::start(JobKind::Convert, vec![name], jobs::Touches::Datasets(vec![plan.input]), move |ctx| {
             let reporter = ctx.reporter();
             let (dir, s) = ws.apply_convert(&plan, &output, reporter.as_ref()).map_err(|e| e.to_string())?;
             reporter.message(&if plan.task == TargetTask::Classification {

@@ -125,7 +125,7 @@ mod backend {
 
         let ws = open()?;
         let opts = Settings::load_default().download_options(format);
-        jobs::start(JobKind::Download, links.clone(), move |ctx| download(ctx, &ws, &links[ctx.index()], &opts))
+        jobs::start(JobKind::Download, links.clone(), jobs::Touches::Nothing, move |ctx| download(ctx, &ws, &links[ctx.index()], &opts))
     }
 
     #[cfg(test)]

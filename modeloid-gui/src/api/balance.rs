@@ -67,7 +67,7 @@ mod backend {
         if let Some(problem) = plan.problems().into_iter().next() {
             return Err(problem);
         }
-        jobs::start(kind, vec![name], move |ctx| {
+        jobs::start(kind, vec![name], jobs::Touches::Datasets(vec![plan.input]), move |ctx| {
             let reporter = ctx.reporter();
             let (dir, s) = ws.apply_balance(&plan, &output, reporter.as_ref()).map_err(|e| e.to_string())?;
             let [train, val, test, none] = s.images_after;

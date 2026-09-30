@@ -3198,3 +3198,8 @@ button.bar-row:hover,
 .health-report-head {
     margin-top: var(--space-4);
 }
+
+/* Datasets > Delete: the list of what goes */
+.delete-table tbody tr {
+    cursor: default;
+}

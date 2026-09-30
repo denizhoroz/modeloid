@@ -206,6 +206,15 @@ enum DatasetCommands {
         #[arg(long, conflicts_with = "output")]
         overwrite: bool,
     },
+    /// Delete datasets from the workspace, with all their images and labels
+    Delete {
+        /// Dataset names or ids
+        #[arg(required = true, num_args = 1..)]
+        datasets: Vec<String>,
+        /// Really delete; without it the command only lists what would go
+        #[arg(long)]
+        yes: bool,
+    },
     /// Convert to another label format, to boxes only, or to classification crops
     Convert {
         /// Dataset name or id
@@ -287,6 +296,8 @@ impl Cli {
 
     pub async fn collect(&self) {
         let args = Args::parse();
+        // Threads and download connections as set in the settings (shared with the GUI).
+        Settings::load_default().apply_system();
 
         let result = match args.command {
             Commands::New { name } => cmd_new(&name),
@@ -341,6 +352,7 @@ impl Cli {
                 };
                 cmd_dataset_split(&dataset, plan, ratio, dry_run, output, overwrite)
             }
+            Commands::Dataset { command: DatasetCommands::Delete { datasets, yes } } => cmd_dataset_delete(&datasets, yes),
             Commands::Dataset { command: DatasetCommands::Convert { dataset, to, task, padding, min_size, dry_run, output, overwrite } } => {
                 cmd_dataset_convert(&dataset, to, task, padding, min_size, dry_run, output, overwrite)
             }
@@ -608,6 +620,24 @@ fn cmd_dataset_split(
     };
     let (dir, summary) = ws.apply_balance(&plan, &output, &reporter)?;
     println!("Done: {} images. Saved to {}", summary.total_after(), dir.display());
+    Ok(())
+}
+
+fn cmd_dataset_delete(datasets: &[String], yes: bool) -> Result<(), Error> {
+    let ws = _get_workspace()?;
+    // All of them must exist before anything is deleted.
+    let found: Vec<Dataset> = datasets.iter().map(|d| find_dataset(&ws, d)).collect::<Result<_, _>>()?;
+    for d in &found {
+        if yes {
+            ws.delete_dataset(d.id())?;
+            println!("Deleted #{} {}", d.id(), d.name());
+        } else {
+            println!("Would delete #{} {} ({} images)", d.id(), d.name(), d.image_count());
+        }
+    }
+    if !yes {
+        println!("Nothing was deleted. Add --yes to delete for good.");
+    }
     Ok(())
 }
 
@@ -914,6 +944,15 @@ fn cmd_settings(command: SettingsCommands) -> Result<(), Error> {
                 };
                 println!("{}: {state}", service.label());
             }
+            let system = settings.system();
+            let threads = match system.threads {
+                0 => "one per CPU core".to_string(),
+                n => n.to_string(),
+            };
+            println!(
+                "System: worker threads {threads}, download connections {}, jobs at once {} (GUI), preview size {} px (GUI)",
+                system.download_connections, system.max_jobs, system.thumb_size
+            );
         }
         SettingsCommands::Set { service, value } => {
             let service = Service::from(service);

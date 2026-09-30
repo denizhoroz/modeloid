@@ -10,6 +10,7 @@ use std::{
 };
 
 use crate::core::download::DownloadOptions;
+use crate::core::limits::{self, SystemPrefs};
 
 pub const ROBOFLOW_KEY_ENV: &str = "ROBOFLOW_API_KEY";
 pub const KAGGLE_USERNAME_ENV: &str = "KAGGLE_USERNAME";
@@ -108,6 +109,9 @@ pub struct Settings {
     /// to its defaults for ones it doesn't know.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     appearance: Option<AppearancePrefs>,
+    /// How much of this computer Modeloid uses.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    system: Option<SystemPrefs>,
 }
 
 /// GUI look: theme, font family and text size, as ids.
@@ -178,6 +182,21 @@ impl Settings {
         self.appearance = Some(prefs);
     }
 
+    /// System settings: the saved ones, or the defaults.
+    pub fn system(&self) -> SystemPrefs {
+        self.system.unwrap_or_default().normalized(limits::cores())
+    }
+
+    pub fn set_system(&mut self, prefs: SystemPrefs) {
+        self.system = Some(prefs.normalized(limits::cores()));
+    }
+
+    /// Puts the system settings to use in this process (`core::limits`).
+    /// Frontends call it at start, and again after saving a change.
+    pub fn apply_system(&self) {
+        limits::apply(self.system());
+    }
+
     /// Saves validated credentials for `service`, or removes them with `None`.
     /// Kaggle takes `kaggle.json` contents or `username:key`.
     pub fn set_credential(&mut self, service: Service, value: Option<&str>) -> Result<(), String> {
@@ -223,6 +242,21 @@ pub use modeloid_types::validate_api_key;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keeps_system_settings() {
+        let mut settings = Settings::default();
+        assert_eq!(settings.system(), SystemPrefs::default());
+        assert!(!toml::to_string(&settings).unwrap().contains("system"), "defaults aren't written");
+
+        settings.set_system(SystemPrefs { threads: 1, download_connections: 99, max_jobs: 2, thumb_size: 240 });
+        let loaded: Settings = toml::from_str(&toml::to_string(&settings).unwrap()).unwrap();
+        assert_eq!(loaded.system(), SystemPrefs { threads: 1, download_connections: 16, max_jobs: 2, thumb_size: 240 });
+
+        // A file that names only one setting keeps the defaults for the rest.
+        let partial: Settings = toml::from_str("[system]\nmax_jobs = 3\n").unwrap();
+        assert_eq!(partial.system(), SystemPrefs { max_jobs: 3, ..Default::default() });
+    }
 
     #[test]
     fn parses_kaggle_credentials() {

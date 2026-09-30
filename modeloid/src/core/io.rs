@@ -16,12 +16,11 @@ use reqwest::{StatusCode, header};
 use tokio::sync::mpsc;
 use zip::ZipArchive;
 
+use crate::core::limits;
 use crate::core::progress::{Progress, Reporter, Unit, check_cancel};
 
 /// Files at least this large are fetched over several connections when the server supports ranges.
 const PARALLEL_THRESHOLD: u64 = 16 * 1024 * 1024;
-const MIN_CONNECTIONS: usize = 4;
-const MAX_CONNECTIONS: usize = 8;
 const WRITE_BUF: usize = 1024 * 1024;
 const FILE_BUF: usize = 256 * 1024;
 const CHANNEL_CAP: usize = 64;
@@ -140,7 +139,7 @@ async fn download_ranged(
 ) -> Result<u64, crate::Error> {
     File::create(part)?.set_len(total)?;
 
-    let connections = parallelism().clamp(MIN_CONNECTIONS, MAX_CONNECTIONS) as u64;
+    let connections = limits::download_connections();
     let parts = split_ranges(total, connections).into_iter().map(|(start, end)| async move {
         let resp = client
             .get(url)
@@ -306,7 +305,7 @@ pub(crate) fn copy_dir_blocking(src: &Path, dst: &Path, progress: &dyn Progress)
     })
 }
 
-/// Runs `work` over `items` on one thread per core. Threads pull the next item from a shared
+/// Runs `work` over `items` on the worker threads the system settings allow (one per core by default). Threads pull the next item from a shared
 /// counter, so large and small items balance out; the first error stops all workers.
 pub(crate) fn run_parallel<T, S>(
     items: &[T],
@@ -417,7 +416,7 @@ pub fn unwrap_single_dir(dir: &Path) -> io::Result<()> {
 }
 
 fn parallelism() -> usize {
-    thread::available_parallelism().map_or(4, |n| n.get())
+    limits::threads()
 }
 
 #[cfg(test)]

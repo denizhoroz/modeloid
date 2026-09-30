@@ -13,6 +13,7 @@ mod output_choice;
 mod resize_handle;
 mod sidebar;
 mod status_bar;
+mod system_settings;
 mod toast;
 mod workspace_card;
 mod workspace_options;
@@ -32,7 +33,7 @@ pub use output_choice::{OutputChoice, OutputSelect};
 pub use resize_handle::ResizeHandle;
 pub use sidebar::Sidebar;
 pub use status_bar::StatusBar;
-#[allow(unused_imports)] // ToastKind: for the toasts still to come
+pub use system_settings::SystemSettings;
 pub use toast::{provide_toasts, use_toasts, ToastHost, ToastKind};
 pub use workspace_card::{NoWorkspace, WorkspaceCard};
 pub use workspace_options::{WorkspaceOptions, WorkspaceSettings};

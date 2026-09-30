@@ -93,7 +93,7 @@ mod backend {
             return Err(format!("Choose what happens to \"{class}\" first."));
         }
         let label = preview.input_names.join(" + ");
-        jobs::start(JobKind::ClassesMerge, vec![label], move |ctx| {
+        jobs::start(JobKind::ClassesMerge, vec![label], jobs::Touches::Datasets(plan.inputs.clone()), move |ctx| {
             let reporter = ctx.reporter();
             let (dir, s) = ws.apply_class_merge(&plan, &output, reporter.as_ref()).map_err(|e| e.to_string())?;
             reporter.message(&format!("{} images, {} removed, {} objects dropped", s.images, s.removed_images, s.dropped_objects));

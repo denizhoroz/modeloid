@@ -23,7 +23,7 @@ pub fn Tool(section: String, tool: String) -> Element {
 
     // Implemented tools; everything else shows the placeholder below.
     match (category.slug, item.slug) {
-        ("dataset", "download") => return rsx! { Download {} },
+        ("dataset", "datasets") => return rsx! { Download {} },
         ("dataset", "explore") => return rsx! { Explore {} },
         ("dataset", "health-check") => return rsx! { HealthCheck {} },
         ("dataset", "classes-merge") => return rsx! { ClassesMerge {} },

@@ -57,7 +57,7 @@ fn job_row(job: &JobSummary) -> Row {
             (None, amount) => amount,
         }
     };
-    Row { key: "job".into(), text, detail, stop: Stop::Job(job.kind), stopping: job.cancel_requested }
+    Row { key: format!("job-{:?}", job.kind), text, detail, stop: Stop::Job(job.kind), stopping: job.cancel_requested }
 }
 
 fn task_row(task: &TaskInfo) -> Row {
@@ -74,11 +74,11 @@ fn task_row(task: &TaskInfo) -> Row {
 }
 
 fn rows(snapshot: &ActivitySnapshot) -> Vec<Row> {
-    snapshot.job.iter().map(job_row).chain(snapshot.tasks.iter().map(task_row)).collect()
+    snapshot.running.iter().map(job_row).chain(snapshot.tasks.iter().map(task_row)).collect()
 }
 
 /// Thin bar along the bottom of every page: what the server is busy with
-/// (the running job, background loads), with a spinner and Stop buttons.
+/// (running jobs, background loads), with a spinner and Stop buttons.
 #[component]
 pub fn StatusBar() -> Element {
     let activity = use_activity();

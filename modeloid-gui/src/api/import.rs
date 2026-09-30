@@ -55,7 +55,7 @@ mod backend {
             return Err(format!("A dataset named '{name}' already exists. Choose another name."));
         }
 
-        jobs::start(JobKind::Import, vec![source.display().to_string()], move |ctx| {
+        jobs::start(JobKind::Import, vec![source.display().to_string()], jobs::Touches::Nothing, move |ctx| {
             let reporter = ctx.reporter();
             let result = match kind {
                 ImportKind::Copy => ws.import_dir(&source, &name, ImportMode::Copy, reporter.as_ref()),

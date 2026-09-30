@@ -14,4 +14,5 @@ pub use core::download::{AlreadyExists, DownloadOptions, Downloader, Inspected, 
 pub use core::scan::{DatasetStats, scan_dataset};
 pub use core::labels::{BBox, ImageLabels, LabelFormat, LabelSet, Object, Split};
 pub use core::stats::{ExploreStats, GalleryFilter, GalleryImage, GalleryObject, GalleryPage, Histogram};
+pub use core::limits::SystemPrefs;
 pub use core::progress::{Cancelled, Progress, Reporter, Silent, Unit};

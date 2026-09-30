@@ -5,6 +5,7 @@ pub mod download;
 pub mod health;
 pub mod io;
 pub mod labels;
+pub mod limits;
 pub mod progress;
 pub mod scan;
 pub mod stats;

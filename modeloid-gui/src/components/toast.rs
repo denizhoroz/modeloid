@@ -12,7 +12,7 @@
 use dioxus::prelude::*;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-#[allow(dead_code)] // only Info is used so far
+#[allow(dead_code)] // Warning has no user yet
 pub enum ToastKind {
     /// A hint or something to know.
     Info,

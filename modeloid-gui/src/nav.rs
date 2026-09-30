@@ -38,7 +38,7 @@ pub const NAV: &[NavCategory] = &[
         slug: "dataset",
         icon: IconName::Database,
         items: &[
-            item("Download & Import", "download"),
+            item("Datasets", "datasets"),
             item("Explore", "explore"),
             item("Health Check", "health-check"),
             item("Classes & Merge", "classes-merge"),

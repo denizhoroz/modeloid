@@ -35,6 +35,13 @@ pub async fn list_datasets() -> Result<Vec<DatasetRow>, ServerFnError> {
     backend::list().map_err(ServerFnError::new)
 }
 
+/// Starts deleting the datasets `ids` from the workspace, with all their
+/// images and labels (`JobKind::Delete`). Refused while a job works on one of them.
+#[post("/api/datasets/delete")]
+pub async fn start_delete(ids: Vec<u32>) -> Result<crate::api::jobs::Job, ServerFnError> {
+    backend::delete(ids).map_err(ServerFnError::new)
+}
+
 /// Short label for a task name, for the narrow Task column.
 pub fn short_task(task: &str) -> &str {
     match task {
@@ -58,7 +65,23 @@ mod backend {
     use modeloid::{Output, Workspace};
 
     use super::{DatasetRow, OutputTarget};
+    use crate::api::jobs::{self, Job, JobKind};
     use crate::api::workspace;
+
+    pub fn delete(ids: Vec<u32>) -> Result<Job, String> {
+        if ids.is_empty() {
+            return Err("Select at least one dataset.".into());
+        }
+        let dir = workspace::current_dir().ok_or("Load or create a workspace first.")?;
+        let ws = Workspace::load_from_dir(&dir).map_err(|e| format!("Couldn't open the workspace: {e}"))?;
+        let names: Vec<String> = ids
+            .iter()
+            .map(|&id| ws.find_dataset(id).map(|(_, d)| d.name().to_string()).map_err(|e| e.to_string()))
+            .collect::<Result<_, _>>()?;
+        jobs::start(JobKind::Delete, names, jobs::Touches::Datasets(ids.clone()), move |ctx| {
+            ws.delete_dataset(ids[ctx.index()]).map(|_| None).map_err(|e| e.to_string())
+        })
+    }
 
     /// Core `Output` for a tool run on `inputs`. Overwriting needs exactly one input.
     #[allow(dead_code)] // used by the tools still to come

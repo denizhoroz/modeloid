@@ -653,6 +653,60 @@ impl Workspace {
         }
     }
 
+    /// Deletes dataset `id`: its folder with all images and labels, and what
+    /// was cached about it. Datasets made from it stay (their history still
+    /// names it). Returns its name.
+    pub fn delete_dataset(&self, id: u32) -> Result<String, crate::Error> {
+        let (dir, dataset) = self.find_dataset(id)?;
+        // Only ever a folder directly inside datasets/.
+        if dir.parent() != Some(self.datasets_dir().as_path()) {
+            return Err(format!("{} isn't in this workspace's datasets folder", dir.display()).into());
+        }
+        io::retry_busy(&dir, || fs::remove_dir_all(&dir))?;
+
+        let cache = self.path.join(".cache");
+        let _ = fs::remove_file(cache.join("stats").join(format!("{id}.json")));
+        let _ = fs::remove_file(self.health_cache(id));
+        let _ = fs::remove_dir_all(self.thumbs_dir(id));
+        Ok(dataset.name().to_string())
+    }
+
+    /// The folders of derived data that can be rebuilt at any time: image
+    /// previews and Explore statistics. Health Check reports and temporary
+    /// job folders aren't among them.
+    fn rebuildable_caches(&self) -> [PathBuf; 2] {
+        let cache = self.path.join(".cache");
+        [cache.join("thumbs"), cache.join("stats")]
+    }
+
+    /// Bytes of cached previews and statistics.
+    pub fn cache_size(&self) -> u64 {
+        fn size(dir: &Path) -> u64 {
+            let Ok(entries) = fs::read_dir(dir) else { return 0 };
+            entries
+                .filter_map(Result::ok)
+                .map(|entry| match entry.metadata() {
+                    Ok(meta) if meta.is_dir() => size(&entry.path()),
+                    Ok(meta) => meta.len(),
+                    Err(_) => 0,
+                })
+                .sum()
+        }
+        self.rebuildable_caches().iter().map(|dir| size(dir)).sum()
+    }
+
+    /// Deletes cached previews and statistics; they are made again when
+    /// needed. Returns the bytes freed.
+    pub fn clear_cache(&self) -> Result<u64, crate::Error> {
+        let freed = self.cache_size();
+        for dir in self.rebuildable_caches() {
+            if dir.exists() {
+                io::retry_busy(&dir, || fs::remove_dir_all(&dir))?;
+            }
+        }
+        Ok(freed)
+    }
+
     /// Where previews of dataset `id`'s images are cached.
     pub fn thumbs_dir(&self, id: u32) -> PathBuf {
         self.path.join(".cache").join("thumbs").join(id.to_string())
@@ -1376,6 +1430,44 @@ mod tests {
 
         loaded.set_default_format(None).unwrap();
         assert_eq!(loaded.class_merge_suggestion(&[1], &Silent).unwrap().format, "yolo");
+    }
+
+    #[test]
+    fn deletes_a_dataset_and_its_caches() {
+        let tmp = TempWorkspace::new("delete");
+        let ws = &tmp.0;
+        for name in ["cats", "dogs"] {
+            let staging = tmp.staging_with(YOLO);
+            ws.save_output(&staging, &new_output(name), Lineage::new("import", &[]), &Silent).unwrap();
+        }
+        let cache = ws.path().join(".cache");
+        for rel in ["stats/1.json", "health/1.json", "thumbs/1/a.jpg", "stats/2.json"] {
+            fs::create_dir_all(cache.join(rel).parent().unwrap()).unwrap();
+            fs::write(cache.join(rel), "x").unwrap();
+        }
+
+        assert_eq!(ws.delete_dataset(1).unwrap(), "cats");
+        assert!(!ws.datasets_dir().join("cats").exists());
+        assert!(!cache.join("stats/1.json").exists() && !cache.join("health/1.json").exists() && !cache.join("thumbs/1").exists());
+        assert!(ws.datasets_dir().join("dogs").is_dir() && cache.join("stats/2.json").is_file(), "others stay");
+        assert_eq!(ws.list_datasets().unwrap().len(), 1);
+        assert!(ws.delete_dataset(1).is_err(), "already gone");
+    }
+
+    #[test]
+    fn clears_previews_and_statistics_only() {
+        let tmp = TempWorkspace::new("cache");
+        let ws = &tmp.0;
+        let cache = ws.path().join(".cache");
+        for (rel, bytes) in [("thumbs/1/a.jpg", 100), ("stats/1.json", 20), ("health/1.json", 7)] {
+            fs::create_dir_all(cache.join(rel).parent().unwrap()).unwrap();
+            fs::write(cache.join(rel), vec![0u8; bytes]).unwrap();
+        }
+        assert_eq!(ws.cache_size(), 120);
+        assert_eq!(ws.clear_cache().unwrap(), 120);
+        assert_eq!(ws.cache_size(), 0);
+        assert!(cache.join("health/1.json").is_file() && cache.join("tmp").is_dir(), "reports and job folders stay");
+        assert_eq!(ws.clear_cache().unwrap(), 0, "nothing to clear is fine");
     }
 
     #[test]

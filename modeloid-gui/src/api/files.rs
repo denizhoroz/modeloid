@@ -10,12 +10,9 @@ use dioxus::server::axum::{
     Router,
 };
 
-/// Longest side of gallery previews, in pixels.
-const THUMB_SIZE: u32 = 320;
-
 pub fn routes() -> Router {
     Router::new()
-        .route("/files/thumb/{id}/{index}", get(|Path((id, index)): Path<(u32, usize)>| serve(id, index, Some(THUMB_SIZE))))
+        .route("/files/thumb/{id}/{index}", get(|Path((id, index)): Path<(u32, usize)>| serve(id, index, Some(modeloid::core::limits::thumb_size()))))
         .route("/files/image/{id}/{index}", get(|Path((id, index)): Path<(u32, usize)>| serve(id, index, None)))
 }
 

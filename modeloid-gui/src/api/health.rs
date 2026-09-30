@@ -132,7 +132,7 @@ mod backend {
     pub fn check(ids: Vec<u32>) -> Result<Job, String> {
         let ws = open()?;
         let names = names_of(&ws, &ids)?;
-        jobs::start(JobKind::HealthCheck, names, move |ctx| {
+        jobs::start(JobKind::HealthCheck, names, jobs::Touches::Datasets(ids.clone()), move |ctx| {
             let counts = ws.health_check(ids[ctx.index()], ctx.reporter().as_ref()).map_err(|e| e.to_string())?.counts();
             Ok(Some(match counts.problems() {
                 0 => "No problems found".to_string(),
@@ -153,7 +153,7 @@ mod backend {
             resolve_output(target.clone(), &[*id])?;
         }
 
-        jobs::start(JobKind::HealthFix, names, move |ctx| {
+        jobs::start(JobKind::HealthFix, names, jobs::Touches::Datasets(ids), move |ctx| {
             let (id, target) = targets[ctx.index()].clone();
             let output = resolve_output(target, &[id])?;
             // Reasons to leave a dataset alone end the item as skipped, not failed.
@@ -187,7 +187,7 @@ mod backend {
         let mut labels: Vec<String> = datasets.iter().map(|(_, d)| d.name().to_string()).collect();
         labels.push("New folders".into());
 
-        jobs::start(JobKind::Rescan, labels, move |ctx| match ids.get(ctx.index()) {
+        jobs::start(JobKind::Rescan, labels, jobs::Touches::All, move |ctx| match ids.get(ctx.index()) {
             Some(&id) => {
                 let progress = ctx.reporter().start("Scanning", modeloid::Unit::Files);
                 let result = ws.rescan_dataset(id, progress.as_ref());

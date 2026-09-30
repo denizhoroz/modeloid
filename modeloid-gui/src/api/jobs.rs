@@ -1,6 +1,8 @@
 //! Long-running jobs (downloads, merges, conversions...). A job is a list of
-//! items run in order on a blocking thread of the server's runtime. Only one job runs at a time,
-//! across all kinds, so tools don't fight over the same files.
+//! items run in order on a blocking thread of the server's runtime. One job
+//! runs at a time unless the system settings allow more ("Jobs at once");
+//! even then a tool runs one job at a time, and two jobs never work on the
+//! same dataset, so tools don't fight over the same files.
 //!
 //! Each kind keeps its latest job, so every tool page shows its own. Progress
 //! reaches the browser through the one activity long-poll (`api/activity.rs`),
@@ -22,6 +24,7 @@ pub enum JobKind {
     Split,
     Balance,
     Convert,
+    Delete,
 }
 
 impl JobKind {
@@ -37,6 +40,7 @@ impl JobKind {
             JobKind::Split => "Split",
             JobKind::Balance => "Balance",
             JobKind::Convert => "Convert",
+            JobKind::Delete => "Delete",
         }
     }
 }
@@ -114,7 +118,7 @@ pub async fn cancel_job(kind: JobKind) -> Result<(), ServerFnError> {
 }
 
 #[cfg(feature = "server")]
-pub use backend::{latest_all, rerun_item, running, start, ItemCtx};
+pub use backend::{latest_all, rerun_item, running, start, ItemCtx, Touches};
 
 #[cfg(feature = "server")]
 mod backend {
@@ -137,8 +141,30 @@ mod backend {
         VERSION.fetch_add(1, Ordering::SeqCst) + 1
     }
 
+    /// The datasets a job reads or replaces. Two running jobs never touch the same one.
+    #[derive(Debug, Clone, PartialEq)]
+    pub enum Touches {
+        /// Only adds datasets (downloads, imports).
+        Nothing,
+        /// These dataset ids.
+        Datasets(Vec<u32>),
+        /// Every dataset (rescan).
+        All,
+    }
+
+    impl Touches {
+        fn overlaps(&self, other: &Touches) -> bool {
+            match (self, other) {
+                (Touches::Nothing, _) | (_, Touches::Nothing) => false,
+                (Touches::All, _) | (_, Touches::All) => true,
+                (Touches::Datasets(a), Touches::Datasets(b)) => a.iter().any(|id| b.contains(id)),
+            }
+        }
+    }
+
     struct Shared {
         job: Mutex<Job>,
+        touches: Touches,
         /// Checked by the core through `Reporter`/`Progress::is_cancelled`.
         cancelled: AtomicBool,
     }
@@ -182,9 +208,31 @@ mod backend {
         JOBS.lock().unwrap().values().map(|s| s.snapshot()).collect()
     }
 
-    /// The job that hasn't finished yet, if any (only one runs at a time).
-    pub fn running() -> Option<Job> {
-        JOBS.lock().unwrap().values().find(|s| !s.finished()).map(|s| s.snapshot())
+    /// The jobs that haven't finished yet.
+    pub fn running() -> Vec<Job> {
+        JOBS.lock().unwrap().values().filter(|s| !s.finished()).map(|s| s.snapshot()).collect()
+    }
+
+    /// Whether a `kind` job touching `touches` may start now, given the
+    /// latest jobs `jobs`; the reason when it may not.
+    fn admit(jobs: &HashMap<JobKind, Arc<Shared>>, kind: JobKind, touches: &Touches) -> Result<(), String> {
+        let running: Vec<&Arc<Shared>> = jobs.values().filter(|s| !s.finished()).collect();
+        let label = |shared: &Shared| shared.snapshot().kind.label();
+        if let Some(same) = running.iter().find(|s| s.snapshot().kind == kind) {
+            return Err(format!("A {} job is already running. Wait for it to finish.", label(same)));
+        }
+        if let Some(other) = running.iter().find(|s| s.touches.overlaps(touches)) {
+            return Err(format!("The {} job is working on the same dataset. Wait for it to finish.", label(other)));
+        }
+        let limit = modeloid::core::limits::max_jobs();
+        match running.as_slice() {
+            [] => Ok(()),
+            [only] if limit == 1 => Err(format!("A {} job is already running. Wait for it to finish.", label(only))),
+            running if running.len() >= limit => {
+                Err(format!("{limit} jobs are already running, the most the system settings allow. Wait for one to finish."))
+            }
+            _ => Ok(()),
+        }
     }
 
     fn latest(kind: JobKind) -> Option<Arc<Shared>> {
@@ -231,19 +279,19 @@ mod backend {
     }
 
     /// Starts a `kind` job with one item per label and returns its first state.
-    /// `work` runs once per item, in order, on a blocking thread (so it can do
-    /// slow file work directly); it returns the item's output (shown when done)
-    /// or an error message. Call from inside the server's runtime.
-    pub fn start<F>(kind: JobKind, labels: Vec<String>, mut work: F) -> Result<Job, String>
+    /// `touches` names the datasets it reads or replaces. `work` runs once
+    /// per item, in order, on a blocking thread (so it can do slow file work
+    /// directly); it returns the item's output (shown when done) or an error
+    /// message. Call from inside the server's runtime.
+    pub fn start<F>(kind: JobKind, labels: Vec<String>, touches: Touches, mut work: F) -> Result<Job, String>
     where
         F: FnMut(&ItemCtx) -> Result<Option<String>, String> + Send + 'static,
     {
+        // Held while checking and adding, so two jobs can't slip in at once.
         let mut jobs = JOBS.lock().unwrap();
-        if let Some(running) = jobs.values().find(|s| !s.finished()) {
-            let label = running.snapshot().kind.label();
-            return Err(format!("A {label} job is already running. Wait for it to finish."));
-        }
+        admit(&jobs, kind, &touches)?;
         let shared = Arc::new(Shared {
+            touches,
             job: Mutex::new(Job {
                 kind,
                 version: next_version(),
@@ -284,11 +332,8 @@ mod backend {
     {
         // Held while checking and marking, so two jobs can't start at once.
         let jobs = JOBS.lock().unwrap();
-        if let Some(running) = jobs.values().find(|s| !s.finished()) {
-            let label = running.snapshot().kind.label();
-            return Err(format!("A {label} job is already running. Wait for it to finish."));
-        }
         let shared = jobs.get(&kind).cloned().ok_or("That list is gone. Start again.")?;
+        admit(&jobs, kind, &shared.touches)?;
         if shared.snapshot().items.get(index).is_none_or(|item| item.label != label) {
             return Err("That list has changed. Start again.".into());
         }
@@ -433,7 +478,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn runs_items_in_order_and_reports() {
         let labels = vec!["ok".to_string(), "fails".to_string(), "warns".to_string(), "skips".to_string()];
-        let started = start(JobKind::Download, labels, |ctx| {
+        let started = start(JobKind::Download, labels, Touches::Nothing, |ctx| {
             let reporter = ctx.reporter();
             let n = ctx.block_on(async {
                 tokio::time::sleep(std::time::Duration::from_millis(10)).await;
@@ -450,10 +495,11 @@ mod tests {
         })
         .unwrap();
         assert!(!started.finished);
-        assert_eq!(running().map(|j| j.kind), Some(JobKind::Download), "the status bar sees it");
+        assert_eq!(running().iter().map(|j| j.kind).collect::<Vec<_>>(), [JobKind::Download], "the status bar sees it");
 
-        // A second job can't start while this one runs.
-        assert!(start(JobKind::Download, vec!["x".into()], |_| Ok(None)).is_err());
+        // A second job can't start while this one runs: not of the same tool, nor of another.
+        assert!(start(JobKind::Download, vec!["x".into()], Touches::Nothing, |_| Ok(None)).is_err());
+        assert!(start(JobKind::Convert, vec!["x".into()], Touches::Nothing, |_| Ok(None)).is_err());
 
         let job = finished(JobKind::Download).await;
         assert_eq!(job.items[0].status, ItemStatus::Done);
@@ -477,7 +523,7 @@ mod tests {
 
         // Cancelling stops the running item (via the reporter) and skips the rest.
         let labels = vec!["slow".to_string(), "skipped".to_string()];
-        start(JobKind::Import, labels, |ctx| {
+        start(JobKind::Import, labels, Touches::Nothing, |ctx| {
             let reporter = ctx.reporter();
             while !reporter.is_cancelled() {
                 std::thread::sleep(std::time::Duration::from_millis(5));
@@ -492,5 +538,29 @@ mod tests {
         assert_eq!(job.items[0].error, None);
         assert_eq!(job.items[1].status, ItemStatus::Cancelled);
         assert!(cancel(JobKind::Import).is_err(), "nothing left to cancel");
+
+        // "Jobs at once" above 1: other tools may start, unless they share a dataset or the limit is reached.
+        let waits = |ctx: &ItemCtx| {
+            let reporter = ctx.reporter();
+            while !reporter.is_cancelled() {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            Err("stopped".to_string())
+        };
+        modeloid::core::limits::apply(modeloid::SystemPrefs { max_jobs: 2, ..Default::default() });
+        start(JobKind::HealthCheck, vec!["a".into()], Touches::Datasets(vec![1, 2]), waits).unwrap();
+        let same_dataset = start(JobKind::Convert, vec!["b".into()], Touches::Datasets(vec![2]), waits).unwrap_err();
+        assert!(same_dataset.contains("same dataset"), "{same_dataset}");
+        assert!(start(JobKind::Rescan, vec!["all".into()], Touches::All, waits).unwrap_err().contains("same dataset"));
+        assert!(start(JobKind::HealthCheck, vec!["c".into()], Touches::Datasets(vec![9]), waits).unwrap_err().contains("already running"));
+        start(JobKind::Convert, vec!["d".into()], Touches::Datasets(vec![3]), waits).unwrap();
+        assert_eq!(running().len(), 2);
+        let full = start(JobKind::Download, vec!["e".into()], Touches::Nothing, waits).unwrap_err();
+        assert!(full.contains("2 jobs are already running"), "{full}");
+        cancel(JobKind::HealthCheck).unwrap();
+        cancel(JobKind::Convert).unwrap();
+        finished(JobKind::HealthCheck).await;
+        finished(JobKind::Convert).await;
+        modeloid::core::limits::apply(modeloid::SystemPrefs::default());
     }
 }
