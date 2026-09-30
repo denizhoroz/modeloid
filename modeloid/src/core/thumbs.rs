@@ -27,11 +27,18 @@ pub fn thumbnail(src: &Path, cache_dir: &Path, max: u32) -> Result<PathBuf, crat
     let small = image.thumbnail(max, max).to_rgb8();
     fs::create_dir_all(cache_dir)?;
     // Written under a temporary name so a half-written file is never served.
-    let part = path.with_extension("part");
+    // The name is this thread's own: two requests for one preview don't share it.
+    let part = path.with_extension(format!("{:?}.part", std::thread::current().id()));
     let mut out = BufWriter::new(fs::File::create(&part)?);
     small.write_with_encoder(JpegEncoder::new_with_quality(&mut out, QUALITY))?;
     drop(out);
-    fs::rename(&part, &path)?;
+    if let Err(e) = crate::core::io::rename(&part, &path) {
+        let _ = fs::remove_file(&part);
+        // Another request finished the same preview first: use that one.
+        if !path.is_file() {
+            return Err(e.into());
+        }
+    }
     Ok(path)
 }
 

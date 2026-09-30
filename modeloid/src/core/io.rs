@@ -8,6 +8,7 @@ use std::{
         atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed},
     },
     thread,
+    time::{Duration, Instant},
 };
 
 use futures_util::{StreamExt, future::try_join_all};
@@ -24,6 +25,46 @@ const MAX_CONNECTIONS: usize = 8;
 const WRITE_BUF: usize = 1024 * 1024;
 const FILE_BUF: usize = 256 * 1024;
 const CHANNEL_CAP: usize = 64;
+
+/// How long a rename or delete keeps trying while another program holds the files.
+const BUSY_PATIENCE: Duration = Duration::from_secs(10);
+
+/// "In use by another program". On Windows a file or folder can't be renamed
+/// or deleted while anything has it (or a file inside it) open, and virus
+/// scanners and the search indexer open freshly written files for a moment.
+fn is_busy(error: &io::Error) -> bool {
+    // 32, 33: sharing and lock violations.
+    cfg!(windows) && (error.kind() == io::ErrorKind::PermissionDenied || matches!(error.raw_os_error(), Some(32 | 33)))
+}
+
+/// Runs `op` (a rename or delete of `path`), trying again for a while when
+/// the files are in use by another program. Still busy after that: an error
+/// that says so, instead of a bare "Access is denied".
+pub(crate) fn retry_busy<T>(path: &Path, mut op: impl FnMut() -> io::Result<T>) -> io::Result<T> {
+    let started = Instant::now();
+    let mut wait = Duration::from_millis(20);
+    loop {
+        match op() {
+            Err(e) if is_busy(&e) && started.elapsed() < BUSY_PATIENCE => {
+                thread::sleep(wait);
+                wait = (wait * 2).min(Duration::from_millis(500));
+            }
+            Err(e) if is_busy(&e) => {
+                let message = format!(
+                    "{} is in use by another program or can't be changed ({e}). Close File Explorer windows, image viewers or editors showing it, then try again",
+                    path.display()
+                );
+                return Err(io::Error::new(e.kind(), message));
+            }
+            result => return result,
+        }
+    }
+}
+
+/// `fs::rename` that waits out other programs holding the files (see `retry_busy`).
+pub(crate) fn rename(from: &Path, to: &Path) -> io::Result<()> {
+    retry_busy(from, || fs::rename(from, to))
+}
 
 /// Downloads `url` to `dest` through `dest.part`, returning the number of bytes written.
 ///
@@ -47,7 +88,9 @@ pub async fn download_into(client: &reqwest::Client, url: &str, dest: &Path, pro
     let result = download_to(client, url, &part, progress).await;
     match result {
         Ok(size) => {
-            tokio::fs::rename(&part, dest).await?;
+            // A virus scanner may still be reading the finished file.
+            let (from, to) = (part.clone(), dest.to_path_buf());
+            tokio::task::spawn_blocking(move || rename(&from, &to)).await??;
             Ok(size)
         }
         Err(e) => {
@@ -225,7 +268,7 @@ pub(crate) fn move_dir_blocking(src: &Path, dst: &Path, reporter: &dyn Reporter)
     if let Some(parent) = dst.parent() {
         fs::create_dir_all(parent)?;
     }
-    match fs::rename(src, dst) {
+    match rename(src, dst) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == io::ErrorKind::CrossesDevices => {
             // Only a cross-volume move does real work, so only it gets a progress bar.
@@ -233,7 +276,7 @@ pub(crate) fn move_dir_blocking(src: &Path, dst: &Path, reporter: &dyn Reporter)
             let result = copy_dir_blocking(src, dst, progress.as_ref());
             progress.finish();
             result?;
-            fs::remove_dir_all(src)?;
+            retry_busy(src, || fs::remove_dir_all(src))?;
             Ok(())
         }
         Err(e) => Err(e.into()),
@@ -365,12 +408,12 @@ pub fn unwrap_single_dir(dir: &Path) -> io::Result<()> {
     }
     // Renamed first, in case it contains an entry with its own name.
     let inner = dir.join(".modeloid-unwrap");
-    fs::rename(only.path(), &inner)?;
+    rename(&only.path(), &inner)?;
     for entry in fs::read_dir(&inner)? {
         let entry = entry?;
-        fs::rename(entry.path(), dir.join(entry.file_name()))?;
+        rename(&entry.path(), &dir.join(entry.file_name()))?;
     }
-    fs::remove_dir(inner)
+    retry_busy(&inner, || fs::remove_dir(&inner))
 }
 
 fn parallelism() -> usize {
@@ -407,6 +450,31 @@ mod tests {
             zip.write_all(data).unwrap();
         }
         zip.finish().unwrap();
+    }
+
+    #[test]
+    fn rename_waits_for_a_busy_folder() {
+        let tmp = TempDir::new("busy");
+        let (from, to) = (tmp.0.join("from"), tmp.0.join("to"));
+        fs::create_dir_all(&from).unwrap();
+        fs::write(from.join("a.txt"), "x").unwrap();
+
+        // Another program has a file in the folder open for a moment (a virus scan).
+        let held = File::open(from.join("a.txt")).unwrap();
+        #[cfg(windows)]
+        assert!(fs::rename(&from, &to).is_err(), "Windows refuses to rename a folder with an open file");
+        let release = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(300));
+            drop(held);
+        });
+        rename(&from, &to).unwrap();
+        release.join().unwrap();
+        assert!(to.join("a.txt").is_file() && !from.exists());
+
+        // A plain mistake isn't retried.
+        let started = Instant::now();
+        assert!(rename(&tmp.0.join("missing"), &tmp.0.join("x")).is_err());
+        assert!(started.elapsed() < Duration::from_secs(1));
     }
 
     #[test]

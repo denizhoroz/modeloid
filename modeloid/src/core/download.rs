@@ -416,7 +416,7 @@ impl Downloader {
             }
             io::extract_zip(&zip, &dir, self.reporter.as_ref()).await?;
             io::unwrap_single_dir(&dir)?;
-            fs::remove_file(&zip)?;
+            io::retry_busy(&zip, || fs::remove_file(&zip))?;
         }
         Ok(())
     }
