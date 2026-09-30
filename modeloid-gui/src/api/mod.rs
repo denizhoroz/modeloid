@@ -3,6 +3,7 @@
 
 pub mod activity;
 pub mod appearance;
+pub mod balance;
 pub mod classes;
 pub mod datasets;
 pub mod dialogs;

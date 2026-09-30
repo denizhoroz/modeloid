@@ -163,6 +163,44 @@ enum DatasetCommands {
         #[arg(long, conflicts_with = "output")]
         overwrite: bool,
     },
+    /// Split into train/val/test, take a random subset, cap dominant classes or filter by class
+    Split {
+        /// Dataset name or id
+        dataset: String,
+        /// New split in percent, e.g. 70,20,10 (default: images keep their split)
+        #[arg(long, value_name = "TRAIN,VAL,TEST")]
+        ratio: Option<String>,
+        /// With --ratio: don't give each split a similar class mix
+        #[arg(long)]
+        no_stratify: bool,
+        /// Keep a random share of the images, in percent
+        #[arg(long, value_name = "PERCENT")]
+        subset: Option<u32>,
+        /// Undersample dominant classes to about this many labels each
+        #[arg(long, value_name = "LABELS")]
+        cap: Option<u32>,
+        /// Leave a class out: its labels are deleted and images left without labels removed. Repeatable
+        #[arg(long, value_name = "CLASS")]
+        drop_class: Vec<String>,
+        /// Keep only images containing this class. Repeatable
+        #[arg(long, value_name = "CLASS", conflicts_with = "remove_class")]
+        keep_class: Vec<String>,
+        /// Remove images containing this class. Repeatable
+        #[arg(long, value_name = "CLASS")]
+        remove_class: Vec<String>,
+        /// Seed of the random choices (default: the workspace's)
+        #[arg(long)]
+        seed: Option<u64>,
+        /// Only show the result, don't write anything
+        #[arg(long)]
+        dry_run: bool,
+        /// Name of the new dataset (default: <dataset>-split)
+        #[arg(long)]
+        output: Option<String>,
+        /// Replace the dataset instead of making a copy
+        #[arg(long, conflicts_with = "output")]
+        overwrite: bool,
+    },
     /// Merge datasets, matching classes by name (or as a plan file says)
     Merge {
         /// Dataset names or ids, in order
@@ -232,6 +270,28 @@ impl Cli {
             }
             Commands::Dataset { command: DatasetCommands::Classes { dataset, rename, drop, dry_run, output, overwrite } } => {
                 cmd_dataset_classes(&dataset, &rename, &drop, dry_run, output, overwrite)
+            }
+            Commands::Dataset {
+                command:
+                    DatasetCommands::Split { dataset, ratio, no_stratify, subset, cap, drop_class, keep_class, remove_class, seed, dry_run, output, overwrite },
+            } => {
+                use modeloid::core::balance::{BalancePlan, ClassFilter, FilterMode};
+
+                let filter = if remove_class.is_empty() {
+                    ClassFilter { mode: FilterMode::Keep, classes: keep_class }
+                } else {
+                    ClassFilter { mode: FilterMode::Remove, classes: remove_class }
+                };
+                let plan = BalancePlan {
+                    drop_classes: drop_class,
+                    filter,
+                    subset_percent: subset,
+                    class_cap: cap,
+                    stratify: !no_stratify,
+                    seed,
+                    ..Default::default()
+                };
+                cmd_dataset_split(&dataset, plan, ratio, dry_run, output, overwrite)
             }
             Commands::Dataset {
                 command: DatasetCommands::Merge { datasets, plan, write_plan, format, keep_splits, dry_run, output },
@@ -415,6 +475,83 @@ fn cmd_dataset_classes(
         summary.dropped_objects,
         dir.display()
     );
+    Ok(())
+}
+
+fn cmd_dataset_split(
+    dataset: &str,
+    mut plan: modeloid::core::balance::BalancePlan,
+    ratio: Option<String>,
+    dry_run: bool,
+    output: Option<String>,
+    overwrite: bool,
+) -> Result<(), Error> {
+    use modeloid::core::balance::Resplit;
+
+    let ws = _get_workspace()?;
+    let d = find_dataset(&ws, dataset)?;
+    plan.input = d.id();
+    if let Some(ratio) = ratio {
+        let parts: Vec<u32> = ratio
+            .split(',')
+            .map(|p| p.trim().parse())
+            .collect::<Result<_, _>>()
+            .map_err(|_| format!("--ratio takes TRAIN,VAL,TEST in percent, got '{ratio}'"))?;
+        let &[train, val, test] = parts.as_slice() else {
+            return Err(format!("--ratio takes three numbers (TRAIN,VAL,TEST), got '{ratio}'").into());
+        };
+        plan.split = Resplit::Ratios { train, val, test };
+    }
+
+    let reporter = TermReporter::new();
+    let progress = reporter.start("Reading labels", Unit::Files);
+    let preview = ws.balance_preview(&plan, progress.as_ref());
+    progress.finish();
+    let preview = preview?;
+
+    println!("#{} {} (seed {})", d.id(), d.name(), preview.seed);
+    println!("  {:<24} {:>8} {:>8}   {:>7} {:>7} {:>7} {:>8}", "", "before", "after", "train", "val", "test", "no split");
+    let row = |name: &str, before: &[u32; 4], after: &[u32; 4]| {
+        println!(
+            "  {name:<24} {:>8} {:>8}   {:>7} {:>7} {:>7} {:>8}",
+            before.iter().sum::<u32>(),
+            after.iter().sum::<u32>(),
+            after[0],
+            after[1],
+            after[2],
+            after[3]
+        );
+    };
+    row("images", &preview.images_before, &preview.images_after);
+    for class in preview.classes.iter().filter(|c| c.before.iter().any(|&n| n > 0)) {
+        row(&class.name, &class.before, &class.after);
+    }
+    if preview.dropped_labels > 0 {
+        println!("{} labels of left-out classes deleted", preview.dropped_labels);
+    }
+    let removed = [
+        (preview.removed_by_classes, "with their classes left out"),
+        (preview.removed_by_filter, "by the class filter"),
+        (preview.removed_by_subset, "by the subset"),
+        (preview.removed_by_cap, "by the cap"),
+    ];
+    for (count, what) in removed.iter().filter(|(c, _)| *c > 0) {
+        println!("{count} images removed {what}");
+    }
+    for problem in &preview.problems {
+        println!("Problem: {problem}");
+    }
+    if dry_run || !preview.can_run() {
+        return Ok(());
+    }
+
+    let output = if overwrite {
+        modeloid::Output::Overwrite { id: d.id() }
+    } else {
+        modeloid::Output::New { name: output.unwrap_or_else(|| format!("{}-split", d.name())) }
+    };
+    let (dir, summary) = ws.apply_balance(&plan, &output, &reporter)?;
+    println!("Done: {} images. Saved to {}", summary.total_after(), dir.display());
     Ok(())
 }
 

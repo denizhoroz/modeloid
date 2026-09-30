@@ -2,6 +2,7 @@ use dioxus::prelude::*;
 
 use crate::components::{Icon, IconName};
 use crate::nav;
+use crate::pages::balance::SplitBalance;
 use crate::pages::classes::ClassesMerge;
 use crate::pages::download::Download;
 use crate::pages::explore::Explore;
@@ -25,6 +26,7 @@ pub fn Tool(section: String, tool: String) -> Element {
         ("dataset", "explore") => return rsx! { Explore {} },
         ("dataset", "health-check") => return rsx! { HealthCheck {} },
         ("dataset", "classes-merge") => return rsx! { ClassesMerge {} },
+        ("dataset", "split-balance") => return rsx! { SplitBalance {} },
         _ => {}
     }
 

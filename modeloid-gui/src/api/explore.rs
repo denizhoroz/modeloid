@@ -30,7 +30,7 @@ pub fn image_url(id: u32, index: usize) -> String {
 }
 
 #[cfg(feature = "server")]
-pub use backend::image_file;
+pub use backend::{image_file, labels as cached_labels};
 
 #[cfg(feature = "server")]
 mod backend {
@@ -51,7 +51,8 @@ mod backend {
         Workspace::load_from_dir(&dir).map_err(|e| format!("Couldn't open the workspace: {e}"))
     }
 
-    fn labels(ws: &Workspace, id: u32, progress: &dyn Progress) -> Result<(PathBuf, Arc<LabelSet>), String> {
+    /// Dataset `id`'s folder and labels, read only when it isn't the cached one.
+    pub fn labels(ws: &Workspace, id: u32, progress: &dyn Progress) -> Result<(PathBuf, Arc<LabelSet>), String> {
         let (dir, _) = ws.find_dataset(id).map_err(|e| e.to_string())?;
         let meta = std::fs::metadata(dir.join("dataset.toml")).map_err(|e| e.to_string())?;
         let key = format!("{}|{id}|{}|{:?}", ws.path().display(), meta.len(), meta.modified().ok());

@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::{fs, path::{Path, PathBuf}, sync::Arc};
 
 use crate::core::{
+    balance::{self, BalancePlan, BalancePreview, FilterMode, Resplit},
     classes::{self, ClassList, MergePlan, MergePreview, MergeSummary, SplitMode},
     download::{DownloadOptions, Downloader, Source, SourceInfo},
     health::{self, FixSummary, HEALTH_VERSION, HealthFixes, HealthReport},
@@ -132,6 +133,11 @@ impl Workspace {
 
     pub fn description(&self) -> &str {
         &self.description
+    }
+
+    /// Seed for random choices (splits, subsets), so results can be repeated.
+    pub fn seed(&self) -> u64 {
+        self.seed
     }
 
     pub fn display_info(&self) -> Result<(), crate::Error> {
@@ -444,6 +450,79 @@ impl Workspace {
             .with_param("split", if plan.split == SplitMode::AllTrain { "all-train" } else { "keep" })
             .with_param("removed_images", summary.removed_images as i64)
             .with_param("dropped_objects", summary.dropped_objects as i64);
+        match self.save_output(&staging, output, lineage, reporter) {
+            Ok(dir) => Ok((dir, summary)),
+            Err(e) => {
+                let _ = fs::remove_dir_all(&staging);
+                Err(e)
+            }
+        }
+    }
+
+    /// What a Split & Balance `plan` does to `set` (its input's labels),
+    /// with the workspace's seed unless the plan has its own.
+    pub fn balance_preview_of(&self, plan: &BalancePlan, set: &LabelSet) -> BalancePreview {
+        balance::preview(&self.seeded(plan), set)
+    }
+
+    /// What a Split & Balance `plan` does to its input; reads its labels.
+    pub fn balance_preview(&self, plan: &BalancePlan, progress: &dyn Progress) -> Result<BalancePreview, crate::Error> {
+        let (_, _, set) = self.read_labels(plan.input, progress)?;
+        Ok(self.balance_preview_of(plan, &set))
+    }
+
+    fn seeded(&self, plan: &BalancePlan) -> BalancePlan {
+        BalancePlan { seed: Some(plan.seed.unwrap_or(self.seed)), ..plan.clone() }
+    }
+
+    /// Applies a Split & Balance plan to its input and saves the result as
+    /// `output`, in the input's label format.
+    pub fn apply_balance(
+        &self,
+        plan: &BalancePlan,
+        output: &Output,
+        reporter: &dyn Reporter,
+    ) -> Result<(PathBuf, BalancePreview), crate::Error> {
+        let plan = self.seeded(plan);
+        let reading = reporter.start("Reading labels", Unit::Files);
+        let read = self.read_labels(plan.input, reading.as_ref());
+        reading.finish();
+        let (_, dataset, set) = read?;
+        let format = LabelFormat::parse(dataset.annotation_format()).ok_or("unsupported label format")?;
+        let (set, summary) = balance::apply(&plan, set)?;
+
+        let staging = self.staging_dir("split-balance")?;
+        let writing = reporter.start("Writing", Unit::Files);
+        let written = labels::write(&set, &staging, format, writing.as_ref());
+        writing.finish();
+        if let Err(e) = written {
+            let _ = fs::remove_dir_all(&staging);
+            return Err(e.into());
+        }
+
+        let seed: toml::Value = i64::try_from(summary.seed).map_or_else(|_| summary.seed.to_string().into(), toml::Value::from);
+        let mut lineage = Lineage::new("split-balance", &[&dataset])
+            .with_param("seed", seed)
+            .with_param("images", i64::from(summary.total_after()));
+        match plan.split {
+            Resplit::Keep => lineage = lineage.with_param("split", "keep"),
+            Resplit::Ratios { train, val, test } => {
+                lineage = lineage.with_param("split", format!("{train}/{val}/{test}")).with_param("stratify", plan.stratify);
+            }
+        }
+        if !plan.drop_classes.is_empty() {
+            lineage = lineage.with_param("drop_classes", plan.drop_classes.clone());
+        }
+        if !plan.filter.classes.is_empty() {
+            let key =if plan.filter.mode == FilterMode::Keep { "keep_classes" } else { "remove_classes" };
+            lineage = lineage.with_param(key, plan.filter.classes.clone());
+        }
+        if let Some(percent) = plan.subset_percent {
+            lineage = lineage.with_param("subset_percent", i64::from(percent));
+        }
+        if let Some(cap) = plan.class_cap {
+            lineage = lineage.with_param("class_cap", i64::from(cap));
+        }
         match self.save_output(&staging, output, lineage, reporter) {
             Ok(dir) => Ok((dir, summary)),
             Err(e) => {
@@ -1046,6 +1125,42 @@ mod tests {
         assert!(label.starts_with("0 "), "Cars mapped to car = 0: {label}");
 
         assert!(ws.apply_class_merge(&plan, &Output::Overwrite { id: 1 }, &Silent).is_err(), "no overwrite with 2 inputs");
+    }
+
+    #[test]
+    fn splits_a_dataset_with_the_workspace_seed() {
+        let tmp = TempWorkspace::new("balance");
+        let ws = &tmp.0;
+        let staging = tmp.staging_with(&[("data.yaml", "names: ['cat']\n")]);
+        fs::create_dir_all(staging.join("train/images")).unwrap();
+        fs::create_dir_all(staging.join("train/labels")).unwrap();
+        for i in 0..10 {
+            image::RgbImage::new(32, 32).save(staging.join(format!("train/images/{i}.png"))).unwrap();
+            fs::write(staging.join(format!("train/labels/{i}.txt")), "0 0.5 0.5 0.2 0.2\n").unwrap();
+        }
+        ws.save_output(&staging, &new_output("cats"), Lineage::new("import", &[]), &Silent).unwrap();
+
+        let plan = BalancePlan::new(1);
+        let preview = ws.balance_preview(&plan, &Silent).unwrap();
+        assert_eq!((preview.seed, preview.images_after), (ws.seed(), [7, 2, 1, 0]));
+
+        let (dir, summary) = ws.apply_balance(&plan, &new_output("cats-split"), &Silent).unwrap();
+        assert_eq!(summary, preview);
+        let count = |split: &str| fs::read_dir(dir.join(split).join("images")).unwrap().count();
+        assert_eq!((count("train"), count("valid"), count("test")), (7, 2, 1));
+        let saved = Dataset::load_from_dir(&dir).unwrap();
+        let lineage = saved.lineage().unwrap();
+        assert_eq!((lineage.operation.as_str(), lineage.params["split"].as_str()), ("split-balance", Some("70/20/10")));
+        assert_eq!(lineage.params["seed"].as_integer(), Some(42));
+
+        // Overwriting keeps the dataset's identity.
+        let out = ws.apply_balance(&plan, &Output::Overwrite { id: 1 }, &Silent).unwrap().0;
+        assert_eq!(out, ws.datasets_dir().join("cats"));
+        assert!(out.join("test/images").is_dir());
+        assert_eq!(fs::read_dir(ws.tmp_dir()).unwrap().count(), 0);
+
+        let bad = BalancePlan { split: Resplit::Ratios { train: 50, val: 20, test: 10 }, ..plan };
+        assert!(ws.apply_balance(&bad, &new_output("bad"), &Silent).is_err());
     }
 
     #[test]

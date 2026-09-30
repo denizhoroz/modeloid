@@ -1,3 +1,4 @@
+mod balance;
 mod classes;
 mod create_workspace;
 mod download;

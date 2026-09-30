@@ -1,3 +1,4 @@
+pub mod balance;
 pub mod classes;
 pub mod download;
 pub mod health;

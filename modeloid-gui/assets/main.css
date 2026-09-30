@@ -166,7 +166,9 @@ button {
 .content-split {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto min(var(--panel-width), 70%);
+    /* Its height already leaves room for the status bar */
     height: calc(100dvh - var(--statusbar-height));
+    padding-bottom: 0;
 }
 
 .content-main {
@@ -224,7 +226,7 @@ button {
     border-bottom: 1px solid var(--color-border);
 }
 
-.datasets-panel-header /* Header with a trailing action button: title and meta stay together on the left */
+/* Header with a trailing action button: title and meta stay together on the left */
 .section-card-header:has(> .button-sm) {
     justify-content: flex-start;
 }
@@ -239,7 +241,7 @@ button {
     font-size: var(--text-xs);
 }
 
-.section-card-title {
+.datasets-panel-header .section-card-title {
     flex: 1;
 }
 
@@ -1674,8 +1676,11 @@ fieldset.section-card:disabled {
 .chart-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    /* Cards in a row share its height, and later cards fill holes left
+       around the tall class card, so there are no ragged gaps. */
+    grid-auto-flow: row dense;
+    align-items: stretch;
     gap: var(--space-3);
-    align-items: start;
 }
 
 .chart-card {
@@ -2610,4 +2615,329 @@ button.bar-row:hover,
 .warning-list li.is-error {
     border-left-color: var(--color-danger-fg);
     color: var(--color-danger-fg);
+}
+
+/* Split & Balance */
+.option-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2) var(--space-3);
+    min-height: var(--input-height);
+}
+
+.option-row .check {
+    align-items: center;
+}
+
+.option-row .check input {
+    margin: 0;
+}
+
+.input-narrow {
+    width: 88px;
+}
+
+/* Split bar: train | val | test, with a draggable handle on each boundary */
+.split-bar {
+    position: relative;
+    display: flex;
+    height: 40px;
+    margin: var(--space-2) 0;
+    touch-action: none;
+    user-select: none;
+}
+
+.split-segment {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    min-width: 0;
+    overflow: hidden;
+    padding: 0 var(--space-2);
+    /* Surface gap between neighbours */
+    border-right: 2px solid var(--color-surface);
+    /* Told apart by their labels; one neutral fill keeps the text readable in every theme */
+    background: var(--viz-track);
+    box-shadow: inset 0 -3px 0 var(--viz-series);
+    color: var(--color-fg);
+    font-size: var(--text-xs);
+    line-height: 1.25;
+    white-space: nowrap;
+}
+
+.split-segment-0 {
+    border-radius: 4px 0 0 4px;
+}
+
+.split-segment-2 {
+    border-right: 0;
+    border-radius: 0 4px 4px 0;
+}
+
+.split-segment-name {
+    font-weight: 600;
+}
+
+.split-handle {
+    position: absolute;
+    top: -4px;
+    bottom: -4px;
+    width: 6px;
+    margin-left: -4px;
+    border: 1px solid var(--color-surface);
+    border-radius: 3px;
+    background: var(--color-fg);
+    cursor: col-resize;
+    touch-action: none;
+}
+
+/* Wider invisible grab area */
+.split-handle::before {
+    content: "";
+    position: absolute;
+    inset: 0 -8px;
+}
+
+.split-handle:hover,
+.split-handle.is-dragging,
+.split-handle:focus-visible {
+    background: var(--color-accent);
+}
+
+.split-legend {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--space-3);
+    margin: 0 0 var(--space-3);
+}
+
+.split-legend-item {
+    display: flex;
+    flex-direction: column;
+}
+
+.split-legend dt {
+    color: var(--color-fg-muted);
+    font-size: var(--text-xs);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.split-legend dd {
+    margin: 0;
+    font-variant-numeric: tabular-nums;
+}
+
+.split-legend-share {
+    font-size: var(--text-xl);
+    font-weight: 600;
+}
+
+.split-legend-count {
+    color: var(--color-fg-muted);
+    font-size: var(--text-xs);
+}
+
+/* Class distribution: a column per class with an include button under it,
+   and a draggable dashed threshold line */
+.class-chart {
+    --plot-height: 220px;
+    --plot-top: 28px; /* room for hover tooltips and the threshold label */
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    margin-top: var(--space-1);
+}
+
+.class-chart-axis {
+    position: relative;
+    width: 56px;
+    height: var(--plot-height);
+    margin-top: var(--plot-top);
+    border-right: 1px solid var(--color-border-strong);
+}
+
+.class-chart-tick {
+    position: absolute;
+    right: 14px;
+    transform: translateY(-50%);
+    color: var(--color-fg-muted);
+    font-size: var(--text-xs);
+    font-variant-numeric: tabular-nums;
+}
+
+.threshold-grip {
+    position: absolute;
+    right: -7px;
+    z-index: 2;
+    width: 14px;
+    height: 14px;
+    transform: translateY(-50%);
+    border: 2px solid var(--color-surface);
+    border-radius: 50%;
+    background: var(--color-fg);
+    cursor: row-resize;
+    touch-action: none;
+}
+
+/* Wider invisible grab area */
+.threshold-grip::before {
+    content: "";
+    position: absolute;
+    inset: -8px;
+}
+
+.threshold-grip:hover,
+.threshold-grip.is-dragging,
+.threshold-grip:focus-visible {
+    background: var(--color-accent);
+}
+
+.class-chart-scroll {
+    overflow-x: auto;
+    padding-top: var(--plot-top);
+}
+
+.class-chart-inner {
+    position: relative;
+    display: flex;
+    gap: var(--space-1);
+    min-width: min-content;
+    padding: 0 var(--space-2);
+}
+
+.class-chart-gridline {
+    position: absolute;
+    right: 0;
+    left: 0;
+    border-top: 1px solid var(--color-border);
+    pointer-events: none;
+}
+
+.class-col {
+    z-index: 1;
+    display: flex;
+    flex: 1 0 34px;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-2);
+    max-width: 96px;
+    min-width: 0;
+}
+
+.class-col-plot {
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    width: 100%;
+    height: var(--plot-height);
+}
+
+.class-col-plot:hover {
+    background: var(--color-surface-hover);
+}
+
+/* Whole column = labels before; the solid part = labels that stay */
+.class-bar {
+    display: flex;
+    align-items: flex-end;
+    width: min(100%, 28px);
+    min-height: 2px;
+    overflow: hidden;
+    border-radius: 4px 4px 0 0;
+    background: color-mix(in srgb, var(--viz-series) 26%, transparent);
+}
+
+.class-bar-kept {
+    width: 100%;
+    background: var(--viz-series);
+    transition: height var(--duration) var(--ease-out);
+}
+
+/* Class name reads bottom to top, so long names fit under a thin column */
+.class-toggle {
+    height: 150px;
+    min-width: 24px;
+    overflow: hidden;
+    padding: var(--space-2) 3px;
+    transform: rotate(180deg);
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-sm);
+    background: none;
+    color: var(--color-fg-muted);
+    font: inherit;
+    font-size: var(--text-xs);
+    text-decoration: line-through;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    writing-mode: vertical-rl;
+    cursor: pointer;
+}
+
+.class-toggle[aria-pressed="true"] {
+    border-color: var(--color-accent);
+    background: var(--color-accent-soft);
+    color: var(--color-fg);
+    text-decoration: none;
+}
+
+.class-toggle:hover {
+    border-color: var(--color-fg-muted);
+}
+
+.threshold-line {
+    position: absolute;
+    right: 0;
+    left: 0;
+    z-index: 2;
+    height: 0;
+    border-top: 2px dashed var(--color-fg-muted);
+    cursor: row-resize;
+    touch-action: none;
+}
+
+.threshold-line.is-cutting {
+    border-top-color: var(--color-fg);
+}
+
+/* Taller invisible grab area */
+.threshold-line::before {
+    content: "";
+    position: absolute;
+    inset: -8px 0 -6px;
+}
+
+.threshold-label {
+    position: absolute;
+    right: var(--space-1);
+    bottom: 3px;
+    padding: 0 var(--space-1);
+    border-radius: var(--radius-sm);
+    background: var(--color-surface);
+    color: var(--color-fg);
+    font-size: var(--text-xs);
+    pointer-events: none;
+    white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .class-bar-kept {
+        transition: none;
+    }
+}
+
+.result-table tbody tr {
+    cursor: default;
+}
+
+.result-table .total-row th,
+.result-table .total-row td {
+    border-bottom-color: var(--color-border-strong);
+    color: var(--color-fg);
+    font-weight: 600;
+}
+
+.result-table .name .tag {
+    margin-left: var(--space-1);
 }

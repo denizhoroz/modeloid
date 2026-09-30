@@ -19,6 +19,8 @@ pub enum JobKind {
     HealthFix,
     Rescan,
     ClassesMerge,
+    Split,
+    Balance,
 }
 
 impl JobKind {
@@ -31,6 +33,8 @@ impl JobKind {
             JobKind::HealthFix => "Health Check fix",
             JobKind::Rescan => "Rescan",
             JobKind::ClassesMerge => "Classes & Merge",
+            JobKind::Split => "Split",
+            JobKind::Balance => "Balance",
         }
     }
 }

@@ -48,6 +48,9 @@ pub fn OutputSelect(
     #[props(default)]
     show_errors: bool,
     #[props(default)] disabled: bool,
+    /// Prefix of the element ids; give each `OutputSelect` on a page its own.
+    #[props(into, default = "output".to_string())]
+    id: String,
 ) -> Element {
     let mut choice = choice;
     let can_overwrite = source_name.is_some();
@@ -65,7 +68,7 @@ pub fn OutputSelect(
                 label { class: if !overwrite { "choice is-selected" } else { "choice" },
                     input {
                         r#type: "radio",
-                        name: "output-select",
+                        name: "{id}-select",
                         checked: !overwrite,
                         onchange: move |_| choice.write().overwrite = false,
                     }
@@ -78,7 +81,7 @@ pub fn OutputSelect(
                 label { class: if overwrite { "choice is-selected" } else if can_overwrite { "choice" } else { "choice is-disabled" },
                     input {
                         r#type: "radio",
-                        name: "output-select",
+                        name: "{id}-select",
                         checked: overwrite,
                         disabled: !can_overwrite,
                         onchange: move |_| choice.write().overwrite = true,
@@ -107,19 +110,19 @@ pub fn OutputSelect(
                 }
             } else {
                 div { class: "field",
-                    label { class: "field-label", r#for: "output-name", "Dataset name" }
+                    label { class: "field-label", r#for: "{id}-name", "Dataset name" }
                     input {
-                        id: "output-name",
+                        id: "{id}-name",
                         class: "input",
                         r#type: "text",
                         spellcheck: false,
                         autocomplete: "off",
                         value: "{name}",
                         aria_invalid: if error.is_some() { "true" },
-                        aria_describedby: "output-name-hint",
+                        aria_describedby: "{id}-name-hint",
                         oninput: move |e| choice.write().name = Some(e.value()),
                     }
-                    p { id: "output-name-hint", class: "field-hint", "Folder name inside the workspace's datasets folder." }
+                    p { id: "{id}-name-hint", class: "field-hint", "Folder name inside the workspace's datasets folder." }
                 }
             }
 
