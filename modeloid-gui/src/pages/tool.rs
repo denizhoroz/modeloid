@@ -4,6 +4,7 @@ use crate::components::{Icon, IconName};
 use crate::nav;
 use crate::pages::balance::SplitBalance;
 use crate::pages::classes::ClassesMerge;
+use crate::pages::convert::Convert;
 use crate::pages::download::Download;
 use crate::pages::explore::Explore;
 use crate::pages::health::HealthCheck;
@@ -27,6 +28,7 @@ pub fn Tool(section: String, tool: String) -> Element {
         ("dataset", "health-check") => return rsx! { HealthCheck {} },
         ("dataset", "classes-merge") => return rsx! { ClassesMerge {} },
         ("dataset", "split-balance") => return rsx! { SplitBalance {} },
+        ("dataset", "convert") => return rsx! { Convert {} },
         _ => {}
     }
 

@@ -1,5 +1,6 @@
 pub mod balance;
 pub mod classes;
+pub mod convert;
 pub mod download;
 pub mod health;
 pub mod io;

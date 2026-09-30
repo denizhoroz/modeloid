@@ -6,6 +6,7 @@ use std::{fs, path::{Path, PathBuf}, sync::Arc};
 use crate::core::{
     balance::{self, BalancePlan, BalancePreview, FilterMode, Resplit},
     classes::{self, ClassList, MergePlan, MergePreview, MergeSummary, SplitMode},
+    convert::{self, ConvertPlan, ConvertPreview, CropSummary, TargetTask},
     download::{DownloadOptions, Downloader, Source, SourceInfo},
     health::{self, FixSummary, HEALTH_VERSION, HealthFixes, HealthReport},
     io,
@@ -31,6 +32,17 @@ impl ImportMode {
             ImportMode::Move => "move",
         }
     }
+}
+
+/// What `Workspace::apply_convert` wrote.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct ConvertSummary {
+    /// Images written (for classification: crops).
+    pub images: u32,
+    /// Outlines that became plain boxes.
+    pub outlines_lost: u32,
+    /// Classification only.
+    pub crops: CropSummary,
 }
 
 /// Where a tool's result goes.
@@ -522,6 +534,83 @@ impl Workspace {
         }
         if let Some(cap) = plan.class_cap {
             lineage = lineage.with_param("class_cap", i64::from(cap));
+        }
+        match self.save_output(&staging, output, lineage, reporter) {
+            Ok(dir) => Ok((dir, summary)),
+            Err(e) => {
+                let _ = fs::remove_dir_all(&staging);
+                Err(e)
+            }
+        }
+    }
+
+    /// What a Convert `plan` would write, from the input's statistics.
+    pub fn convert_preview(&self, plan: &ConvertPlan, progress: &dyn Progress) -> Result<ConvertPreview, crate::Error> {
+        let (_, dataset) = self.find_dataset(plan.input)?;
+        let Some(source) = LabelFormat::parse(dataset.annotation_format()) else {
+            let problem = format!("'{}' labels can't be converted; YOLO, COCO and Pascal VOC can.", dataset.annotation_format());
+            return Ok(ConvertPreview { problems: vec![problem], ..Default::default() });
+        };
+        let stats = self.explore_stats(plan.input, false, progress)?;
+        Ok(convert::preview(plan, source, &stats))
+    }
+
+    /// Converts a dataset to another label format and / or task and saves the
+    /// result as `output`.
+    pub fn apply_convert(
+        &self,
+        plan: &ConvertPlan,
+        output: &Output,
+        reporter: &dyn Reporter,
+    ) -> Result<(PathBuf, ConvertSummary), crate::Error> {
+        let reading = reporter.start("Reading labels", Unit::Files);
+        let read = self.read_labels(plan.input, reading.as_ref());
+        reading.finish();
+        let (_, dataset, mut set) = read?;
+        let source = LabelFormat::parse(dataset.annotation_format()).ok_or("unsupported label format")?;
+        let preview = convert::preview(plan, source, &stats::analyze(&set));
+        if let Some(problem) = preview.problems.first() {
+            return Err(problem.clone().into());
+        }
+
+        let staging = self.staging_dir("convert")?;
+        let mut summary = ConvertSummary::default();
+        let mut lineage = Lineage::new("convert", &[&dataset]).with_param("task", plan.task.name());
+        let written: Result<(), crate::Error> = if plan.task == TargetTask::Classification {
+            let cropping = reporter.start("Cutting out objects", Unit::Files);
+            let crops = convert::write_crops(&set, &staging, plan.padding_percent, plan.min_size, cropping.as_ref());
+            cropping.finish();
+            crops.and_then(|crops| {
+                summary.crops = crops;
+                summary.images = crops.crops;
+                if crops.crops == 0 { Err("no object was large enough to cut out".into()) } else { Ok(()) }
+            })
+        } else {
+            let format = LabelFormat::parse(&plan.format).ok_or("unknown label format")?;
+            if plan.task == TargetTask::Detection || format == LabelFormat::Voc {
+                summary.outlines_lost = convert::strip_outlines(&mut set);
+            }
+            summary.images = set.images.len() as u32;
+            lineage = lineage.with_param("format", format.name());
+            let writing = reporter.start("Writing", Unit::Files);
+            let written = labels::write(&set, &staging, format, writing.as_ref());
+            writing.finish();
+            written.map_err(Into::into)
+        };
+        if let Err(e) = written {
+            let _ = fs::remove_dir_all(&staging);
+            return Err(e);
+        }
+
+        if plan.task == TargetTask::Classification {
+            lineage = lineage
+                .with_param("format", convert::FOLDERS_FORMAT)
+                .with_param("padding_percent", i64::from(plan.padding_percent))
+                .with_param("min_size", i64::from(plan.min_size))
+                .with_param("crops", i64::from(summary.crops.crops))
+                .with_param("skipped_small", i64::from(summary.crops.skipped_small));
+        } else {
+            lineage = lineage.with_param("source_format", source.name()).with_param("outlines_to_boxes", i64::from(summary.outlines_lost));
         }
         match self.save_output(&staging, output, lineage, reporter) {
             Ok(dir) => Ok((dir, summary)),
@@ -1161,6 +1250,55 @@ mod tests {
 
         let bad = BalancePlan { split: Resplit::Ratios { train: 50, val: 20, test: 10 }, ..plan };
         assert!(ws.apply_balance(&bad, &new_output("bad"), &Silent).is_err());
+    }
+
+    #[test]
+    fn converts_format_and_task() {
+        let tmp = TempWorkspace::new("convert");
+        let ws = &tmp.0;
+        // One image, a box and an outlined object.
+        let staging = tmp.staging_with(&[
+            ("data.yaml", "names: ['cat', 'dog']\n"),
+            ("train/labels/a.txt", "0 0.5 0.5 0.5 0.5\n1 0.1 0.1 0.4 0.1 0.4 0.4\n"),
+        ]);
+        fs::create_dir_all(staging.join("train/images")).unwrap();
+        image::RgbImage::new(64, 64).save(staging.join("train/images/a.png")).unwrap();
+        ws.save_output(&staging, &new_output("pets"), Lineage::new("import", &[]), &Silent).unwrap();
+        assert_eq!(Dataset::load_from_dir(&ws.datasets_dir().join("pets")).unwrap().dataset_type(), "instance-segmentation");
+
+        let plan = |task, format: &str| ConvertPlan { input: 1, task, format: format.into(), padding_percent: 0, min_size: 4 };
+        assert!(!ws.convert_preview(&plan(TargetTask::Same, "yolo"), &Silent).unwrap().can_run());
+        assert!(ws.apply_convert(&plan(TargetTask::Same, "yolo"), &new_output("same"), &Silent).is_err());
+
+        // YOLO to COCO keeps the outline.
+        let (dir, summary) = ws.apply_convert(&plan(TargetTask::Same, "coco"), &new_output("pets-coco"), &Silent).unwrap();
+        assert_eq!((summary.images, summary.outlines_lost), (1, 0));
+        let coco = Dataset::load_from_dir(&dir).unwrap();
+        assert_eq!((coco.annotation_format(), coco.dataset_type(), coco.label_count()), ("coco", "instance-segmentation", 2));
+        assert_eq!(coco.class_names(), ["cat", "dog"]);
+        assert_eq!(coco.lineage().unwrap().params["source_format"].as_str(), Some("yolo"));
+
+        // Outlines to boxes, same format.
+        let (dir, summary) = ws.apply_convert(&plan(TargetTask::Detection, "yolo"), &new_output("pets-det"), &Silent).unwrap();
+        assert_eq!(summary.outlines_lost, 1);
+        assert_eq!(Dataset::load_from_dir(&dir).unwrap().dataset_type(), "object-detection");
+        assert!(dir.join("data.yaml").is_file());
+
+        // COCO to VOC, read back from the converted copy.
+        let (dir, summary) = ws.apply_convert(&ConvertPlan { input: 2, ..plan(TargetTask::Same, "voc") }, &new_output("pets-voc"), &Silent).unwrap();
+        assert_eq!(summary.outlines_lost, 1);
+        assert!(dir.join("train/a.xml").is_file());
+
+        // Objects into class folders.
+        let (dir, summary) = ws.apply_convert(&plan(TargetTask::Classification, ""), &new_output("pets-cls"), &Silent).unwrap();
+        assert_eq!(summary.crops.crops, 2);
+        assert!(dir.join("train/cat/a_0.png").is_file() && dir.join("train/dog/a_1.png").is_file());
+        let cls = Dataset::load_from_dir(&dir).unwrap();
+        assert_eq!((cls.dataset_type(), cls.annotation_format(), cls.image_count()), ("classification", "folders", 2));
+        assert_eq!(cls.class_names(), ["cat", "dog"]);
+        let again = ws.convert_preview(&ConvertPlan { input: cls.id(), ..plan(TargetTask::Same, "yolo") }, &Silent).unwrap();
+        assert!(again.problems[0].contains("can't be converted"));
+        assert_eq!(fs::read_dir(ws.tmp_dir()).unwrap().count(), 0);
     }
 
     #[test]

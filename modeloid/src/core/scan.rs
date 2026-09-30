@@ -4,6 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use modeloid_types::convert::FOLDERS_FORMAT;
 use serde_json::Value;
 
 use crate::{
@@ -45,6 +46,9 @@ pub fn scan_dataset(dir: &Path, progress: &dyn Progress) -> io::Result<DatasetSt
     let mut stats = DatasetStats::default();
     let mut image_formats = BTreeSet::new();
     let mut found = Annotations::default();
+    // Folders holding images, as class names if this turns out to be a classification dataset.
+    let mut class_folders = BTreeSet::new();
+    let mut images_in_class_folders = 0;
 
     let mut pending = vec![dir.to_path_buf()];
     while let Some(current) = pending.pop() {
@@ -76,6 +80,10 @@ pub fn scan_dataset(dir: &Path, progress: &dyn Progress) -> io::Result<DatasetSt
                     None => {}
                 }
                 image_formats.insert(ext);
+                if let Some(class) = class_folder(rel) {
+                    class_folders.insert(class);
+                    images_in_class_folders += 1;
+                }
                 continue;
             }
             match ext.as_str() {
@@ -99,6 +107,12 @@ pub fn scan_dataset(dir: &Path, progress: &dyn Progress) -> io::Result<DatasetSt
     } else if !found.voc.is_empty() {
         stats.annotation_format = "voc".into();
         scan_voc(&found.voc, &mut stats, &mut classes)?;
+    } else if !class_folders.is_empty() {
+        // No label files: one folder per class (ImageFolder layout).
+        stats.annotation_format = FOLDERS_FORMAT.into();
+        stats.dataset_type = "classification".into();
+        stats.label_count = images_in_class_folders;
+        class_folders.iter().for_each(|name| classes.push(name));
     } else {
         stats.annotation_format = "unknown".into();
         stats.dataset_type = "unknown".into();
@@ -251,6 +265,14 @@ fn xml_text<'a>(xml: &'a str, tag: &str) -> Option<&'a str> {
     Some(xml[start..end].trim())
 }
 
+/// The class folder an image sits in: its parent folder, unless that is the
+/// dataset root, a split folder or an `images` folder.
+fn class_folder(rel: &Path) -> Option<String> {
+    let parent = rel.parent()?.file_name()?.to_str()?;
+    let not_a_class = Split::of_path(Path::new(parent)).is_some() || parent.eq_ignore_ascii_case("images");
+    (!not_a_class).then(|| parent.to_string())
+}
+
 fn detection_type(segmentation: bool) -> String {
     if segmentation { "instance-segmentation" } else { "object-detection" }.into()
 }
@@ -376,6 +398,26 @@ mod tests {
         assert_eq!(stats.annotation_format, "voc");
         assert_eq!(stats.label_count, 2);
         assert_eq!(stats.class_names, ["cat", "dog"]);
+    }
+
+    #[test]
+    fn scans_class_folders() {
+        let tmp = TempDir::new("folders");
+        tmp.write("train/cat/a.jpg", "img");
+        tmp.write("train/cat/b.jpg", "img");
+        tmp.write("train/dog/c.jpg", "img");
+        tmp.write("valid/dog/d.jpg", "img");
+
+        let stats = scan_dataset(&tmp.0, &Silent).unwrap();
+        assert_eq!((stats.annotation_format.as_str(), stats.dataset_type.as_str()), ("folders", "classification"));
+        assert_eq!((stats.image_count, stats.label_count, stats.train_count, stats.val_count), (4, 4, 3, 1));
+        assert_eq!(stats.class_names, ["cat", "dog"]);
+
+        // Images in split or `images` folders only aren't classes.
+        let plain = TempDir::new("plain");
+        plain.write("train/images/a.jpg", "img");
+        plain.write("b.jpg", "img");
+        assert_eq!(scan_dataset(&plain.0, &Silent).unwrap().annotation_format, "unknown");
     }
 
     #[test]

@@ -1,5 +1,6 @@
 mod balance;
 mod classes;
+mod convert;
 mod create_workspace;
 mod download;
 mod explore;

@@ -5,9 +5,10 @@ use std::rc::Rc;
 
 use dioxus::prelude::*;
 
-use super::{use_preview, NumberInput, ResultCard, RunCard, SeedField};
+use super::{use_preview, ResultCard, RunCard, SeedField};
 use crate::api::balance::{BalancePlan, BalancePreview};
 use crate::api::jobs::JobKind;
+use crate::components::NumberInput;
 use crate::util::format_count;
 
 #[component]

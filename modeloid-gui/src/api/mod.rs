@@ -5,6 +5,7 @@ pub mod activity;
 pub mod appearance;
 pub mod balance;
 pub mod classes;
+pub mod convert;
 pub mod datasets;
 pub mod dialogs;
 pub mod download;

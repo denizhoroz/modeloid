@@ -634,10 +634,10 @@ fn split_dir(dir: &Path, split: Option<Split>) -> PathBuf {
 
 /// Hands out file names unique within each split: `a.jpg`, then `a_1.jpg`, ...
 #[derive(Default)]
-struct UniqueNames(HashMap<Option<Split>, HashSet<String>>);
+pub(crate) struct UniqueNames(HashMap<Option<Split>, HashSet<String>>);
 
 impl UniqueNames {
-    fn take(&mut self, split: Option<Split>, name: &str) -> String {
+    pub(crate) fn take(&mut self, split: Option<Split>, name: &str) -> String {
         let used = self.0.entry(split).or_default();
         let path = Path::new(name);
         let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();

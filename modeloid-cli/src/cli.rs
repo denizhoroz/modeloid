@@ -201,6 +201,32 @@ enum DatasetCommands {
         #[arg(long, conflicts_with = "output")]
         overwrite: bool,
     },
+    /// Convert to another label format, to boxes only, or to classification crops
+    Convert {
+        /// Dataset name or id
+        dataset: String,
+        /// Label format to write: yolo, coco or voc (default: the dataset's own)
+        #[arg(long, value_name = "FORMAT")]
+        to: Option<String>,
+        /// detection: outlines become boxes. classification: one crop per object, in a folder per class
+        #[arg(long, value_enum, default_value = "same")]
+        task: TaskArg,
+        /// Classification: context around each box, in percent of its size
+        #[arg(long, default_value_t = 0)]
+        padding: u32,
+        /// Classification: skip crops smaller than this many pixels
+        #[arg(long, default_value_t = modeloid::core::convert::DEFAULT_MIN_CROP)]
+        min_size: u32,
+        /// Only show the result, don't write anything
+        #[arg(long)]
+        dry_run: bool,
+        /// Name of the new dataset (default: <dataset>-<format>, -det or -cls)
+        #[arg(long)]
+        output: Option<String>,
+        /// Replace the dataset instead of making a copy
+        #[arg(long, conflicts_with = "output")]
+        overwrite: bool,
+    },
     /// Merge datasets, matching classes by name (or as a plan file says)
     Merge {
         /// Dataset names or ids, in order
@@ -225,6 +251,13 @@ enum DatasetCommands {
         #[arg(long)]
         output: Option<String>,
     },
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum TaskArg {
+    Same,
+    Detection,
+    Classification,
 }
 
 #[derive(Subcommand)]
@@ -292,6 +325,9 @@ impl Cli {
                     ..Default::default()
                 };
                 cmd_dataset_split(&dataset, plan, ratio, dry_run, output, overwrite)
+            }
+            Commands::Dataset { command: DatasetCommands::Convert { dataset, to, task, padding, min_size, dry_run, output, overwrite } } => {
+                cmd_dataset_convert(&dataset, to, task, padding, min_size, dry_run, output, overwrite)
             }
             Commands::Dataset {
                 command: DatasetCommands::Merge { datasets, plan, write_plan, format, keep_splits, dry_run, output },
@@ -552,6 +588,85 @@ fn cmd_dataset_split(
     };
     let (dir, summary) = ws.apply_balance(&plan, &output, &reporter)?;
     println!("Done: {} images. Saved to {}", summary.total_after(), dir.display());
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn cmd_dataset_convert(
+    dataset: &str,
+    to: Option<String>,
+    task: TaskArg,
+    padding: u32,
+    min_size: u32,
+    dry_run: bool,
+    output: Option<String>,
+    overwrite: bool,
+) -> Result<(), Error> {
+    use modeloid::core::convert::{ConvertPlan, TargetTask};
+
+    let ws = _get_workspace()?;
+    let d = find_dataset(&ws, dataset)?;
+    let task = match task {
+        TaskArg::Same => TargetTask::Same,
+        TaskArg::Detection => TargetTask::Detection,
+        TaskArg::Classification => TargetTask::Classification,
+    };
+    // Family names ("yolov8" → "yolo"); an unknown one is kept so the preview can name it.
+    let family = |name: &str| modeloid::LabelFormat::parse(name).map(|f| f.name().to_string());
+    let format = match to {
+        Some(to) => family(&to).unwrap_or(to),
+        None => family(d.annotation_format()).unwrap_or_default(),
+    };
+    let plan = ConvertPlan { input: d.id(), task, format, padding_percent: padding, min_size };
+
+    let reporter = TermReporter::new();
+    let progress = reporter.start("Reading labels", Unit::Files);
+    let preview = ws.convert_preview(&plan, progress.as_ref());
+    progress.finish();
+    let preview = preview?;
+
+    println!("#{} {} ({}): {} images, {} labels, {} with outlines", d.id(), d.name(), d.annotation_format(), preview.images, preview.labels, preview.outlines);
+    if task == TargetTask::Classification {
+        println!("Crops per class folder (before the size limit):");
+        for class in &preview.classes {
+            println!("  {:<24} {:>7}", class.name, class.labels);
+        }
+    } else if preview.can_run() {
+        println!("Writes {} labels; {} outlines become boxes", plan.format, preview.outlines_lost);
+    }
+    for note in &preview.notes {
+        println!("Note: {note}");
+    }
+    for problem in &preview.problems {
+        println!("Problem: {problem}");
+    }
+    if dry_run || !preview.can_run() {
+        return Ok(());
+    }
+
+    let suffix = match task {
+        TargetTask::Classification => "cls",
+        _ if plan.format != preview.source_format => plan.format.as_str(),
+        _ => "det",
+    };
+    let output = if overwrite {
+        modeloid::Output::Overwrite { id: d.id() }
+    } else {
+        modeloid::Output::New { name: output.unwrap_or_else(|| format!("{}-{suffix}", d.name())) }
+    };
+    let (dir, summary) = ws.apply_convert(&plan, &output, &reporter)?;
+    if task == TargetTask::Classification {
+        let crops = summary.crops;
+        println!(
+            "Done: {} crops ({} too small, {} unreadable images). Saved to {}",
+            crops.crops,
+            crops.skipped_small,
+            crops.unreadable_images,
+            dir.display()
+        );
+    } else {
+        println!("Done: {} images, {} outlines turned into boxes. Saved to {}", summary.images, summary.outlines_lost, dir.display());
+    }
     Ok(())
 }
 

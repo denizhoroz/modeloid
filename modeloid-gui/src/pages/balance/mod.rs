@@ -124,26 +124,6 @@ fn use_preview(plan: Signal<BalancePlan>) -> (Signal<Option<BalancePreview>>, Me
     (preview, error)
 }
 
-/// Whole-number input. While the text isn't a number, the last one stays.
-#[component]
-fn NumberInput(value: u32, #[props(into)] label: String, #[props(default = 100)] max: u32, onchange: EventHandler<u32>) -> Element {
-    rsx! {
-        input {
-            class: "input input-narrow",
-            r#type: "number",
-            min: "0",
-            max: "{max}",
-            value: "{value}",
-            aria_label: "{label}",
-            oninput: move |e| {
-                if let Ok(n) = e.value().trim().parse() {
-                    onchange.call(n);
-                }
-            },
-        }
-    }
-}
-
 /// Seed of the random choices; empty uses the workspace's (`used` shows it).
 #[component]
 fn SeedField(plan: Signal<BalancePlan>, used: u64, #[props(into)] hint: String) -> Element {

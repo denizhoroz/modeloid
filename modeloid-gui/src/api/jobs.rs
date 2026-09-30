@@ -21,6 +21,7 @@ pub enum JobKind {
     ClassesMerge,
     Split,
     Balance,
+    Convert,
 }
 
 impl JobKind {
@@ -35,6 +36,7 @@ impl JobKind {
             JobKind::ClassesMerge => "Classes & Merge",
             JobKind::Split => "Split",
             JobKind::Balance => "Balance",
+            JobKind::Convert => "Convert",
         }
     }
 }

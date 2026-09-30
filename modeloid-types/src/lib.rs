@@ -3,6 +3,7 @@
 
 pub mod balance;
 pub mod classes;
+pub mod convert;
 pub mod health;
 pub mod split;
 pub mod stats;
