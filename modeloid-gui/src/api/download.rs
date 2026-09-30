@@ -19,6 +19,12 @@ pub fn link_service(link: &str) -> Option<ServiceId> {
     }
 }
 
+/// Whether `link` is a Hugging Face link (its downloads go file by file through the API).
+pub fn is_hugging_face(link: &str) -> bool {
+    let rest = link.trim().split_once("://").map_or(link, |(_, r)| r).to_ascii_lowercase();
+    matches!(rest.split(['/', '?', '#']).next(), Some("huggingface.co" | "www.huggingface.co"))
+}
+
 /// Link lines that don't look like URLs, as (line number, text). Empty lines are ignored.
 pub fn invalid_links(text: &str) -> Vec<(usize, String)> {
     text.lines()
@@ -149,6 +155,8 @@ mod tests {
         assert_eq!(link_service("https://www.kaggle.com/datasets/a/b"), Some(ServiceId::Kaggle));
         assert_eq!(link_service("https://huggingface.co/datasets/a/b"), None);
         assert_eq!(link_service("https://example.com/kaggle.com"), None);
+        assert!(super::is_hugging_face(" https://huggingface.co/datasets/a/b "));
+        assert!(!super::is_hugging_face("https://example.com/huggingface.co"));
     }
 
     #[test]

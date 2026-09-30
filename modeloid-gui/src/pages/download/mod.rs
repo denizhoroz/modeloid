@@ -7,11 +7,11 @@ mod links;
 
 use dioxus::prelude::*;
 
-use crate::api::download::{download_forking, link_service, parse_links, start_download};
+use crate::api::download::{download_forking, is_hugging_face, link_service, parse_links, start_download};
 use crate::api::jobs::{ItemAction, JobKind};
 use crate::api::error_message;
 use crate::api::settings::{credential_status, KeyStatus, ServiceId};
-use crate::components::{NoWorkspace, set_if_newer, use_job, JobProgress};
+use crate::components::{use_toasts, NoWorkspace, set_if_newer, use_job, JobProgress};
 use crate::routes::Route;
 use crate::state::{use_workspace, use_workspace_checked};
 use crate::util::plural;
@@ -86,6 +86,7 @@ fn DownloadForm(datasets_path: String) -> Element {
     let mut form_error = use_signal(|| None::<String>);
 
     let (job, poll_error) = use_job(JobKind::Download);
+    let toasts = use_toasts();
     let roboflow = use_resource(move || credential_status(ServiceId::Roboflow));
     let kaggle = use_resource(move || credential_status(ServiceId::Kaggle));
 
@@ -120,11 +121,15 @@ fn DownloadForm(datasets_path: String) -> Element {
             return;
         }
 
+        let from_hugging_face = links.iter().any(|l| is_hugging_face(l));
         starting.set(true);
         match start_download(links, format).await {
             Ok(started) => {
                 set_if_newer(job, started);
                 submitted.set(false);
+                if from_hugging_face {
+                    toasts.info("Hugging Face downloads through the API can be slow. If this one takes too long, cancel it, download the files from the website and bring them in with Import.");
+                }
             }
             Err(e) => form_error.set(Some(error_message(&e))),
         }

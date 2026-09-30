@@ -135,12 +135,13 @@ enum DatasetCommands {
     },
     /// Check a dataset for broken images, bad boxes and duplicates
     Check {
-        /// Dataset name or id
-        dataset: String,
+        /// Dataset names or ids
+        #[arg(required = true, num_args = 1..)]
+        datasets: Vec<String>,
         /// Apply the recommended fixes afterwards
         #[arg(long)]
         fix: bool,
-        /// With --fix: name of the fixed copy (default: <dataset>-fixed)
+        /// With --fix and one dataset: name of the fixed copy (default: <dataset>-fixed)
         #[arg(long)]
         output: Option<String>,
         /// With --fix: replace the dataset instead of making a copy
@@ -303,8 +304,17 @@ impl Cli {
             Commands::Dataset { command: DatasetCommands::Scan } => cmd_dataset_scan(),
             Commands::Dataset { command: DatasetCommands::Stats { dataset, refresh } } => cmd_dataset_stats(&dataset, refresh),
             Commands::Dataset { command: DatasetCommands::Rescan { dataset } } => cmd_dataset_rescan(&dataset),
-            Commands::Dataset { command: DatasetCommands::Check { dataset, fix, output, overwrite } } => {
-                cmd_dataset_check(&dataset, fix, output, overwrite)
+            Commands::Dataset { command: DatasetCommands::Check { datasets, fix, output, overwrite } } => {
+                if output.is_some() && datasets.len() > 1 {
+                    Err("--output names one copy; with several datasets each copy is named <dataset>-fixed".into())
+                } else {
+                    // One after another; a dataset that fails doesn't stop the rest.
+                    let failed: Vec<String> = datasets
+                        .iter()
+                        .filter_map(|dataset| cmd_dataset_check(dataset, fix, output.clone(), overwrite).err().map(|e| format!("{dataset}: {e}")))
+                        .collect();
+                    if failed.is_empty() { Ok(()) } else { Err(failed.join("; ").into()) }
+                }
             }
             Commands::Dataset { command: DatasetCommands::Classes { dataset, rename, drop, dry_run, output, overwrite } } => {
                 cmd_dataset_classes(&dataset, &rename, &drop, dry_run, output, overwrite)
@@ -410,7 +420,7 @@ fn cmd_dataset_check(dataset: &str, fix: bool, output: Option<String>, overwrite
     let report = ws.health_check(d.id(), &reporter)?;
     let counts = report.counts();
 
-    println!("#{} {}: {} images, {} labels", d.id(), d.name(), report.image_count, report.label_count);
+    println!("#{} {}: {}% healthy ({} images, {} labels)", d.id(), d.name(), counts.health_percent(), report.image_count, report.label_count);
     let lines = [
         (counts.corrupt_images, "corrupt or unreadable images"),
         (counts.size_mismatches, "images whose size differs from their labels"),

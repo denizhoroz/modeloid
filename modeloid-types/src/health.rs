@@ -78,6 +78,11 @@ pub struct HealthReport {
 /// Number of findings per kind (lists sent to the page may be shortened).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct HealthCounts {
+    /// Images checked.
+    pub images: usize,
+    /// Images with at least one problem: corrupt, a size that differs from
+    /// the labels, a bad box, or a copy of another image.
+    pub affected_images: usize,
     pub corrupt_images: usize,
     pub size_mismatches: usize,
     pub unlabeled_images: usize,
@@ -106,11 +111,52 @@ impl HealthCounts {
             + self.exact_groups
             + self.near_groups
     }
+
+    /// Health as a percentage: the share of images without a problem,
+    /// rounded down. 100 only when nothing at all was found.
+    pub fn health_percent(&self) -> u32 {
+        if self.images == 0 {
+            return if self.problems() == 0 { 100 } else { 0 };
+        }
+        let healthy = self.images.saturating_sub(self.affected_images);
+        let percent = (healthy * 100 / self.images) as u32;
+        // Problems that aren't tied to an image (orphan label files) still keep it under 100.
+        if self.problems() > 0 { percent.min(99) } else { percent }
+    }
+
+    /// Counts of several datasets together.
+    pub fn sum<'a>(all: impl IntoIterator<Item = &'a HealthCounts>) -> HealthCounts {
+        let mut total = HealthCounts::default();
+        for c in all {
+            total.images += c.images;
+            total.affected_images += c.affected_images;
+            total.corrupt_images += c.corrupt_images;
+            total.size_mismatches += c.size_mismatches;
+            total.unlabeled_images += c.unlabeled_images;
+            total.orphan_labels += c.orphan_labels;
+            total.label_warnings += c.label_warnings;
+            total.degenerate_boxes += c.degenerate_boxes;
+            total.out_of_bounds += c.out_of_bounds;
+            total.unknown_classes += c.unknown_classes;
+            total.exact_groups += c.exact_groups;
+            total.near_groups += c.near_groups;
+            total.duplicate_copies += c.duplicate_copies;
+            total.leak_groups += c.leak_groups;
+        }
+        total
+    }
 }
 
 impl HealthReport {
     pub fn counts(&self) -> HealthCounts {
+        let issues = self.corrupt_images.iter().chain(&self.size_mismatches).map(|i| i.image.index);
+        let boxes = self.degenerate_boxes.iter().chain(&self.out_of_bounds).chain(&self.unknown_classes).map(|b| b.image.index);
+        // The first image of a duplicate group is the one kept.
+        let copies = self.duplicates.iter().flat_map(|g| g.images.iter().skip(1)).map(|i| i.index);
+        let affected: std::collections::HashSet<usize> = issues.chain(boxes).chain(copies).collect();
         HealthCounts {
+            images: self.image_count as usize,
+            affected_images: affected.len(),
             corrupt_images: self.corrupt_images.len(),
             size_mismatches: self.size_mismatches.len(),
             unlabeled_images: self.unlabeled_images.len(),
@@ -181,6 +227,20 @@ impl HealthFixes {
     pub fn any(&self) -> bool {
         *self != HealthFixes::default()
     }
+
+    /// These fixes without the ones that have nothing to fix in `counts`.
+    pub fn restricted_to(self, counts: &HealthCounts) -> Self {
+        HealthFixes {
+            remove_corrupt: self.remove_corrupt && counts.corrupt_images > 0,
+            drop_degenerate: self.drop_degenerate && counts.degenerate_boxes > 0,
+            clip_out_of_bounds: self.clip_out_of_bounds && counts.out_of_bounds > 0,
+            drop_unknown_classes: self.drop_unknown_classes && counts.unknown_classes > 0,
+            remove_leaks: self.remove_leaks && counts.leak_groups > 0,
+            remove_exact_duplicates: self.remove_exact_duplicates && counts.exact_groups > 0,
+            remove_near_duplicates: self.remove_near_duplicates && counts.near_groups > 0,
+            remove_unlabeled: self.remove_unlabeled && counts.unlabeled_images > 0,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -221,5 +281,19 @@ mod tests {
         let fixes = HealthFixes::recommended(&counts);
         assert!(fixes.remove_leaks && fixes.remove_exact_duplicates && !fixes.remove_near_duplicates);
         assert!(fixes.any() && !HealthFixes::default().any());
+
+        // Images 1 and 3 are copies: 3 of 5 images are fine.
+        assert_eq!((counts.images, counts.affected_images, counts.health_percent()), (5, 2, 60));
+        let clean = HealthCounts { images: 10, ..Default::default() };
+        assert_eq!(clean.health_percent(), 100);
+        let orphan_only = HealthCounts { images: 10, orphan_labels: 1, ..Default::default() };
+        assert_eq!(orphan_only.health_percent(), 99, "a problem keeps it under 100");
+        let total = HealthCounts::sum([&counts, &clean]);
+        assert_eq!((total.images, total.affected_images, total.exact_groups, total.health_percent()), (15, 2, 1, 86));
+
+        let everything = HealthFixes { remove_corrupt: true, remove_near_duplicates: true, remove_leaks: true, ..Default::default() };
+        let possible = everything.restricted_to(&counts);
+        assert!(!possible.remove_corrupt && possible.remove_near_duplicates && possible.remove_leaks);
+        assert!(!everything.restricted_to(&clean).any());
     }
 }

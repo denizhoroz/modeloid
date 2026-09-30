@@ -1,5 +1,6 @@
-//! Health Check: run the check (a job), read its report, apply fixes (a job),
-//! and rescan datasets after manual edits (a job).
+//! Health Check: run the check (a job, one item per dataset), read reports,
+//! apply fixes (a job, one item per dataset), and rescan datasets after
+//! manual edits (a job).
 
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -22,22 +23,49 @@ pub struct HealthView {
     pub fresh: bool,
 }
 
+/// A dataset's last check, without the lists.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Checked {
+    /// RFC 3339 time of the check.
+    pub at: String,
+    /// The dataset is unchanged since.
+    pub fresh: bool,
+    pub counts: HealthCounts,
+}
+
+/// One dataset in the health overview; `checked` is `None` until it was checked.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HealthSummary {
+    pub id: u32,
+    pub name: String,
+    pub checked: Option<Checked>,
+}
+
 /// The last Health Check report of dataset `id`, if it was ever checked.
 #[post("/api/health/report")]
 pub async fn health_report(id: u32) -> Result<Option<HealthView>, ServerFnError> {
     backend::report(id).await.map_err(ServerFnError::new)
 }
 
-/// Starts checking dataset `id` (`JobKind::HealthCheck`).
-#[post("/api/health/check")]
-pub async fn start_health_check(id: u32) -> Result<Job, ServerFnError> {
-    backend::check(id).map_err(ServerFnError::new)
+/// Name and last check of each dataset in `ids`, in that order. Datasets that
+/// no longer exist are left out.
+#[post("/api/health/summaries")]
+pub async fn health_summaries(ids: Vec<u32>) -> Result<Vec<HealthSummary>, ServerFnError> {
+    backend::summaries(ids).await.map_err(ServerFnError::new)
 }
 
-/// Starts applying `fixes` to dataset `id` (`JobKind::HealthFix`).
+/// Starts checking the datasets `ids`, one after another (`JobKind::HealthCheck`).
+#[post("/api/health/check")]
+pub async fn start_health_check(ids: Vec<u32>) -> Result<Job, ServerFnError> {
+    backend::check(ids).map_err(ServerFnError::new)
+}
+
+/// Starts applying `fixes` to each dataset in `targets`, writing it to its
+/// output (`JobKind::HealthFix`). A dataset that wasn't checked, changed
+/// since, or has nothing these fixes apply to is skipped.
 #[post("/api/health/fix")]
-pub async fn start_health_fix(id: u32, fixes: HealthFixes, output: OutputTarget) -> Result<Job, ServerFnError> {
-    backend::fix(id, fixes, output).map_err(ServerFnError::new)
+pub async fn start_health_fix(targets: Vec<(u32, OutputTarget)>, fixes: HealthFixes) -> Result<Job, ServerFnError> {
+    backend::fix(targets, fixes).map_err(ServerFnError::new)
 }
 
 /// Rebuilds every dataset's `dataset.toml` and adds folders that have none
@@ -51,7 +79,7 @@ pub async fn start_rescan() -> Result<Job, ServerFnError> {
 mod backend {
     use modeloid::{Silent, Workspace};
 
-    use super::{HealthFixes, HealthView, SHOWN};
+    use super::{Checked, HealthFixes, HealthSummary, HealthView, SHOWN};
     use crate::api::datasets::{resolve_output, OutputTarget};
     use crate::api::jobs::{self, Job, JobKind};
     use crate::api::{activity, workspace};
@@ -63,6 +91,14 @@ mod backend {
 
     fn name_of(ws: &Workspace, id: u32) -> Result<String, String> {
         ws.find_dataset(id).map(|(_, d)| d.name().to_string()).map_err(|e| e.to_string())
+    }
+
+    /// Names of `ids`, or the first one that isn't a dataset.
+    fn names_of(ws: &Workspace, ids: &[u32]) -> Result<Vec<String>, String> {
+        if ids.is_empty() {
+            return Err("Select at least one dataset.".into());
+        }
+        ids.iter().map(|&id| name_of(ws, id)).collect()
     }
 
     pub async fn report(id: u32) -> Result<Option<HealthView>, String> {
@@ -77,28 +113,64 @@ mod backend {
         .await
     }
 
-    pub fn check(id: u32) -> Result<Job, String> {
+    pub async fn summaries(ids: Vec<u32>) -> Result<Vec<HealthSummary>, String> {
+        tokio::task::spawn_blocking(move || {
+            let ws = open()?;
+            let mut rows = Vec::new();
+            for id in ids {
+                let Ok(name) = name_of(&ws, id) else { continue };
+                let found = ws.health_report(id).map_err(|e| e.to_string())?;
+                let checked = found.map(|(report, fresh)| Checked { counts: report.counts(), at: report.checked_at, fresh });
+                rows.push(HealthSummary { id, name, checked });
+            }
+            Ok(rows)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
+    pub fn check(ids: Vec<u32>) -> Result<Job, String> {
         let ws = open()?;
-        let name = name_of(&ws, id)?;
-        jobs::start(JobKind::HealthCheck, vec![name], move |ctx| {
-            let report = ws.health_check(id, ctx.reporter().as_ref()).map_err(|e| e.to_string())?;
-            let problems = report.counts().problems();
-            Ok(Some(if problems == 0 { "No problems found".into() } else { format!("{problems} findings") }))
+        let names = names_of(&ws, &ids)?;
+        jobs::start(JobKind::HealthCheck, names, move |ctx| {
+            let counts = ws.health_check(ids[ctx.index()], ctx.reporter().as_ref()).map_err(|e| e.to_string())?.counts();
+            Ok(Some(match counts.problems() {
+                0 => "No problems found".to_string(),
+                n => format!("{}% healthy, {n} findings", counts.health_percent()),
+            }))
         })
     }
 
-    pub fn fix(id: u32, fixes: HealthFixes, output: OutputTarget) -> Result<Job, String> {
+    pub fn fix(targets: Vec<(u32, OutputTarget)>, fixes: HealthFixes) -> Result<Job, String> {
         if !fixes.any() {
             return Err("Choose at least one fix.".into());
         }
         let ws = open()?;
-        let name = name_of(&ws, id)?;
-        let output = resolve_output(output, &[id])?;
-        let (_, fresh) = ws.health_report(id).map_err(|e| e.to_string())?.ok_or("Run Health Check first.")?;
-        if !fresh {
-            return Err("The dataset changed since it was checked. Run Health Check again.".into());
+        let ids: Vec<u32> = targets.iter().map(|(id, _)| *id).collect();
+        let names = names_of(&ws, &ids)?;
+        // Catch bad output names now instead of as failed items.
+        for (id, target) in &targets {
+            resolve_output(target.clone(), &[*id])?;
         }
-        jobs::start(JobKind::HealthFix, vec![name], move |ctx| {
+
+        jobs::start(JobKind::HealthFix, names, move |ctx| {
+            let (id, target) = targets[ctx.index()].clone();
+            let output = resolve_output(target, &[id])?;
+            // Reasons to leave a dataset alone end the item as skipped, not failed.
+            let skip = |why: &str| {
+                ctx.skip();
+                Err(why.to_string())
+            };
+            let Some((report, fresh)) = ws.health_report(id).map_err(|e| e.to_string())? else {
+                return skip("Not checked yet.");
+            };
+            if !fresh {
+                return skip("Changed since it was checked. Check it again first.");
+            }
+            let fixes = fixes.restricted_to(&report.counts());
+            if !fixes.any() {
+                return skip("Nothing to fix.");
+            }
             let (dir, s) = ws.apply_health_fixes(id, &fixes, &output, ctx.reporter().as_ref()).map_err(|e| e.to_string())?;
             ctx.reporter().message(&format!(
                 "{} images removed, {} objects dropped, {} boxes clipped",

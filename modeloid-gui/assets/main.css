@@ -2994,3 +2994,207 @@ button.bar-row:hover,
 .result-table .name .tag {
     margin-left: var(--space-1);
 }
+
+/* Info tip: an "i" button whose explanation shows on hover, focus or click */
+.info-tip {
+    position: relative;
+    display: inline-flex;
+    vertical-align: middle;
+}
+
+.info-tip-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    padding: 0;
+    border: 1px solid var(--color-border-strong);
+    border-radius: 50%;
+    background: none;
+    color: var(--color-fg-muted);
+    font: inherit;
+    font-size: 11px;
+    font-style: italic;
+    font-weight: 600;
+    line-height: 1;
+    cursor: help;
+}
+
+.info-tip-button:hover,
+.info-tip.is-open .info-tip-button {
+    border-color: var(--color-accent);
+    color: var(--color-accent-fg);
+}
+
+.info-tip-popup {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: -8px;
+    z-index: 30;
+    display: none;
+    width: max-content;
+    max-width: min(320px, 70vw);
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg);
+    color: var(--color-fg);
+    font-size: var(--text-xs);
+    font-weight: 400;
+    line-height: var(--leading);
+    text-align: left;
+    white-space: normal;
+}
+
+.info-tip:hover .info-tip-popup,
+.info-tip.is-open .info-tip-popup {
+    display: block;
+}
+
+/* Toasts: messages stacked in the bottom right corner, above the status bar */
+.toast-host {
+    position: fixed;
+    right: var(--space-3);
+    bottom: calc(var(--statusbar-height) + var(--space-3));
+    z-index: var(--z-skip);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    width: min(380px, calc(100vw - 2 * var(--space-3)));
+    pointer-events: none;
+}
+
+.toast {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 2px var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--color-border-strong);
+    border-left-width: 3px;
+    border-radius: var(--radius-sm);
+    background: var(--color-surface);
+    box-shadow: 0 6px 20px var(--color-scrim);
+    color: var(--color-fg);
+    font-size: var(--text-sm);
+    pointer-events: auto;
+    /* The toast is removed when this ends (ToastHost); hovering or focusing it holds it. */
+    animation: toast-life 12s linear forwards;
+}
+
+.toast:hover,
+.toast:focus-within {
+    animation-play-state: paused;
+}
+
+.toast-kind {
+    color: var(--color-fg-muted);
+    font-size: var(--text-xs);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.toast-text {
+    grid-column: 1;
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+.toast-close {
+    grid-row: 1 / span 2;
+    grid-column: 2;
+    align-self: start;
+}
+
+.toast.is-info {
+    border-left-color: var(--color-info);
+}
+
+.toast.is-success {
+    border-left-color: var(--color-accent);
+}
+
+.toast.is-warning {
+    border-left-color: var(--color-warning);
+}
+
+.toast.is-error {
+    border-left-color: var(--color-danger-fg);
+    /* Errors wait longer */
+    animation-duration: 30s;
+}
+
+@keyframes toast-life {
+    0% {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+
+    3% {
+        opacity: 1;
+        transform: none;
+    }
+
+    95% {
+        opacity: 1;
+    }
+
+    100% {
+        opacity: 0;
+    }
+}
+
+/* Health Check: the overall score above the stat tiles */
+.health-score {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    margin-bottom: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    border: 1px solid var(--color-border);
+    border-left: 4px solid var(--color-accent);
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+}
+
+.health-score-value {
+    font-size: calc(3rem * var(--font-scale, 1));
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+}
+
+.health-score-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.health-score-label {
+    font-size: var(--text-xl);
+    font-weight: 600;
+}
+
+.health-score-detail {
+    color: var(--color-fg-muted);
+    font-size: var(--text-sm);
+}
+
+/* The level is also said in words ("Healthy", "Needs a look", "Needs fixing") */
+.health-score.is-fair {
+    border-left-color: var(--color-warning);
+}
+
+.health-score.is-poor {
+    border-left-color: var(--color-danger-fg);
+}
+
+/* Several datasets: the overview table, then the picked dataset's report */
+.health-table .tag {
+    margin-left: var(--space-2);
+}
+
+.health-report-head {
+    margin-top: var(--space-4);
+}

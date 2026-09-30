@@ -3,6 +3,8 @@
 
 use dioxus::prelude::*;
 
+use crate::components::InfoTip;
+
 pub const DEFAULT_FORMAT: &str = "coco";
 /// Select value that reveals the free-text format input.
 pub const OTHER: &str = "__other";
@@ -44,7 +46,13 @@ pub fn FormatSection(selected: Signal<String>, custom: Signal<String>, error: Op
             h2 { id: "download-options-title", class: "section-card-title", "Download options" }
 
             div { class: "field",
-                label { class: "field-label", r#for: "download-format", "Roboflow export format" }
+                label { class: "field-label", r#for: "download-format",
+                    "Roboflow export format "
+                    InfoTip {
+                        label: "About the export format",
+                        text: "Roboflow offers different formats per project type. If the project doesn't offer the one chosen here, Modeloid switches to one it does and tells you which.",
+                    }
+                }
                 select {
                     id: "download-format",
                     class: "input select",
