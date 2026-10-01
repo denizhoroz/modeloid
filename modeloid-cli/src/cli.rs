@@ -83,6 +83,18 @@ enum Commands {
         command: SettingsCommands,
     },
 
+    /// Train a model on a dataset with a saved parameter set (into training/trains/<name>)
+    Train {
+        /// Dataset name or id
+        dataset: String,
+        /// Parameter set name (training/parameters/<name>.toml)
+        #[arg(long)]
+        parameters: String,
+        /// Model name (default: <parameters>-<dataset>)
+        #[arg(long)]
+        name: Option<String>,
+    },
+
     /// The Python environment training runs in (modeloid/.venv)
     Python {
         #[command(subcommand)]
@@ -397,6 +409,7 @@ impl Cli {
             Commands::ClassLists { command } => cmd_class_lists(command),
             Commands::Settings { command } => cmd_settings(command),
             Commands::Python { command } => cmd_python(command).await,
+            Commands::Train { dataset, parameters, name } => cmd_train(&dataset, &parameters, name),
         };
 
         if let Err(e) = result {
@@ -1125,6 +1138,41 @@ async fn cmd_python(command: PythonCommands) -> Result<(), Error> {
                 println!("Nothing was removed. Add --yes to remove them.");
             }
         }
+    }
+    Ok(())
+}
+
+fn cmd_train(dataset: &str, parameters: &str, name: Option<String>) -> Result<(), Error> {
+    use modeloid::core::pyenv::{PyEnv, TrainDevice};
+    use modeloid::core::train;
+
+    let ws = _get_workspace()?;
+    let d = find_dataset(&ws, dataset)?;
+    let (sets, _) = ws.parameter_sets()?;
+    let set = sets.into_iter().find(|s| s.name == parameters).ok_or_else(|| format!("no parameter set named '{parameters}'"))?;
+    let name = name.unwrap_or_else(|| format!("{}-{}", set.name, d.name()));
+
+    let env = PyEnv::locate()?;
+    if !env.status().usable() {
+        return Err("the training libraries aren't installed: run `modeloid python setup --cpu` or `--cuda`".into());
+    }
+    let overview = env.overview(&Settings::load_default());
+    let choice = if overview.installed(overview.device()) { overview.device() } else { TrainDevice::Cpu };
+    let preview = ws.train_preview(d.id(), &set, &name, choice)?;
+    for note in &preview.notes {
+        println!("Note: {note}");
+    }
+    if let Some(problem) = preview.problems.first() {
+        return Err(problem.clone().into());
+    }
+    println!("Training {} on {} as '{name}' ({})", preview.model, preview.device, preview.run_dir);
+
+    let reporter = TermReporter::new();
+    let prepared = ws.prepare_train(d.id(), &set, &name, choice, &reporter)?;
+    let record = train::run(&env, &prepared, &reporter)?;
+    println!("Done: {} of {} epochs", record.epochs_done, record.epochs);
+    if let Some(best) = record.best {
+        println!("Best weights: {best}");
     }
     Ok(())
 }

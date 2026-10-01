@@ -12,7 +12,8 @@ use crate::api::parameters::{
     LossConfig, ModelSize, Optimizer, ParameterSet, RunConfig, ScheduleConfig, Task, UltralyticsParams, Weights,
 };
 use crate::components::{use_toasts, InfoTip, NoWorkspace, PythonNotice, ToastKind};
-use crate::state::{use_parameters_version, use_selected_parameters, use_workspace, use_workspace_checked};
+use crate::components::table;
+use crate::state::{use_parameters_version, use_primary_parameters, use_selected_parameters, use_workspace, use_workspace_checked};
 use fields::{options, BoolField, ChoiceField, FloatField, IntField, OptionalFloatField, OptionalIntField};
 
 /// The form's Ultralytics settings.
@@ -59,6 +60,9 @@ pub fn Parameters() -> Element {
 #[component]
 fn ParameterEditor() -> Element {
     let mut selected = use_selected_parameters();
+    let primary = use_primary_parameters();
+    // Selects only `name` (nothing for `None`).
+    let mut select_only = move |name: Option<String>| selected.set(name.into_iter().collect());
     let mut version = use_parameters_version();
     let toasts = use_toasts();
     let list = use_resource(move || async move {
@@ -96,14 +100,14 @@ fn ParameterEditor() -> Element {
 
     // Follow the table: open the chosen set, unless that would throw away changes.
     use_effect(move || {
-        let wanted = selected();
+        let wanted = primary();
         let Some(Ok(list)) = &*list.read() else { return };
         if wanted == *editing.peek() {
             return;
         }
         if let Some(name) = &wanted {
             if !list.sets.iter().any(|s| &s.name == name) {
-                selected.set(editing.peek().clone()); // gone from disk
+                select_only(editing.peek().clone()); // gone from disk
                 return;
             }
         }
@@ -133,7 +137,14 @@ fn ParameterEditor() -> Element {
                 editing.set(Some(saved.name.clone()));
                 base.set(saved.clone());
                 form.set(saved.clone());
-                selected.set(Some(saved.name));
+                // A renamed set keeps its place in the selection.
+                let new_name = saved.name.clone();
+                match replacing {
+                    Some(old) if selected.peek().contains(&old) => {
+                        table::update(selected, |s| s.iter().map(|n| if *n == old { new_name.clone() } else { n.clone() }).collect())
+                    }
+                    _ => select_only(Some(saved.name)),
+                }
                 *version.write() += 1;
             }
             Err(e) => error.set(Some(error_message(&e))),
@@ -147,7 +158,7 @@ fn ParameterEditor() -> Element {
             Ok(()) => {
                 toasts.show(ToastKind::Success, format!("Deleted parameter set {name}"));
                 editing.set(None);
-                selected.set(None);
+                table::update(selected, |s| s.iter().filter(|n| **n != name).cloned().collect());
                 let fresh = ParameterSet::new("");
                 base.set(fresh.clone());
                 form.set(fresh);
@@ -174,7 +185,7 @@ fn ParameterEditor() -> Element {
                         title: if is_edit { "Start a new set with default settings" } else { "Back to default settings" },
                         onclick: move |_| {
                             if editing.peek().is_some() {
-                                selected.set(None);
+                                select_only(None);
                             } else {
                                 let fresh = ParameterSet::new("");
                                 base.set(fresh.clone());
@@ -191,7 +202,7 @@ fn ParameterEditor() -> Element {
                             onclick: move |_| {
                                 let copy = form.peek().duplicate();
                                 editing.set(None);
-                                selected.set(None);
+                                select_only(None);
                                 base.set(copy.clone());
                                 form.set(copy);
                             },
@@ -230,7 +241,7 @@ fn ParameterEditor() -> Element {
                         r#type: "button",
                         onclick: move |_| {
                             pending.set(None);
-                            selected.set(editing.peek().clone());
+                            select_only(editing.peek().clone());
                         },
                         "Keep editing"
                     }

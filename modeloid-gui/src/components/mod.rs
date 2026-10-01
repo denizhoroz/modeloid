@@ -16,6 +16,7 @@ mod resize_handle;
 mod side_panel;
 mod sidebar;
 mod status_bar;
+pub mod table;
 mod system_settings;
 mod toast;
 mod warning_tip;
@@ -38,7 +39,7 @@ pub use output_choice::{OutputChoice, OutputSelect};
 #[allow(unused_imports)] // LibrariesMissing and open_python_settings: for Train Model
 pub use python_setup::{open_python_settings, LibrariesMissing, PythonAutoSetup, PythonNotice, PythonSetupCard};
 pub use resize_handle::ResizeHandle;
-pub use side_panel::{PanelSwitcher, PanelTable, SidePanel};
+pub use side_panel::{use_panel_table, PanelSwitcher, PanelTable, PanelTableState, SidePanel};
 pub use sidebar::Sidebar;
 pub use status_bar::StatusBar;
 pub use system_settings::SystemSettings;

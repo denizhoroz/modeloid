@@ -1722,6 +1722,68 @@ fieldset.section-card:disabled {
     gap: var(--space-2);
 }
 
+/* Train Model */
+.train-inputs {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: var(--space-3);
+}
+
+.train-input {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-1);
+    min-width: 0;
+}
+
+/* The chosen dataset / parameter set, boxed like a selected card */
+.train-input-chosen {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-0-5);
+    align-self: stretch;
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--color-accent);
+    border-radius: var(--radius-md);
+    background: var(--color-accent-soft);
+}
+
+.train-input-name {
+    font-weight: 600;
+    overflow-wrap: anywhere;
+}
+
+.train-input-detail {
+    color: var(--color-fg-muted);
+    font-size: var(--text-sm);
+}
+
+.train-input .button {
+    margin-top: var(--space-1);
+}
+
+.train-console {
+    max-height: 420px;
+    margin: 0;
+    padding: var(--space-2) var(--space-3);
+    overflow: auto;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg);
+    color: var(--color-fg);
+    font-family: "JetBrains Mono", "Cascadia Code", Consolas, ui-monospace, monospace;
+    font-size: var(--text-xs);
+    line-height: 1.5;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.train-console-live {
+    display: block;
+    color: var(--color-accent-fg);
+}
+
 /* Note on training pages while the libraries aren't installed */
 .python-notice {
     display: flex;

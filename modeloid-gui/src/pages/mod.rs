@@ -9,6 +9,7 @@ mod home;
 mod not_found;
 mod parameters;
 mod settings;
+mod train;
 mod tool;
 
 pub use create_workspace::CreateWorkspace;

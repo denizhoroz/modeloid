@@ -14,3 +14,5 @@ modeloid/python/
 modeloid/.uv-cache/
 modeloid/bin/
 __pycache__/
+modeloid/weights/
+modeloid/.ultralytics/

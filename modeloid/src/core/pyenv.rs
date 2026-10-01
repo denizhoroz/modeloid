@@ -9,6 +9,8 @@
 //! python/                   uv-managed CPython (UV_PYTHON_INSTALL_DIR)
 //! .uv-cache/                uv's download cache (UV_CACHE_DIR)
 //! bin/uv(.exe)              uv itself, bundled or downloaded
+//! weights/                  pretrained weights Ultralytics downloads (shared by every run)
+//! .ultralytics/             Ultralytics' settings and fonts (YOLO_CONFIG_DIR)
 //! src/pyservice/            pyproject.toml, uv.lock, main.py
 //! ```
 //!
@@ -87,6 +89,35 @@ impl PyEnv {
 
     pub fn python_dir(&self) -> PathBuf {
         self.root.join("python")
+    }
+
+    /// Pretrained weights Ultralytics downloads; Python runs from here so they land in it.
+    pub fn weights_dir(&self) -> PathBuf {
+        self.root.join("weights")
+    }
+
+    /// Ultralytics' own settings folder, kept out of the user's profile.
+    pub fn ultralytics_dir(&self) -> PathBuf {
+        self.root.join(".ultralytics")
+    }
+
+    /// `python main.py <args>` in the environment, set up for training:
+    /// unbuffered UTF-8 output, Ultralytics' folders under the root.
+    pub fn service_command<I, S>(&self, args: I) -> Result<Command, crate::Error>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<std::ffi::OsStr>,
+    {
+        fs::create_dir_all(self.weights_dir())?;
+        fs::create_dir_all(self.ultralytics_dir())?;
+        let mut cmd = Command::new(self.python());
+        cmd.arg(self.pyservice().join("main.py"))
+            .args(args)
+            .current_dir(self.weights_dir())
+            .env("PYTHONUNBUFFERED", "1")
+            .env("PYTHONIOENCODING", "utf-8")
+            .env("YOLO_CONFIG_DIR", self.ultralytics_dir());
+        Ok(cmd)
     }
 
     pub fn cache_dir(&self) -> PathBuf {
@@ -372,6 +403,119 @@ pub fn run(mut cmd: Command, progress: &dyn Progress, reporter: &dyn Reporter) -
     }
 }
 
+/// One piece of a child process's output.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Output {
+    /// A finished line (ended with a newline).
+    Line(String),
+    /// A line redrawn in place (ended with a carriage return), e.g. a progress bar.
+    Progress(String),
+}
+
+/// Runs `cmd`, handing stdout and stderr to `on_output` as they come, split
+/// into finished lines and in-place progress updates. Kills it when
+/// `progress` is cancelled. Errors when it exits with a failure.
+pub fn stream(mut cmd: Command, progress: &dyn Progress, mut on_output: impl FnMut(Output)) -> Result<(), crate::Error> {
+    use std::sync::mpsc;
+
+    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    hide_window(&mut cmd);
+    let program = cmd.get_program().to_string_lossy().into_owned();
+    let mut child = cmd.spawn().map_err(|e| format!("couldn't start {program}: {e}"))?;
+
+    let (tx, rx) = mpsc::channel::<Output>();
+    let readers: Vec<_> = [
+        Box::new(child.stdout.take().expect("piped")) as Box<dyn Read + Send>,
+        Box::new(child.stderr.take().expect("piped")),
+    ]
+    .into_iter()
+    .map(|mut pipe| {
+        let tx = tx.clone();
+        thread::spawn(move || {
+            let mut splitter = LineSplitter::default();
+            let mut buf = [0u8; 8192];
+            while let Ok(n) = pipe.read(&mut buf) {
+                if n == 0 {
+                    break;
+                }
+                for out in splitter.push(&buf[..n]) {
+                    let _ = tx.send(out);
+                }
+            }
+            if let Some(out) = splitter.finish() {
+                let _ = tx.send(out);
+            }
+        })
+    })
+    .collect();
+    drop(tx);
+
+    let status = loop {
+        match rx.recv_timeout(Duration::from_millis(100)) {
+            Ok(out) => on_output(out),
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                if let Some(status) = child.try_wait()? {
+                    break status;
+                }
+                thread::sleep(Duration::from_millis(50));
+            }
+        }
+        if progress.is_cancelled() {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(Cancelled.into());
+        }
+    };
+    for reader in readers {
+        let _ = reader.join();
+    }
+    for out in rx.try_iter() {
+        on_output(out);
+    }
+    if status.success() { Ok(()) } else { Err(format!("{program} failed ({status})").into()) }
+}
+
+/// Splits bytes into `Output`s on `\n` (finished) and `\r` (redrawn); `\r\n` is
+/// one newline. Lossy UTF-8.
+#[derive(Default)]
+struct LineSplitter {
+    buf: Vec<u8>,
+    after_cr: bool,
+}
+
+impl LineSplitter {
+    fn take(&mut self) -> String {
+        String::from_utf8_lossy(&std::mem::take(&mut self.buf)).into_owned()
+    }
+
+    fn push(&mut self, bytes: &[u8]) -> Vec<Output> {
+        let mut out = Vec::new();
+        for &b in bytes {
+            if self.after_cr {
+                self.after_cr = false;
+                if b == b'\n' {
+                    out.push(Output::Line(self.take()));
+                    continue;
+                }
+                if !self.buf.is_empty() {
+                    out.push(Output::Progress(self.take()));
+                }
+            }
+            match b {
+                b'\n' => out.push(Output::Line(self.take())),
+                b'\r' => self.after_cr = true,
+                _ => self.buf.push(b),
+            }
+        }
+        out
+    }
+
+    fn finish(&mut self) -> Option<Output> {
+        (!self.buf.is_empty()).then(|| Output::Line(self.take()))
+    }
+}
+
 /// No console window flashing up when the GUI's server runs tools on Windows.
 fn hide_window(cmd: &mut Command) {
     #[cfg(windows)]
@@ -479,6 +623,25 @@ mod tests {
         // Libraries removed (their record gone): Python stays.
         fs::remove_file(env.env_file()).unwrap();
         assert_eq!(env.status(), EnvStatus::NoLibraries("3.12.13".into()));
+    }
+
+    #[test]
+    fn splits_lines_and_progress() {
+        let mut s = LineSplitter::default();
+        let mut out = s.push(b"one\r\ntwo\n\r 10%");
+        out.extend(s.push(b"\r 50%\rdone\n"));
+        assert_eq!(
+            out,
+            [
+                Output::Line("one".into()),
+                Output::Line("two".into()),
+                Output::Progress(" 10%".into()),
+                Output::Progress(" 50%".into()),
+                Output::Line("done".into()),
+            ]
+        );
+        assert_eq!(s.push(b"tail"), []);
+        assert_eq!(s.finish(), Some(Output::Line("tail".into())));
     }
 
     #[test]

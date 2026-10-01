@@ -6,6 +6,7 @@ use crate::api::datasets::{list_datasets, short_task, DatasetRow};
 use crate::api::error_message;
 use crate::api::health::start_rescan;
 use crate::api::jobs::{ItemStatus, JobKind};
+use crate::components::table::{self, CheckHeader, Column, RowCheck, SelectionBar, Sort, SortHeader};
 use crate::components::{set_if_newer, use_job, Icon, IconName, PanelSwitcher, PanelTable};
 use crate::state::{use_batch_selected, use_datasets_version, use_selected_datasets, use_workspace};
 use crate::util::{format_bytes, format_count, plural};
@@ -58,11 +59,11 @@ pub fn DatasetsPanel(table: Signal<PanelTable>) -> Element {
             names_before.set(rows.iter().map(|r| (r.id, r.name.clone())).collect());
         }
     });
-    let sort = use_signal(|| Sort { key: SortKey::Id, ascending: true });
+    let sort = use_signal(Sort::by_id);
     let sorted: Option<Vec<DatasetRow>> = match &*datasets.read() {
         Some(Ok(rows)) => {
             let mut rows = rows.clone();
-            sort().apply(&mut rows);
+            sort_rows(sort(), &mut rows);
             Some(rows)
         }
         _ => None,
@@ -102,34 +103,19 @@ pub fn DatasetsPanel(table: Signal<PanelTable>) -> Element {
                 p { class: "field-error panel-status", role: "alert", "{message}" }
             }
             if total > 0 {
-                div { class: "panel-selection", role: "group", aria_label: "Dataset selection",
-                    button {
-                        class: "button button-ghost button-sm",
-                        r#type: "button",
-                        disabled: selected_count == total,
-                        onclick: move |_| {
-                            // Keep the current order and add the rest after it, as listed.
-                            let mut ids = selected();
-                            let rest: Vec<u32> = all_ids.iter().filter(|id| !ids.contains(id)).copied().collect();
-                            ids.extend(rest);
-                            batch.set(true);
-                            selected.set(ids);
-                        },
-                        "Select all"
-                    }
-                    button {
-                        class: "button button-ghost button-sm",
-                        r#type: "button",
-                        disabled: selected_count == 0,
-                        onclick: move |_| {
-                            batch.set(false);
-                            selected.set(Vec::new());
-                        },
-                        "None"
-                    }
-                    span { class: "section-card-meta", aria_live: "polite",
-                        if selected_count == 0 { "Nothing selected" } else { "{selected_count} selected" }
-                    }
+                SelectionBar {
+                    label: "Dataset selection",
+                    selected: selected_count,
+                    total,
+                    on_all: move |_| {
+                        // Keep the current order and add the rest after it, as listed.
+                        batch.set(true);
+                        table::update(selected, |s| table::all(s, &all_ids));
+                    },
+                    on_none: move |_| {
+                        batch.set(false);
+                        selected.set(Vec::new());
+                    },
                 }
             }
 
@@ -157,16 +143,16 @@ pub fn DatasetsPanel(table: Signal<PanelTable>) -> Element {
 /// (clicking it again when it's the only one clears the selection).
 #[component]
 fn DatasetsTable(rows: Vec<DatasetRow>, sort: Signal<Sort>) -> Element {
-    let mut selected = use_selected_datasets();
+    let selected = use_selected_datasets();
     let mut batch = use_batch_selected();
 
     rsx! {
         table { class: "data-table",
             thead {
                 tr {
-                    th { class: "check-col", scope: "col", span { class: "visually-hidden", "Selected" } }
-                    for column in SortKey::ALL {
-                        SortHeader { key: "{column:?}", column, sort }
+                    CheckHeader {}
+                    for (column, def) in COLUMNS.into_iter().enumerate() {
+                        SortHeader { key: "{column}", column, def, sort }
                     }
                 }
             }
@@ -180,28 +166,16 @@ fn DatasetsTable(rows: Vec<DatasetRow>, sort: Signal<Sort>) -> Element {
                         key: "{id}",
                         class: if is_selected { "is-selected" },
                         onclick: move |_| {
-                            let only_this = *selected.peek() == [id];
                             batch.set(false);
-                            selected.set(if only_this { Vec::new() } else { vec![id] });
+                            table::update(selected, |s| table::clicked(s, &id));
                         },
-                        td { class: "check-col",
-                            input {
-                                r#type: "checkbox",
-                                aria_label: "Select {row.name}",
-                                checked: is_selected,
-                                // Toggle without the row's "select only this".
-                                onclick: move |e| e.stop_propagation(),
-                                onchange: move |e| {
-                                    batch.set(true);
-                                    if e.checked() {
-                                        if !selected.peek().contains(&id) {
-                                            selected.write().push(id);
-                                        }
-                                    } else {
-                                        selected.write().retain(|s| *s != id);
-                                    }
-                                },
-                            }
+                        RowCheck {
+                            name: row.name.clone(),
+                            checked: is_selected,
+                            on_change: move |on| {
+                                batch.set(true);
+                                table::update(selected, |s| table::toggled(s, &id, on));
+                            },
                         }
                         td { class: "num muted", "{id}" }
                         th { class: "name", scope: "row",
@@ -229,118 +203,39 @@ fn DatasetsTable(rows: Vec<DatasetRow>, sort: Signal<Sort>) -> Element {
     }
 }
 
-/// Datasets table column the rows are sorted by.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SortKey {
-    Id,
-    Name,
-    Task,
-    Images,
-    Labels,
-    Classes,
-    Format,
-    Size,
-}
+/// The Datasets table's sortable columns, in order.
+const COLUMNS: [Column; 8] = [
+    Column::id(),
+    Column::text("Name"),
+    Column::text("Task"),
+    Column::number("Images"),
+    Column::number("Labels"),
+    Column::number("Classes"),
+    Column::text("Format"),
+    Column::number("Size"),
+];
 
-impl SortKey {
-    /// In column order.
-    const ALL: [SortKey; 8] =
-        [SortKey::Id, SortKey::Name, SortKey::Task, SortKey::Images, SortKey::Labels, SortKey::Classes, SortKey::Format, SortKey::Size];
-
-    fn label(self) -> &'static str {
-        match self {
-            SortKey::Id => "#",
-            SortKey::Name => "Name",
-            SortKey::Task => "Task",
-            SortKey::Images => "Images",
-            SortKey::Labels => "Labels",
-            SortKey::Classes => "Classes",
-            SortKey::Format => "Format",
-            SortKey::Size => "Size",
-        }
-    }
-
-    fn numeric(self) -> bool {
-        matches!(self, SortKey::Id | SortKey::Images | SortKey::Labels | SortKey::Classes | SortKey::Size)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct Sort {
-    key: SortKey,
-    ascending: bool,
-}
-
-impl Sort {
-    /// Sorts `rows` by the key; equal rows stay in id order.
-    fn apply(self, rows: &mut [DatasetRow]) {
-        let text = |r: &DatasetRow| match self.key {
-            SortKey::Name => r.name.to_lowercase(),
-            SortKey::Task => short_task(&r.task).to_lowercase(),
-            SortKey::Format => r.format.to_lowercase(),
-            _ => String::new(),
-        };
-        let number = |r: &DatasetRow| match self.key {
-            SortKey::Id => u64::from(r.id),
-            SortKey::Images => u64::from(r.images),
-            SortKey::Labels => u64::from(r.labels),
-            SortKey::Classes => r.classes as u64,
-            SortKey::Size => r.size_bytes,
-            _ => 0,
-        };
-        rows.sort_by(|a, b| {
-            let order = if self.key.numeric() { number(a).cmp(&number(b)) } else { text(a).cmp(&text(b)) };
-            let order = if self.ascending { order } else { order.reverse() };
-            order.then(a.id.cmp(&b.id))
-        });
-    }
-
-    /// The sort after a click on `key`'s header: the other direction for the
-    /// current column; a new column starts A to Z for text and largest first
-    /// for counts (ids lowest first).
-    fn clicked(self, key: SortKey) -> Sort {
-        if key == self.key {
-            Sort { key, ascending: !self.ascending }
-        } else {
-            Sort { key, ascending: !key.numeric() || key == SortKey::Id }
-        }
-    }
-}
-
-/// A column header that sorts the table by its column.
-#[component]
-fn SortHeader(column: SortKey, sort: Signal<Sort>) -> Element {
-    let key = column;
-    let current = sort();
-    let active = current.key == key;
-    let aria_sort = match (active, current.ascending) {
-        (false, _) => "none",
-        (true, true) => "ascending",
-        (true, false) => "descending",
+/// Sorts `rows` by `sort`'s column; equal rows stay in id order.
+fn sort_rows(sort: Sort, rows: &mut [DatasetRow]) {
+    let text = |r: &DatasetRow| match sort.column {
+        1 => r.name.to_lowercase(),
+        2 => short_task(&r.task).to_lowercase(),
+        6 => r.format.to_lowercase(),
+        _ => String::new(),
     };
-    let arrow = match (active, current.ascending) {
-        (false, _) => "",
-        (true, true) => "▲",
-        (true, false) => "▼",
+    let number = |r: &DatasetRow| match sort.column {
+        0 => u64::from(r.id),
+        3 => u64::from(r.images),
+        4 => u64::from(r.labels),
+        5 => r.classes as u64,
+        7 => r.size_bytes,
+        _ => 0,
     };
-    let class = if key.numeric() { "num" } else { "" };
-
-    rsx! {
-        th { class, scope: "col", aria_sort,
-            button {
-                class: if active { "sort-button is-active" } else { "sort-button" },
-                r#type: "button",
-                title: "Sort by {key.label()}",
-                onclick: move |_| sort.set(sort().clicked(key)),
-                if key == SortKey::Id {
-                    abbr { title: "ID", "#" }
-                } else {
-                    "{key.label()}"
-                }
-                span { class: "sort-arrow", "aria-hidden": "true", "{arrow}" }
-            }
-        }
-    }
+    let numeric = COLUMNS.get(sort.column).is_some_and(|c| c.numeric);
+    rows.sort_by(|a, b| {
+        let order = if numeric { number(a).cmp(&number(b)) } else { text(a).cmp(&text(b)) };
+        sort.directed(order).then(a.id.cmp(&b.id))
+    });
 }
 
 /// `selected` after the datasets were read again: each id follows its
@@ -379,17 +274,12 @@ mod tests {
         let mut rows = vec![row(1, "b", 5), row(2, "A", 9), row(3, "c", 5)];
         let ids = |rows: &[DatasetRow]| rows.iter().map(|r| r.id).collect::<Vec<_>>();
 
-        Sort { key: SortKey::Name, ascending: true }.apply(&mut rows);
+        sort_rows(Sort { column: 1, ascending: true }, &mut rows);
         assert_eq!(ids(&rows), [2, 1, 3], "ignores case");
-        Sort { key: SortKey::Images, ascending: false }.apply(&mut rows);
+        sort_rows(Sort { column: 3, ascending: false }, &mut rows);
         assert_eq!(ids(&rows), [2, 1, 3], "ties stay in id order");
-        Sort { key: SortKey::Id, ascending: false }.apply(&mut rows);
+        sort_rows(Sort { column: 0, ascending: false }, &mut rows);
         assert_eq!(ids(&rows), [3, 2, 1]);
-
-        let sort = Sort { key: SortKey::Id, ascending: true };
-        assert_eq!(sort.clicked(SortKey::Id), Sort { key: SortKey::Id, ascending: false });
-        assert_eq!(sort.clicked(SortKey::Size), Sort { key: SortKey::Size, ascending: false }, "largest first");
-        assert_eq!(sort.clicked(SortKey::Name), Sort { key: SortKey::Name, ascending: true });
     }
 
     #[test]

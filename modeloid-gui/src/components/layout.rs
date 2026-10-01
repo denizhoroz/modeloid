@@ -1,6 +1,6 @@
 use dioxus::prelude::*;
 
-use crate::components::{provide_toasts, Icon, IconName, PanelTable, PythonAutoSetup, ResizeHandle, SidePanel, Sidebar, StatusBar, ToastHost};
+use crate::components::{provide_toasts, Icon, IconName, PanelTable, PanelTableState, PythonAutoSetup, ResizeHandle, SidePanel, Sidebar, StatusBar, ToastHost};
 use crate::routes::Route;
 use crate::state::{provide_activity_state, provide_workspace_state};
 
@@ -22,6 +22,7 @@ pub fn AppLayout() -> Element {
     // Lives here too, so the chosen table survives page changes within a
     // category; a page of another category switches to that category's table.
     let mut panel_table = use_signal(|| PanelTable::for_section(&section).unwrap_or(PanelTable::Datasets));
+    use_context_provider(|| PanelTableState(panel_table));
     use_effect(use_reactive((&section,), move |(section,)| {
         if let Some(table) = PanelTable::for_section(&section) {
             panel_table.set(table);

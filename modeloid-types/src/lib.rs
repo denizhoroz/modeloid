@@ -10,6 +10,7 @@ pub mod pyenv;
 pub mod split;
 pub mod stats;
 pub mod system;
+pub mod train;
 pub mod validate;
 
 pub use split::Split;
