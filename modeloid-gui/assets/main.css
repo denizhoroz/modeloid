@@ -241,8 +241,97 @@ button {
     font-size: var(--text-xs);
 }
 
-.datasets-panel-header .section-card-title {
+/* One table of the side panel; the others are hidden */
+.panel-view {
+    display: flex;
     flex: 1;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.panel-view[hidden] {
+    display: none;
+}
+
+/* Side panel title: switches the table */
+.panel-switch {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+}
+
+.panel-switch .panel-switch-button {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    height: 24px;
+    margin-left: calc(-1 * var(--space-1));
+    padding: 0 var(--space-1);
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: none;
+    color: var(--color-fg);
+    font-family: inherit;
+    cursor: pointer;
+}
+
+.panel-switch-button:hover,
+.panel-switch-button[aria-expanded="true"] {
+    background: var(--color-surface-hover);
+}
+
+.panel-switch-chevron {
+    color: var(--color-fg-muted);
+    transition: transform var(--duration) var(--ease-out);
+}
+
+.panel-switch-chevron.is-open {
+    transform: rotate(180deg);
+}
+
+.panel-switch-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 29;
+}
+
+.panel-switch-menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: calc(-1 * var(--space-1));
+    z-index: 30;
+    min-width: 160px;
+    margin: 0;
+    padding: var(--space-1);
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg);
+    box-shadow: 0 6px 20px var(--color-scrim);
+    list-style: none;
+}
+
+.panel-switch-option {
+    display: block;
+    width: 100%;
+    padding: var(--space-1) var(--space-2);
+    border: 0;
+    border-radius: 3px;
+    background: none;
+    color: var(--color-fg);
+    font: inherit;
+    font-size: var(--text-sm);
+    text-align: left;
+    cursor: pointer;
+}
+
+.panel-switch-option:hover {
+    background: var(--color-surface-hover);
+}
+
+.panel-switch-option.is-selected {
+    background: var(--color-accent-soft);
+    color: var(--color-accent-fg);
+    font-weight: 600;
 }
 
 .datasets-panel-body {

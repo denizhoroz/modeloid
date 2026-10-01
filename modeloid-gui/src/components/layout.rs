@@ -1,6 +1,6 @@
 use dioxus::prelude::*;
 
-use crate::components::{provide_toasts, DatasetsPanel, Icon, IconName, ResizeHandle, Sidebar, StatusBar, ToastHost};
+use crate::components::{provide_toasts, Icon, IconName, PanelTable, ResizeHandle, SidePanel, Sidebar, StatusBar, ToastHost};
 use crate::routes::Route;
 use crate::state::{provide_activity_state, provide_workspace_state};
 
@@ -14,7 +14,19 @@ pub fn AppLayout() -> Element {
     let mut drawer_open = use_signal(|| false);
     // Lives here so the panel keeps its width across dataset pages.
     let panel_width = use_signal(|| 420.0);
-    let show_panel = matches!(use_route::<Route>(), Route::Tool { section, .. } if section == "dataset");
+    let section = match use_route::<Route>() {
+        Route::Tool { section, .. } => section,
+        _ => String::new(),
+    };
+    let show_panel = PanelTable::for_section(&section).is_some();
+    // Lives here too, so the chosen table survives page changes within a
+    // category; a page of another category switches to that category's table.
+    let mut panel_table = use_signal(|| PanelTable::for_section(&section).unwrap_or(PanelTable::Datasets));
+    use_effect(use_reactive((&section,), move |(section,)| {
+        if let Some(table) = PanelTable::for_section(&section) {
+            panel_table.set(table);
+        }
+    }));
 
     rsx! {
         a { class: "skip-link", href: "#main", "Skip to content" }
@@ -61,10 +73,10 @@ pub fn AppLayout() -> Element {
                         width: panel_width,
                         min: 260.0,
                         max: 900.0,
-                        label: "Resize datasets panel",
-                        controls: "datasets-panel",
+                        label: "Resize side panel",
+                        controls: "side-panel",
                     }
-                    DatasetsPanel {}
+                    SidePanel { table: panel_table }
                 }
             } else {
                 main { id: "main", class: "content", tabindex: "-1",

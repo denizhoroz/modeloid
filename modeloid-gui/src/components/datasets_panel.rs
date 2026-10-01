@@ -6,13 +6,13 @@ use crate::api::datasets::{list_datasets, short_task, DatasetRow};
 use crate::api::error_message;
 use crate::api::health::start_rescan;
 use crate::api::jobs::{ItemStatus, JobKind};
-use crate::components::{set_if_newer, use_job, Icon, IconName};
+use crate::components::{set_if_newer, use_job, Icon, IconName, PanelSwitcher, PanelTable};
 use crate::state::{use_batch_selected, use_datasets_version, use_selected_datasets, use_workspace};
 use crate::util::{format_bytes, format_count, plural};
 
-/// Right-hand panel listing the open workspace's datasets.
+/// The side panel's Datasets table: the open workspace's datasets.
 #[component]
-pub fn DatasetsPanel() -> Element {
+pub fn DatasetsPanel(table: Signal<PanelTable>) -> Element {
     let workspace = use_workspace();
     let version = use_datasets_version();
 
@@ -73,9 +73,9 @@ pub fn DatasetsPanel() -> Element {
     let total = all_ids.len();
 
     rsx! {
-        aside { id: "datasets-panel", class: "datasets-panel", aria_labelledby: "datasets-panel-title",
+        div { class: "panel-view", hidden: table() != PanelTable::Datasets,
             div { class: "datasets-panel-header",
-                h2 { id: "datasets-panel-title", class: "section-card-title", "Datasets" }
+                PanelSwitcher { table }
                 if let Some(n) = count {
                     span { class: "section-card-meta", "{plural(n, \"dataset\")}" }
                 }

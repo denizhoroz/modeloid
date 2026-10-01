@@ -52,6 +52,7 @@ pub const NAV: &[NavCategory] = &[
         slug: "training",
         icon: IconName::Cpu,
         items: &[
+            item("Parameters", "parameters"),
             item("Train Model", "train"),
             item("Test Model", "test"),
             item("Visualize Results", "visualize-results"),
