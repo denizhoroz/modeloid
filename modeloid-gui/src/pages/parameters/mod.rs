@@ -8,7 +8,7 @@ use dioxus::prelude::*;
 
 use crate::api::error_message;
 use crate::api::parameters::{
-    delete_parameters, list_parameters, save_parameters, AugmentationConfig, AutoAugment, Batch, Cache, Family, FrameworkParams,
+    list_parameters, save_parameters, AugmentationConfig, AutoAugment, Batch, Cache, Family, FrameworkParams,
     LossConfig, ModelSize, Optimizer, ParameterSet, RunConfig, ScheduleConfig, Task, UltralyticsParams, Weights,
 };
 use crate::components::{use_toasts, InfoTip, NoWorkspace, PythonNotice, ToastKind};
@@ -76,7 +76,6 @@ fn ParameterEditor() -> Element {
     let mut form = use_signal(|| ParameterSet::new(""));
     // A table choice waiting on "discard your changes?".
     let mut pending = use_signal(|| None::<Option<String>>);
-    let mut confirm_delete = use_signal(|| false);
     let mut saving = use_signal(|| false);
     let mut error = use_signal(|| None::<String>);
 
@@ -94,7 +93,6 @@ fn ParameterEditor() -> Element {
         base.set(set.clone());
         form.set(set);
         pending.set(None);
-        confirm_delete.set(false);
         error.set(None);
     };
 
@@ -102,6 +100,13 @@ fn ParameterEditor() -> Element {
     use_effect(move || {
         let wanted = primary();
         let Some(Ok(list)) = &*list.read() else { return };
+        // The set being edited was removed (Remove in the table, or on disk):
+        // the form keeps its values as a new, unsaved set.
+        let gone = editing.peek().as_ref().is_some_and(|name| !list.sets.iter().any(|s| &s.name == name));
+        if gone {
+            editing.set(None);
+            base.set(ParameterSet::new(""));
+        }
         if wanted == *editing.peek() {
             return;
         }
@@ -152,77 +157,11 @@ fn ParameterEditor() -> Element {
         saving.set(false);
     };
 
-    let delete = move |_| async move {
-        let Some(name) = editing() else { return };
-        match delete_parameters(name.clone()).await {
-            Ok(()) => {
-                toasts.show(ToastKind::Success, format!("Deleted parameter set {name}"));
-                editing.set(None);
-                table::update(selected, |s| s.iter().filter(|n| **n != name).cloned().collect());
-                let fresh = ParameterSet::new("");
-                base.set(fresh.clone());
-                form.set(fresh);
-                confirm_delete.set(false);
-                *version.write() += 1;
-            }
-            Err(e) => error.set(Some(error_message(&e))),
-        }
-    };
-
     rsx! {
         form { class: "section-stack", novalidate: true, onsubmit: save,
-            // Which set this is, and what to do with it.
-            div { class: "param-toolbar",
-                if let Some(name) = editing() {
-                    span { "Editing " strong { "{name}" } if dirty() { span { class: "muted", " · unsaved changes" } } }
-                } else {
-                    span { "New parameter set" if dirty() { span { class: "muted", " · unsaved" } } }
-                }
-                div { class: "param-toolbar-actions",
-                    button {
-                        class: "button button-ghost button-sm",
-                        r#type: "button",
-                        title: if is_edit { "Start a new set with default settings" } else { "Back to default settings" },
-                        onclick: move |_| {
-                            if editing.peek().is_some() {
-                                select_only(None);
-                            } else {
-                                let fresh = ParameterSet::new("");
-                                base.set(fresh.clone());
-                                form.set(fresh);
-                            }
-                        },
-                        if is_edit { "New" } else { "Reset" }
-                    }
-                    if is_edit {
-                        button {
-                            class: "button button-ghost button-sm",
-                            r#type: "button",
-                            title: "Copy these settings into a new set",
-                            onclick: move |_| {
-                                let copy = form.peek().duplicate();
-                                editing.set(None);
-                                select_only(None);
-                                base.set(copy.clone());
-                                form.set(copy);
-                            },
-                            "Duplicate"
-                        }
-                        button {
-                            class: "button button-ghost button-sm",
-                            r#type: "button",
-                            onclick: move |_| confirm_delete.toggle(),
-                            "Delete"
-                        }
-                    }
-                }
-            }
-            if let (true, Some(name)) = (confirm_delete(), editing()) {
-                div { class: "notice notice-warning param-confirm", role: "alert",
-                    span { "Delete parameter set " strong { "{name}" } "? Its file in training/parameters is removed." }
-                    button { class: "button button-danger button-sm", r#type: "button", onclick: delete, "Delete" }
-                    button { class: "button button-secondary button-sm", r#type: "button", onclick: move |_| confirm_delete.set(false), "Cancel" }
-                }
+            // The selected set's name (a new one has none yet).
+            h2 { class: "param-title",
+                if let Some(name) = editing() { "{name}" } else { "New parameter set" }
             }
             if let Some(wanted) = pending() {
                 div { class: "notice notice-warning param-confirm", role: "alert",

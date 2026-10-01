@@ -4,6 +4,7 @@ use dioxus::prelude::*;
 
 use crate::api::datasets::{list_datasets, short_task, DatasetRow};
 use crate::api::error_message;
+use crate::api::datasets::start_delete;
 use crate::api::health::start_rescan;
 use crate::api::jobs::{ItemStatus, JobKind};
 use crate::components::table::{self, CheckHeader, Column, RowCheck, SelectionBar, Sort, SortHeader};
@@ -69,6 +70,7 @@ pub fn DatasetsPanel(table: Signal<PanelTable>) -> Element {
         _ => None,
     };
     let all_ids: Vec<u32> = sorted.iter().flatten().map(|r| r.id).collect();
+    let names_by_id: HashMap<u32, String> = sorted.iter().flatten().map(|r| (r.id, r.name.clone())).collect();
     let mut batch = use_batch_selected();
     let selected_count = selected.read().len();
     let total = all_ids.len();
@@ -115,6 +117,20 @@ pub fn DatasetsPanel(table: Signal<PanelTable>) -> Element {
                     on_none: move |_| {
                         batch.set(false);
                         selected.set(Vec::new());
+                    },
+                    noun: "dataset",
+                    remove_note: "Their folders and cached previews are deleted from the workspace.",
+                    busy: rescanning,
+                    on_remove: move |_| {
+                        let ids = selected.peek().clone();
+                        let names: Vec<String> = ids.iter().map(|id| names_by_id.get(id).cloned().unwrap_or_default()).collect();
+                        async move {
+                            rescan_error.set(None);
+                            // A job, so the status bar shows it; the panel drops deleted ones itself.
+                            if let Err(e) = start_delete(ids, names).await {
+                                rescan_error.set(Some(error_message(&e)));
+                            }
+                        }
                     },
                 }
             }

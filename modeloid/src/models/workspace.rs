@@ -273,6 +273,16 @@ impl Workspace {
             entry.file_name().hash(&mut hasher);
             stamp(&entry.path()).hash(&mut hasher);
         }
+
+        // Training runs' records (written when a run starts and ends).
+        let mut runs: Vec<_> = fs::read_dir(dir.join(TRAINING_DIR).join(TRAINS_DIR))
+            .map(|rd| rd.filter_map(Result::ok).collect())
+            .unwrap_or_default();
+        runs.sort_by_key(|e| e.file_name());
+        for entry in runs {
+            entry.file_name().hash(&mut hasher);
+            stamp(&entry.path().join("train.toml")).hash(&mut hasher);
+        }
         hasher.finish()
     }
 

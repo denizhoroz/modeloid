@@ -95,7 +95,8 @@ pub fn SortHeader(column: usize, def: Column, sort: Signal<Sort>) -> Element {
     }
 }
 
-/// "Select all", "None" and "N selected", above a table with checkboxes.
+/// "Select all", "None", a red "Remove" and "N selected", above a table
+/// with checkboxes. Remove asks first; `on_remove` then deletes the selected rows.
 #[component]
 pub fn SelectionBar(
     /// What the rows are, for screen readers, e.g. "Dataset selection".
@@ -105,7 +106,22 @@ pub fn SelectionBar(
     total: usize,
     on_all: EventHandler<()>,
     on_none: EventHandler<()>,
+    /// What one row is, for the question, e.g. "dataset" ("Delete 2 datasets?").
+    #[props(into)]
+    noun: String,
+    /// What deleting does, e.g. "Their folders are deleted from the workspace."
+    #[props(into)]
+    remove_note: String,
+    on_remove: EventHandler<()>,
+    /// Something is in the way (e.g. a job runs); Remove is disabled.
+    #[props(default)]
+    busy: bool,
 ) -> Element {
+    let mut confirming = use_signal(|| false);
+    // A changed selection has to be confirmed again.
+    use_effect(use_reactive((&selected,), move |_| confirming.set(false)));
+    let what = if selected == 1 { format!("1 {noun}") } else { format!("{selected} {noun}s") };
+
     rsx! {
         div { class: "panel-selection", role: "group", aria_label: "{label}",
             button {
@@ -122,8 +138,34 @@ pub fn SelectionBar(
                 onclick: move |_| on_none.call(()),
                 "None"
             }
+            button {
+                class: "button button-danger button-sm",
+                r#type: "button",
+                disabled: selected == 0 || busy,
+                aria_expanded: if confirming() { "true" } else { "false" },
+                onclick: move |_| confirming.toggle(),
+                "Remove"
+            }
             span { class: "section-card-meta", aria_live: "polite",
                 if selected == 0 { "Nothing selected" } else { "{selected} selected" }
+            }
+        }
+        if confirming() && selected > 0 {
+            div { class: "notice notice-warning panel-confirm", role: "alert",
+                span { strong { "Delete {what}? " } "{remove_note} This can't be undone." }
+                div { class: "panel-confirm-actions",
+                    button {
+                        class: "button button-danger button-sm",
+                        r#type: "button",
+                        disabled: busy,
+                        onclick: move |_| {
+                            confirming.set(false);
+                            on_remove.call(());
+                        },
+                        "Delete"
+                    }
+                    button { class: "button button-secondary button-sm", r#type: "button", onclick: move |_| confirming.set(false), "Cancel" }
+                }
             }
         }
     }

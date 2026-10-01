@@ -4,7 +4,8 @@
 
 use dioxus::prelude::*;
 
-pub use modeloid_types::train::{TrainLog, TrainPreview};
+pub use modeloid_types::train::{TrainLog, TrainPreview, TrainRecord, TrainStatus};
+use serde::{Deserialize, Serialize};
 
 use crate::api::jobs::Job;
 
@@ -21,6 +22,25 @@ pub async fn start_training(dataset: u32, parameters: String, name: String) -> R
     backend::start(dataset, parameters, name).map_err(ServerFnError::new)
 }
 
+/// Trained models (training runs) of the workspace, by start time, and a
+/// warning for each run folder that couldn't be read.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ModelList {
+    pub models: Vec<TrainRecord>,
+    pub warnings: Vec<String>,
+}
+
+#[post("/api/train/models")]
+pub async fn list_models() -> Result<ModelList, ServerFnError> {
+    backend::models().await.map_err(ServerFnError::new)
+}
+
+/// Deletes trained models (their run folders). Refused for a model that is training.
+#[post("/api/train/models/delete")]
+pub async fn delete_models(names: Vec<String>) -> Result<(), ServerFnError> {
+    backend::delete_models(names).await.map_err(ServerFnError::new)
+}
+
 /// Console output of run `name` from byte `offset`.
 #[post("/api/train/log")]
 pub async fn train_log(name: String, offset: u64) -> Result<TrainLog, ServerFnError> {
@@ -33,7 +53,7 @@ mod backend {
     use modeloid::core::train;
     use modeloid::{ParameterSet, Settings, Workspace};
 
-    use super::{TrainLog, TrainPreview};
+    use super::{ModelList, TrainLog, TrainPreview};
     use crate::api::jobs::{self, Job, JobKind};
     use crate::api::{activity, workspace};
 
@@ -93,6 +113,34 @@ mod backend {
                 None => format!("Results in {}", prepared.dir.display()),
             }))
         })
+    }
+
+    pub async fn models() -> Result<ModelList, String> {
+        tokio::task::spawn_blocking(|| {
+            let (models, warnings) = open()?.train_records().map_err(|e| e.to_string())?;
+            Ok(ModelList { models, warnings })
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
+
+    pub async fn delete_models(names: Vec<String>) -> Result<(), String> {
+        let training = jobs::latest_all()
+            .into_iter()
+            .find(|j| j.kind == JobKind::Train && !j.finished)
+            .and_then(|j| j.items.first().map(|i| i.label.clone()));
+        if let Some(name) = training.filter(|t| names.contains(t)) {
+            return Err(format!("{name} is training. Stop it first."));
+        }
+        tokio::task::spawn_blocking(move || {
+            let ws = open()?;
+            for name in &names {
+                ws.delete_train(name).map_err(|e| format!("Couldn't delete {name}: {e}"))?;
+            }
+            Ok(())
+        })
+        .await
+        .map_err(|e| e.to_string())?
     }
 
     pub async fn log(name: String, offset: u64) -> Result<TrainLog, String> {

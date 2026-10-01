@@ -2,7 +2,6 @@
 //! from online sources, import a folder / zip from this computer) and delete
 //! them from it.
 
-mod delete;
 mod formats;
 mod import;
 mod links;
@@ -18,7 +17,6 @@ use crate::routes::Route;
 use crate::state::{use_workspace, use_workspace_checked};
 use crate::util::plural;
 
-use delete::DeleteForm;
 use formats::{FormatSection, DEFAULT_FORMAT, OTHER};
 use import::ImportForm;
 use links::{collect_links, LinkMode, LinksSection};
@@ -27,7 +25,6 @@ use links::{collect_links, LinkMode, LinksSection};
 enum Tab {
     Download,
     Import,
-    Delete,
 }
 
 #[component]
@@ -42,13 +39,13 @@ pub fn Download() -> Element {
             p { class: "page-eyebrow", "Dataset Manager" }
             h1 { "Datasets" }
             p { class: "page-lead",
-                "Download datasets from Roboflow, Kaggle, Hugging Face or a zip link, import one from this computer, or delete ones you no longer need."
+                "Download datasets from Roboflow, Kaggle, Hugging Face or a zip link, or import one from this computer. To delete datasets, select them in the Datasets table and choose Remove."
             }
 
             match workspace() {
                 Some(info) => rsx! {
-                    div { class: "segmented segmented-tabs", role: "tablist", aria_label: "Download, import or delete",
-                        for (value, label, id) in [(Tab::Download, "Download", "download"), (Tab::Import, "Import", "import"), (Tab::Delete, "Delete", "delete")] {
+                    div { class: "segmented segmented-tabs", role: "tablist", aria_label: "Download or import",
+                        for (value, label, id) in [(Tab::Download, "Download", "download"), (Tab::Import, "Import", "import")] {
                             button {
                                 key: "{id}",
                                 id: "tab-{id}",
@@ -68,9 +65,6 @@ pub fn Download() -> Element {
                     }
                     div { id: "panel-import", role: "tabpanel", aria_labelledby: "tab-import", hidden: tab() != Tab::Import,
                         ImportForm { datasets_path: info.datasets_path }
-                    }
-                    div { id: "panel-delete", role: "tabpanel", aria_labelledby: "tab-delete", hidden: tab() != Tab::Delete,
-                        DeleteForm {}
                     }
                 },
                 None if !checked() => rsx! {}, // still asking the server

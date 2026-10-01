@@ -245,6 +245,39 @@ impl Workspace {
         Ok(PreparedTrain { dir, config, record })
     }
 
+    /// Every training run's record, by start time, and a warning for each
+    /// run folder whose `train.toml` couldn't be read (those are left out).
+    pub fn train_records(&self) -> Result<(Vec<TrainRecord>, Vec<String>), crate::Error> {
+        let Ok(entries) = fs::read_dir(self.trains_dir()) else { return Ok((Vec::new(), Vec::new())) };
+        let (mut records, mut warnings) = (Vec::new(), Vec::new());
+        for entry in entries.filter_map(Result::ok).filter(|e| e.path().is_dir()) {
+            let path = entry.path().join(RECORD_FILE);
+            let read = fs::read_to_string(&path).map_err(|e| e.to_string()).and_then(|t| toml::from_str::<TrainRecord>(&t).map_err(|e| e.to_string()));
+            match read {
+                // The folder name is the name; a hand-renamed folder keeps working.
+                Ok(mut record) => {
+                    record.name = entry.file_name().to_string_lossy().into_owned();
+                    records.push(record);
+                }
+                Err(e) => warnings.push(format!("{} couldn't be read: {e}", path.display())),
+            }
+        }
+        records.sort_by(|a, b| a.started.cmp(&b.started).then_with(|| a.name.cmp(&b.name)));
+        Ok((records, warnings))
+    }
+
+    /// Deletes trained model `name`: its whole run folder (weights, results,
+    /// console log). Permanent. Only a folder directly inside `training/trains`.
+    pub fn delete_train(&self, name: &str) -> Result<(), crate::Error> {
+        crate::validate_dataset_name(name)?;
+        let dir = self.train_dir(name);
+        if dir.parent() != Some(absolute(&self.trains_dir()).as_path()) || !dir.is_dir() {
+            return Err(format!("there's no trained model named '{name}'").into());
+        }
+        crate::core::io::retry_busy(&dir, || fs::remove_dir_all(&dir))?;
+        Ok(())
+    }
+
     /// The record of run `name`.
     pub fn train_record(&self, name: &str) -> Result<TrainRecord, crate::Error> {
         let text = fs::read_to_string(self.train_dir(name).join(RECORD_FILE)).map_err(|e| format!("no training named '{name}': {e}"))?;
@@ -475,6 +508,31 @@ mod tests {
         let FrameworkParams::Ultralytics(p) = &mut set.params;
         p.run.device = "cpu".into();
         assert_eq!(resolve_device(&set, TrainDevice::Gpu), "cpu");
+    }
+
+    #[test]
+    fn lists_runs_by_start() {
+        let dir = std::env::temp_dir().join(format!("modeloid-train-records-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let ws = Workspace::new("ws".into(), dir.clone());
+        ws.make_to_dir().unwrap();
+        for (name, started) in [("late", "2026-10-02T00:00:00Z"), ("early", "2026-10-01T00:00:00Z")] {
+            let run = ws.train_dir(name);
+            fs::create_dir_all(&run).unwrap();
+            let record = TrainRecord { name: name.into(), started: started.into(), status: TrainStatus::Done, ..Default::default() };
+            save_record(&run, &record).unwrap();
+        }
+        fs::create_dir_all(ws.train_dir("broken")).unwrap();
+        let (records, warnings) = ws.train_records().unwrap();
+        assert_eq!(records.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), ["early", "late"]);
+        assert_eq!(warnings.len(), 1, "a run folder without train.toml");
+
+        ws.delete_train("late").unwrap();
+        assert!(!ws.train_dir("late").exists());
+        assert!(ws.delete_train("late").is_err());
+        assert!(ws.delete_train("../datasets").is_err(), "only run folders");
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -34,6 +34,11 @@ pub struct WorkspaceState {
     pub selected_parameters: Signal<Vec<String>>,
     /// Bumped when parameter sets change (saved, deleted, edited on disk).
     pub parameters_version: Signal<u64>,
+    /// Trained models selected in the Models table (by run name), in
+    /// selection order. Cleared when the workspace changes.
+    pub selected_models: Signal<Vec<String>>,
+    /// Bumped when training runs change (started, finished, edited on disk).
+    pub models_version: Signal<u64>,
 }
 
 /// Call once near the root. Asks the server which workspace is open, so the
@@ -47,10 +52,13 @@ pub fn provide_workspace_state() {
         batch_selected: Signal::new(false),
         selected_parameters: Signal::new(Vec::new()),
         parameters_version: Signal::new(0),
+        selected_models: Signal::new(Vec::new()),
+        models_version: Signal::new(0),
     });
     let (mut workspace, mut checked) = (state.workspace, state.checked);
     let (mut datasets_version, mut selected) = (state.datasets_version, state.selected_datasets);
     let (mut parameters_version, mut selected_parameters) = (state.parameters_version, state.selected_parameters);
+    let (mut models_version, mut selected_models) = (state.models_version, state.selected_models);
 
     use_future(move || async move {
         if let Ok(current) = current_workspace().await {
@@ -72,6 +80,7 @@ pub fn provide_workspace_state() {
                 }
                 *datasets_version.write() += 1;
                 *parameters_version.write() += 1;
+                *models_version.write() += 1;
             }
             since = version;
         }
@@ -85,6 +94,7 @@ pub fn provide_workspace_state() {
             selected_in.set(path);
             selected.set(Vec::new());
             selected_parameters.set(Vec::new());
+            selected_models.set(Vec::new());
         }
     });
 }
@@ -194,4 +204,14 @@ pub fn use_primary_parameters() -> Memo<Option<String>> {
 /// Read to re-run when parameter sets change; bump with `*signal.write() += 1`.
 pub fn use_parameters_version() -> Signal<u64> {
     use_context::<WorkspaceState>().parameters_version
+}
+
+/// Trained models selected in the Models table, in selection order.
+pub fn use_selected_models() -> Signal<Vec<String>> {
+    use_context::<WorkspaceState>().selected_models
+}
+
+/// Read to re-run when training runs change; bump with `*signal.write() += 1`.
+pub fn use_models_version() -> Signal<u64> {
+    use_context::<WorkspaceState>().models_version
 }
