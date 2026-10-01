@@ -25,6 +25,7 @@ pub enum JobKind {
     Balance,
     Convert,
     Delete,
+    PythonSetup,
 }
 
 impl JobKind {
@@ -41,6 +42,7 @@ impl JobKind {
             JobKind::Balance => "Balance",
             JobKind::Convert => "Convert",
             JobKind::Delete => "Delete",
+            JobKind::PythonSetup => "Python setup",
         }
     }
 }

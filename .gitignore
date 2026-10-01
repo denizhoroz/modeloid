@@ -8,3 +8,9 @@
 .schematic/
 
 *Cargo.lock
+# Python environment (created by Modeloid's setup; see modeloid/src/pyservice)
+modeloid/.venv/
+modeloid/python/
+modeloid/.uv-cache/
+modeloid/bin/
+__pycache__/

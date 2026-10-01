@@ -16,6 +16,7 @@ pub mod health;
 pub mod import;
 pub mod jobs;
 pub mod parameters;
+pub mod pyenv;
 pub mod settings;
 pub mod system;
 pub mod watch;

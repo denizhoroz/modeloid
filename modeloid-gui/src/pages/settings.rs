@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 
 use crate::api::settings::ServiceId;
-use crate::components::{AppearanceSettings, CredentialField, SystemSettings, WorkspaceSettings};
+use crate::components::{AppearanceSettings, CredentialField, PythonSetupCard, SystemSettings, WorkspaceSettings};
 use crate::state::use_workspace;
 
 #[component]
@@ -43,6 +43,14 @@ pub fn Settings() -> Element {
                     "How much of this computer Modeloid uses. Stored on this computer, for every workspace; the command line tool follows the thread and connection settings."
                 }
                 SystemSettings {}
+            }
+
+            section { class: "settings-section", aria_labelledby: "settings-python",
+                h2 { id: "settings-python", class: "settings-section-title", "Python environment" }
+                p { class: "settings-section-lead",
+                    "The Python, PyTorch and Ultralytics that training runs on. Modeloid keeps its own copy next to the app."
+                }
+                PythonSetupCard {}
             }
 
             section { class: "settings-section", aria_labelledby: "settings-api-keys",

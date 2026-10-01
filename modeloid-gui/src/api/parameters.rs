@@ -1,5 +1,5 @@
 //! Training parameter sets, saved in the workspace as
-//! `models/parameters/<name>.toml` (see the core's `Workspace::parameter_sets`).
+//! `training/parameters/<name>.toml` (see the core's `Workspace::parameter_sets`).
 
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};

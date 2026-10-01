@@ -6,6 +6,7 @@ pub mod classes;
 pub mod convert;
 pub mod health;
 pub mod parameters;
+pub mod pyenv;
 pub mod split;
 pub mod stats;
 pub mod system;

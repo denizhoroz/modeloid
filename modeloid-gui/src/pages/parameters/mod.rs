@@ -1,5 +1,5 @@
 //! Training → Parameters: build a reusable set of model and training
-//! settings, saved in the workspace as `models/parameters/<name>.toml`.
+//! settings, saved in the workspace as `training/parameters/<name>.toml`.
 //! Choosing a set in the side panel's Parameters table opens it here.
 
 mod fields;
@@ -11,7 +11,7 @@ use crate::api::parameters::{
     delete_parameters, list_parameters, save_parameters, AugmentationConfig, AutoAugment, Batch, Cache, Family, FrameworkParams,
     LossConfig, ModelSize, Optimizer, ParameterSet, RunConfig, ScheduleConfig, Task, UltralyticsParams, Weights,
 };
-use crate::components::{use_toasts, InfoTip, NoWorkspace, ToastKind};
+use crate::components::{use_toasts, InfoTip, NoWorkspace, PythonNotice, ToastKind};
 use crate::state::{use_parameters_version, use_selected_parameters, use_workspace, use_workspace_checked};
 use fields::{options, BoolField, ChoiceField, FloatField, IntField, OptionalFloatField, OptionalIntField};
 
@@ -46,6 +46,7 @@ pub fn Parameters() -> Element {
             p { class: "page-lead",
                 "A reusable recipe of model and training settings. Train Model picks the dataset; pick a set in the Parameters table to change it."
             }
+            PythonNotice { text: "You can save parameter sets now. Training them needs the training libraries (PyTorch, Ultralytics), which aren't installed yet." }
             if workspace.read().is_some() {
                 ParameterEditor {}
             } else if checked() {
@@ -207,7 +208,7 @@ fn ParameterEditor() -> Element {
             }
             if let (true, Some(name)) = (confirm_delete(), editing()) {
                 div { class: "notice notice-warning param-confirm", role: "alert",
-                    span { "Delete parameter set " strong { "{name}" } "? Its file in models/parameters is removed." }
+                    span { "Delete parameter set " strong { "{name}" } "? Its file in training/parameters is removed." }
                     button { class: "button button-danger button-sm", r#type: "button", onclick: delete, "Delete" }
                     button { class: "button button-secondary button-sm", r#type: "button", onclick: move |_| confirm_delete.set(false), "Cancel" }
                 }
@@ -256,7 +257,7 @@ fn ParameterEditor() -> Element {
                         oninput: move |e| form.write().name = e.value(),
                     }
                     p { id: "param-name-hint", class: "field-hint",
-                        if is_edit { "Changing the name renames the set's file." } else { "Saved as models/parameters/<name>.toml in the workspace." }
+                        if is_edit { "Changing the name renames the set's file." } else { "Saved as training/parameters/<name>.toml in the workspace." }
                     }
                 }
                 div { class: "field",
@@ -366,7 +367,7 @@ fn ModelSection(form: Signal<ParameterSet>, p: UltralyticsParams) -> Element {
                         id: "param-weights-file",
                         class: "input",
                         value: "{path}",
-                        placeholder: "e.g. models/runs/baseline/weights/best.pt",
+                        placeholder: "e.g. training/trains/baseline/weights/best.pt",
                         oninput: move |e| edit(form, |p| p.model.weights = Weights::File(e.value())),
                     }
                 }

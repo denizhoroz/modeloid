@@ -11,6 +11,7 @@ mod job_progress;
 mod layout;
 mod number_input;
 mod output_choice;
+mod python_setup;
 mod resize_handle;
 mod side_panel;
 mod sidebar;
@@ -34,6 +35,8 @@ pub use job_progress::{set_if_newer, use_job, JobProgress};
 pub use layout::AppLayout;
 pub use number_input::NumberInput;
 pub use output_choice::{OutputChoice, OutputSelect};
+#[allow(unused_imports)] // LibrariesMissing and open_python_settings: for Train Model
+pub use python_setup::{open_python_settings, LibrariesMissing, PythonAutoSetup, PythonNotice, PythonSetupCard};
 pub use resize_handle::ResizeHandle;
 pub use side_panel::{PanelSwitcher, PanelTable, SidePanel};
 pub use sidebar::Sidebar;

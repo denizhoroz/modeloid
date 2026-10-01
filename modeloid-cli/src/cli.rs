@@ -82,6 +82,41 @@ enum Commands {
         #[command(subcommand)]
         command: SettingsCommands,
     },
+
+    /// The Python environment training runs in (modeloid/.venv)
+    Python {
+        #[command(subcommand)]
+        command: PythonCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum PythonCommands {
+    /// Show whether it's set up, what's installed and the NVIDIA GPU
+    Status,
+    /// Create the environment with only Python (no training libraries; the app does this on launch)
+    Init,
+    /// Set it up (also repairs, updates or switches the PyTorch build).
+    /// Without --cuda/--cpu: CUDA when a capable NVIDIA GPU is found, else CPU
+    Setup {
+        /// PyTorch for NVIDIA GPUs (about 2.2 GB to download)
+        #[arg(long, conflicts_with = "cpu")]
+        cuda: bool,
+        /// PyTorch for the CPU only (about 0.3 GB)
+        #[arg(long)]
+        cpu: bool,
+    },
+    /// Choose what training runs on: gpu or cpu (no reinstall; the GPU needs the CUDA build)
+    Device {
+        #[arg(value_parser = ["gpu", "cpu"])]
+        device: String,
+    },
+    /// Uninstall the training libraries (PyTorch, torchvision, Ultralytics); Python stays
+    Remove {
+        /// Really remove (otherwise only shows what would be removed)
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -361,6 +396,7 @@ impl Cli {
             } => cmd_dataset_merge(&datasets, plan, write_plan, format, keep_splits, dry_run, output),
             Commands::ClassLists { command } => cmd_class_lists(command),
             Commands::Settings { command } => cmd_settings(command),
+            Commands::Python { command } => cmd_python(command).await,
         };
 
         if let Err(e) = result {
@@ -990,4 +1026,105 @@ fn _get_dir_name() -> Result<String, Error> {
 
 fn _get_workspace() -> Result<Workspace, Error> {
     Ok(Workspace::load_from_dir(&PathBuf::from("."))?)
+}
+
+async fn cmd_python(command: PythonCommands) -> Result<(), Error> {
+    use modeloid::core::pyenv::{detect_gpu, EnvStatus, PyEnv, TorchVariant, TrainDevice};
+
+    let env = PyEnv::locate()?;
+    match command {
+        PythonCommands::Status => {
+            let overview = env.overview(&Settings::load_default());
+            println!("Folder: {}", overview.root);
+            match &overview.status {
+                EnvStatus::Missing => println!("Status: not set up (run `modeloid python setup`)"),
+                EnvStatus::NoLibraries(python) => {
+                    println!("Status: Python {python} ready, training libraries not installed (run `modeloid python setup --cpu` or `--cuda`)")
+                }
+                EnvStatus::Ready(info) | EnvStatus::Outdated(info) => {
+                    let outdated = matches!(overview.status, EnvStatus::Outdated(_));
+                    println!("Status: {}", if outdated { "update available (run `modeloid python setup`)" } else { "ready" });
+                    println!("Python {} · torch {} · torchvision {} · ultralytics {}", info.python, info.torch, info.torchvision, info.ultralytics);
+                    let device = if info.cuda_available || info.mps_available { info.device_name.as_str() } else { "CPU" };
+                    println!("Build: {} · trains on {device}", info.variant.label());
+                }
+                EnvStatus::Broken(reason) => println!("Status: needs repair ({reason}); run `modeloid python setup`"),
+                EnvStatus::NotWritable(root) => println!("Status: can't write to {root}; move Modeloid to a folder you own"),
+            }
+            println!("Trains on: {}", overview.device().label());
+            match &overview.gpu {
+                Some(gpu) => {
+                    println!("NVIDIA GPU: {} ({} MB), driver {}", gpu.name, gpu.memory_mb, gpu.driver);
+                    if let Some(problem) = gpu.cuda_problem() {
+                        println!("  {problem}");
+                    }
+                }
+                None => println!("NVIDIA GPU: none found"),
+            }
+        }
+        PythonCommands::Setup { cuda, cpu } => {
+            let variant = if cuda {
+                TorchVariant::Cuda
+            } else if cpu {
+                TorchVariant::Cpu
+            } else {
+                match detect_gpu() {
+                    Some(gpu) if gpu.cuda_problem().is_none() => {
+                        println!("NVIDIA GPU found ({}): installing the CUDA build, about 2.2 GB. Use --cpu for the smaller CPU build.", gpu.name);
+                        TorchVariant::Cuda
+                    }
+                    Some(gpu) => {
+                        println!("{} Installing the CPU build.", gpu.cuda_problem().unwrap_or_default());
+                        TorchVariant::Cpu
+                    }
+                    None => TorchVariant::Cpu,
+                }
+            };
+            let reporter = TermReporter::new();
+            let uv = match env.find_uv() {
+                Some(uv) => uv,
+                None => env.fetch_uv(&reporter).await?,
+            };
+            let info = env.install(variant, &uv, &reporter)?;
+            let device = if info.cuda_available || info.mps_available { info.device_name.as_str() } else { "CPU" };
+            println!("Ready: Python {} · torch {} · ultralytics {} · trains on {device}", info.python, info.torch, info.ultralytics);
+        }
+        PythonCommands::Init => {
+            let reporter = TermReporter::new();
+            let uv = match env.find_uv() {
+                Some(uv) => uv,
+                None => env.fetch_uv(&reporter).await?,
+            };
+            let version = env.create(&uv, &reporter)?;
+            println!("Python {version} ready in {}. Install the training libraries with `modeloid python setup --cpu` or `--cuda`.", env.venv().display());
+        }
+        PythonCommands::Device { device } => {
+            let device = if device == "gpu" { TrainDevice::Gpu } else { TrainDevice::Cpu };
+            let mut settings = Settings::load_default();
+            settings.set_train_device(device);
+            let path = Settings::default_path().ok_or("no config folder on this computer")?;
+            settings.save(&path)?;
+            let overview = env.overview(&settings);
+            if !overview.installed(device) {
+                println!("Training runs on {} once it's installed: run `modeloid python setup --cuda`.", device.label());
+            } else {
+                println!("Training runs on {}.", device.label());
+            }
+        }
+        PythonCommands::Remove { yes } => {
+            if yes {
+                let reporter = TermReporter::new();
+                let uv = match env.find_uv() {
+                    Some(uv) => uv,
+                    None => env.fetch_uv(&reporter).await?,
+                };
+                env.remove_libraries(&uv, &reporter)?;
+                println!("Removed PyTorch, torchvision and Ultralytics. Python stays in {}.", env.venv().display());
+            } else {
+                println!("Would uninstall {} from {}.", modeloid::core::pyenv::LIBRARIES.join(", "), env.venv().display());
+                println!("Nothing was removed. Add --yes to remove them.");
+            }
+        }
+    }
+    Ok(())
 }

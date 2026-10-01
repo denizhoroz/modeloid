@@ -7,6 +7,7 @@ pub mod io;
 pub mod labels;
 pub mod limits;
 pub mod progress;
+pub mod pyenv;
 pub mod scan;
 pub mod stats;
 pub mod thumbs;

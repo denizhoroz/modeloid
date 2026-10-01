@@ -18,6 +18,29 @@ use crate::core::{
 use crate::models::dataset::{DATASET_FILE, Dataset, Lineage, ParentRef};
 use crate::models::parameters::ParameterSet;
 
+/// Workspace folder for training: `training/parameters`, `training/trains`.
+pub const TRAINING_DIR: &str = "training";
+pub const PARAMETERS_DIR: &str = "parameters";
+pub const TRAINS_DIR: &str = "trains";
+
+fn create_training_dirs(root: &Path) -> std::io::Result<()> {
+    fs::create_dir_all(root.join(TRAINING_DIR).join(PARAMETERS_DIR))?;
+    fs::create_dir_all(root.join(TRAINING_DIR).join(TRAINS_DIR))
+}
+
+/// Brings an older workspace to the current layout: `models/` (which only
+/// held `parameters/`) becomes `training/`, and the training folders exist.
+/// Best effort: a read-only workspace still loads.
+fn upgrade_layout(root: &Path) {
+    let (old, new) = (root.join("models"), root.join(TRAINING_DIR));
+    if old.is_dir() && !new.exists() {
+        let _ = crate::core::io::rename(&old, &new);
+    }
+    if !new.join(TRAINS_DIR).is_dir() || !new.join(PARAMETERS_DIR).is_dir() {
+        let _ = create_training_dirs(root);
+    }
+}
+
 /// How `Workspace::import_dir` brings a folder in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImportMode {
@@ -135,7 +158,7 @@ impl Workspace {
         fs::create_dir(&root_dir)?;
         fs::create_dir_all(root_dir.join(".cache").join("tmp"))?;
         fs::create_dir(root_dir.join("datasets"))?;
-        fs::create_dir_all(root_dir.join("models").join("parameters"))?;
+        create_training_dirs(root_dir)?;
         fs::create_dir(root_dir.join("evals"))?;
 
         // Create workspace.toml
@@ -148,7 +171,7 @@ impl Workspace {
         let root_dir = &self.path;
         fs::create_dir_all(root_dir.join(".cache").join("tmp"))?;
         fs::create_dir(root_dir.join("datasets"))?;
-        fs::create_dir_all(root_dir.join("models").join("parameters"))?;
+        create_training_dirs(root_dir)?;
         fs::create_dir(root_dir.join("evals"))?;
 
         // Create workspace.toml
@@ -164,6 +187,7 @@ impl Workspace {
         let mut file: WorkspaceFile<Workspace> = toml::from_str(&contents)?;
         // The stored path can be relative (the CLI writes "."), so trust where it was loaded from.
         file.workspace.path = dir.to_path_buf();
+        upgrade_layout(dir);
         Ok(file.workspace)
     }
 
@@ -241,7 +265,7 @@ impl Workspace {
         }
 
         // Saved parameter sets, so hand edits show in the table too.
-        let mut params: Vec<_> = fs::read_dir(dir.join("models").join("parameters"))
+        let mut params: Vec<_> = fs::read_dir(dir.join(TRAINING_DIR).join(PARAMETERS_DIR))
             .map(|rd| rd.filter_map(Result::ok).collect())
             .unwrap_or_default();
         params.sort_by_key(|e| e.file_name());
@@ -440,9 +464,19 @@ impl Workspace {
         Ok(())
     }
 
-    /// `models/parameters`: saved training parameter sets, one TOML file each.
+    /// `training/`: everything about training models.
+    pub fn training_dir(&self) -> PathBuf {
+        self.path.join(TRAINING_DIR)
+    }
+
+    /// `training/parameters`: saved training parameter sets, one TOML file each.
     pub fn parameters_dir(&self) -> PathBuf {
-        self.path.join("models").join("parameters")
+        self.training_dir().join(PARAMETERS_DIR)
+    }
+
+    /// `training/trains`: training runs.
+    pub fn trains_dir(&self) -> PathBuf {
+        self.training_dir().join(TRAINS_DIR)
     }
 
     fn parameter_file(&self, name: &str) -> PathBuf {
@@ -1457,10 +1491,24 @@ mod tests {
     }
 
     #[test]
+    fn upgrades_models_folder_to_training() {
+        let tmp = TempWorkspace::new("layout");
+        let ws = &tmp.0;
+        ws.save_parameter_set(&ParameterSet::new("kept"), None).unwrap();
+        // An older workspace: models/parameters, no training/
+        fs::rename(ws.training_dir(), ws.path().join("models")).unwrap();
+
+        let loaded = Workspace::load_from_dir(ws.path()).unwrap();
+        assert!(!loaded.path().join("models").exists());
+        assert!(loaded.trains_dir().is_dir());
+        assert_eq!(loaded.parameter_sets().unwrap().0[0].name, "kept");
+    }
+
+    #[test]
     fn saves_edits_renames_and_deletes_parameter_sets() {
         let tmp = TempWorkspace::new("parameters");
         let ws = &tmp.0;
-        assert!(ws.parameters_dir().is_dir(), "new workspaces get models/parameters");
+        assert!(ws.parameters_dir().is_dir() && ws.trains_dir().is_dir(), "new workspaces get training/parameters and training/trains");
         assert!(ws.parameter_sets().unwrap().0.is_empty());
 
         // Add

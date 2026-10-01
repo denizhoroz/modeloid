@@ -109,6 +109,9 @@ pub struct Settings {
     /// to its defaults for ones it doesn't know.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     appearance: Option<AppearancePrefs>,
+    /// What training runs on, chosen in Settings → Python environment.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    train_device: Option<modeloid_types::pyenv::TrainDevice>,
     /// How much of this computer Modeloid uses.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     system: Option<SystemPrefs>,
@@ -180,6 +183,14 @@ impl Settings {
 
     pub fn set_appearance(&mut self, prefs: AppearancePrefs) {
         self.appearance = Some(prefs);
+    }
+
+    pub fn train_device(&self) -> Option<modeloid_types::pyenv::TrainDevice> {
+        self.train_device
+    }
+
+    pub fn set_train_device(&mut self, device: modeloid_types::pyenv::TrainDevice) {
+        self.train_device = Some(device);
     }
 
     /// System settings: the saved ones, or the defaults.

@@ -1,6 +1,6 @@
 use dioxus::prelude::*;
 
-use crate::components::{provide_toasts, Icon, IconName, PanelTable, ResizeHandle, SidePanel, Sidebar, StatusBar, ToastHost};
+use crate::components::{provide_toasts, Icon, IconName, PanelTable, PythonAutoSetup, ResizeHandle, SidePanel, Sidebar, StatusBar, ToastHost};
 use crate::routes::Route;
 use crate::state::{provide_activity_state, provide_workspace_state};
 
@@ -86,6 +86,7 @@ pub fn AppLayout() -> Element {
 
             StatusBar {}
             ToastHost {}
+            PythonAutoSetup {}
         }
     }
 }

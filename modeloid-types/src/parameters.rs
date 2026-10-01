@@ -1,5 +1,5 @@
 //! Training parameters: a named, reusable recipe of model and training
-//! settings, saved in the workspace as `models/parameters/<name>.toml`. The
+//! settings, saved in the workspace as `training/parameters/<name>.toml`. The
 //! dataset isn't part of it; Train Model picks that.
 //!
 //! The settings belong to one training framework (`framework = "..."` in the
@@ -671,7 +671,7 @@ mod tests {
         set.created = "2026-10-01T10:00:00Z".into();
         let p = ultra(&mut set);
         p.model.task = Task::Segment;
-        p.model.weights = Weights::File("models/runs/best.pt".into());
+        p.model.weights = Weights::File("training/trains/run/best.pt".into());
         p.training.batch = Batch::Auto;
         p.training.freeze = Some(10);
         p.run.time = Some(1.5);
