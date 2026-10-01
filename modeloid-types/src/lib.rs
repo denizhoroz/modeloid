@@ -1,4 +1,4 @@
-//! Plain data types and rules shared by the Modeloid core, the CLI and the
+//! Plain data types and rules shared by the Modeloid core and the
 //! GUI, including the GUI's browser side (so: serde only, no I/O).
 
 pub mod balance;

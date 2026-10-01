@@ -1,6 +1,6 @@
 //! App settings, stored by the core (`modeloid::Settings`) on the server machine
 //! in the user's config folder (e.g. `%APPDATA%\modeloid\settings.toml`), shared
-//! with the CLI. Secrets never go back to the browser in full; the UI only gets a `KeyStatus`.
+//! by every workspace. Secrets never go back to the browser in full; the UI only gets a `KeyStatus`.
 
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};

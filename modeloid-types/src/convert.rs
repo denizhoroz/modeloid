@@ -18,7 +18,7 @@ pub enum TargetTask {
 }
 
 impl TargetTask {
-    /// Name for the lineage record and the CLI.
+    /// Name for the lineage record.
     pub fn name(self) -> &'static str {
         match self {
             TargetTask::Same => "same",

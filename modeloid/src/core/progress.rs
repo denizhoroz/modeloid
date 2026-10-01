@@ -19,7 +19,7 @@ pub trait Progress: Send + Sync {
 }
 
 /// Creates progress tasks and receives status messages. The library never draws to the
-/// terminal itself; frontends such as the CLI decide how progress is shown.
+/// terminal itself; the frontend (the GUI's job runner) decides how progress is shown.
 pub trait Reporter: Send + Sync {
     fn start(&self, label: &'static str, unit: Unit) -> Box<dyn Progress>;
     fn message(&self, msg: &str);

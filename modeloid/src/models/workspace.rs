@@ -185,7 +185,7 @@ impl Workspace {
             .map_err(|e| format!("cannot read workspace.toml in {}: {e}", dir.display()))?;
 
         let mut file: WorkspaceFile<Workspace> = toml::from_str(&contents)?;
-        // The stored path can be relative (the CLI writes "."), so trust where it was loaded from.
+        // The stored path can be relative ("."), so trust where it was loaded from.
         file.workspace.path = dir.to_path_buf();
         upgrade_layout(dir);
         Ok(file.workspace)

@@ -1,7 +1,6 @@
 [workspace]
 members = [
     "modeloid",
-    "modeloid-cli",
     "modeloid-gui",
     "modeloid-types",
 ]

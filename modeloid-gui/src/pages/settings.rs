@@ -40,7 +40,7 @@ pub fn Settings() -> Element {
             section { class: "settings-section", aria_labelledby: "settings-system",
                 h2 { id: "settings-system", class: "settings-section-title", "System" }
                 p { class: "settings-section-lead",
-                    "How much of this computer Modeloid uses. Stored on this computer, for every workspace; the command line tool follows the thread and connection settings."
+                    "How much of this computer Modeloid uses. Stored on this computer, for every workspace."
                 }
                 SystemSettings {}
             }
@@ -56,7 +56,7 @@ pub fn Settings() -> Element {
             section { class: "settings-section", aria_labelledby: "settings-api-keys",
                 h2 { id: "settings-api-keys", class: "settings-section-title", "API Keys" }
                 p { class: "settings-section-lead",
-                    "Keys for the services Modeloid downloads from. Stored on this computer in your user config folder, shared with the command line tool."
+                    "Keys for the services Modeloid downloads from. Stored on this computer in your user config folder."
                 }
                 div { class: "settings-card",
                     for service in ServiceId::ALL {
