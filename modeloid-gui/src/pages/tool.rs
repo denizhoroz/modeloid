@@ -8,6 +8,7 @@ use crate::pages::convert::Convert;
 use crate::pages::download::Download;
 use crate::pages::explore::Explore;
 use crate::pages::health::HealthCheck;
+use crate::pages::parameters::Parameters;
 
 /// Placeholder page for every sidebar tool until each one is implemented.
 #[component]
@@ -29,6 +30,7 @@ pub fn Tool(section: String, tool: String) -> Element {
         ("dataset", "classes-merge") => return rsx! { ClassesMerge {} },
         ("dataset", "split-balance") => return rsx! { SplitBalance {} },
         ("dataset", "convert") => return rsx! { Convert {} },
+        ("training", "parameters") => return rsx! { Parameters {} },
         _ => {}
     }
 

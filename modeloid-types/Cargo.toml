@@ -6,3 +6,6 @@ description = "Plain data types and rules shared by the Modeloid core and its fr
 
 [dependencies]
 serde = { version = "1.0.229", features = ["derive"] }
+
+[dev-dependencies]
+toml = "1.1.6"

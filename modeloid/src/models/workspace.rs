@@ -16,6 +16,7 @@ use crate::core::{
     stats::{self, ExploreStats, STATS_VERSION},
 };
 use crate::models::dataset::{DATASET_FILE, Dataset, Lineage, ParentRef};
+use crate::models::parameters::ParameterSet;
 
 /// How `Workspace::import_dir` brings a folder in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -134,7 +135,7 @@ impl Workspace {
         fs::create_dir(&root_dir)?;
         fs::create_dir_all(root_dir.join(".cache").join("tmp"))?;
         fs::create_dir(root_dir.join("datasets"))?;
-        fs::create_dir(root_dir.join("models"))?;
+        fs::create_dir_all(root_dir.join("models").join("parameters"))?;
         fs::create_dir(root_dir.join("evals"))?;
 
         // Create workspace.toml
@@ -147,7 +148,7 @@ impl Workspace {
         let root_dir = &self.path;
         fs::create_dir_all(root_dir.join(".cache").join("tmp"))?;
         fs::create_dir(root_dir.join("datasets"))?;
-        fs::create_dir(root_dir.join("models"))?;
+        fs::create_dir_all(root_dir.join("models").join("parameters"))?;
         fs::create_dir(root_dir.join("evals"))?;
 
         // Create workspace.toml
@@ -237,6 +238,16 @@ impl Workspace {
         for entry in entries {
             entry.file_name().hash(&mut hasher);
             stamp(&entry.path().join(DATASET_FILE)).hash(&mut hasher);
+        }
+
+        // Saved parameter sets, so hand edits show in the table too.
+        let mut params: Vec<_> = fs::read_dir(dir.join("models").join("parameters"))
+            .map(|rd| rd.filter_map(Result::ok).collect())
+            .unwrap_or_default();
+        params.sort_by_key(|e| e.file_name());
+        for entry in params {
+            entry.file_name().hash(&mut hasher);
+            stamp(&entry.path()).hash(&mut hasher);
         }
         hasher.finish()
     }
@@ -426,6 +437,79 @@ impl Workspace {
     pub fn delete_class_list(&self, name: &str) -> Result<(), crate::Error> {
         validate_dataset_name(name)?;
         fs::remove_file(self.class_lists_dir().join(format!("{name}.toml"))).map_err(|e| format!("cannot delete class list '{name}': {e}"))?;
+        Ok(())
+    }
+
+    /// `models/parameters`: saved training parameter sets, one TOML file each.
+    pub fn parameters_dir(&self) -> PathBuf {
+        self.path.join("models").join("parameters")
+    }
+
+    fn parameter_file(&self, name: &str) -> PathBuf {
+        self.parameters_dir().join(format!("{name}.toml"))
+    }
+
+    /// Saved parameter sets by name, and a warning for each file that
+    /// couldn't be read (those are left out).
+    pub fn parameter_sets(&self) -> Result<(Vec<ParameterSet>, Vec<String>), crate::Error> {
+        let Ok(entries) = fs::read_dir(self.parameters_dir()) else { return Ok((Vec::new(), Vec::new())) };
+        let (mut sets, mut warnings) = (Vec::new(), Vec::new());
+        for entry in entries {
+            let path = entry?.path();
+            if path.extension().is_none_or(|e| e != "toml") {
+                continue;
+            }
+            let read = fs::read_to_string(&path).map_err(|e| e.to_string()).and_then(|text| toml::from_str::<ParameterSet>(&text).map_err(|e| e.to_string()));
+            match read {
+                // The file name is the name; a hand-renamed file keeps working.
+                Ok(mut set) => {
+                    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                        set.name = stem.to_string();
+                    }
+                    sets.push(set);
+                }
+                Err(e) => warnings.push(format!("{} couldn't be read: {e}", path.display())),
+            }
+        }
+        sets.sort_by_key(|s| s.name.to_lowercase());
+        Ok((sets, warnings))
+    }
+
+    /// Saves `set` as `models/parameters/<name>.toml` and returns it as saved.
+    /// `replacing` is the name of the set being edited (`None` adds a new
+    /// one); a different name renames it. Never overwrites another set.
+    pub fn save_parameter_set(&self, set: &ParameterSet, replacing: Option<&str>) -> Result<ParameterSet, crate::Error> {
+        if let Some(problem) = set.problems().into_iter().next() {
+            return Err(problem.into());
+        }
+        let file = self.parameter_file(&set.name);
+        let renamed = replacing.is_some_and(|old| old != set.name);
+        if (replacing.is_none() || renamed) && file.exists() {
+            return Err(format!("a parameter set named '{}' already exists", set.name).into());
+        }
+
+        let now = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        let created = match replacing {
+            Some(old) => {
+                let path = self.parameter_file(old);
+                let text = fs::read_to_string(&path).map_err(|e| format!("cannot read parameter set '{old}': {e}"))?;
+                toml::from_str::<ParameterSet>(&text).map(|s| s.created).unwrap_or_default()
+            }
+            None => String::new(),
+        };
+        let saved = ParameterSet { created: if created.is_empty() { now.clone() } else { created }, updated: now, ..set.clone() };
+
+        fs::create_dir_all(self.parameters_dir())?;
+        fs::write(&file, toml::to_string(&saved)?)?;
+        if let Some(old) = replacing.filter(|_| renamed) {
+            fs::remove_file(self.parameter_file(old)).map_err(|e| format!("saved '{}' but couldn't remove '{old}': {e}", set.name))?;
+        }
+        Ok(saved)
+    }
+
+    pub fn delete_parameter_set(&self, name: &str) -> Result<(), crate::Error> {
+        validate_dataset_name(name)?;
+        fs::remove_file(self.parameter_file(name)).map_err(|e| format!("cannot delete parameter set '{name}': {e}"))?;
         Ok(())
     }
 
@@ -1370,6 +1454,46 @@ mod tests {
         // ...and replaced on refresh.
         assert_eq!(ws.explore_stats(1, true, &Silent).unwrap().image_count, 1);
         assert!(ws.explore_stats(7, false, &Silent).is_err(), "unknown id");
+    }
+
+    #[test]
+    fn saves_edits_renames_and_deletes_parameter_sets() {
+        let tmp = TempWorkspace::new("parameters");
+        let ws = &tmp.0;
+        assert!(ws.parameters_dir().is_dir(), "new workspaces get models/parameters");
+        assert!(ws.parameter_sets().unwrap().0.is_empty());
+
+        // Add
+        let saved = ws.save_parameter_set(&ParameterSet::new("baseline"), None).unwrap();
+        assert!(!saved.created.is_empty() && saved.created == saved.updated);
+        assert!(ws.parameters_dir().join("baseline.toml").is_file());
+        assert!(ws.save_parameter_set(&ParameterSet::new("baseline"), None).is_err(), "names are unique");
+        assert!(ws.save_parameter_set(&ParameterSet::new("bad/name"), None).is_err());
+
+        // Edit with rename keeps `created`, removes the old file
+        let mut edited = saved.clone();
+        edited.name = "longer".into();
+        edited.description = Some("more epochs".into());
+        let renamed = ws.save_parameter_set(&edited, Some("baseline")).unwrap();
+        assert_eq!(renamed.created, saved.created);
+        assert!(!ws.parameters_dir().join("baseline.toml").exists());
+
+        // Renaming onto another set is refused
+        ws.save_parameter_set(&ParameterSet::new("other"), None).unwrap();
+        let mut clash = renamed.clone();
+        clash.name = "other".into();
+        assert!(ws.save_parameter_set(&clash, Some("longer")).is_err());
+
+        // A broken file is reported, not fatal
+        fs::write(ws.parameters_dir().join("broken.toml"), "not = [toml").unwrap();
+        let (sets, warnings) = ws.parameter_sets().unwrap();
+        assert_eq!(sets.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), ["longer", "other"]);
+        assert_eq!(sets[0].description.as_deref(), Some("more epochs"));
+        assert_eq!(warnings.len(), 1);
+
+        ws.delete_parameter_set("other").unwrap();
+        assert!(ws.delete_parameter_set("other").is_err());
+        assert_eq!(ws.parameter_sets().unwrap().0.len(), 1);
     }
 
     #[test]

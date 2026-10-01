@@ -1,6 +1,6 @@
 //! Notices changes made to the open workspace outside Modeloid (a dataset
-//! folder deleted, renamed or copied in by hand, `dataset.toml` edited, the
-//! workspace itself moved). A server task checks `Workspace::fingerprint`
+//! folder deleted, renamed or copied in by hand, `dataset.toml` or a saved
+//! parameter set edited, the workspace itself moved). A server task checks `Workspace::fingerprint`
 //! every few seconds; pages long-poll `workspace_changes(since)`.
 
 use dioxus::prelude::*;

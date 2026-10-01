@@ -15,6 +15,7 @@ pub mod files;
 pub mod health;
 pub mod import;
 pub mod jobs;
+pub mod parameters;
 pub mod settings;
 pub mod system;
 pub mod watch;

@@ -3719,6 +3719,7 @@ name = "modeloid-types"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "toml 1.1.6+spec-1.1.0",
 ]
 
 [[package]]

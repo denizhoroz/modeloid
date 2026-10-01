@@ -7,6 +7,7 @@ mod explore;
 mod health;
 mod home;
 mod not_found;
+mod parameters;
 mod settings;
 mod tool;
 

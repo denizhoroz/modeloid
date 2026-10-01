@@ -4,7 +4,11 @@
 
 use dioxus::prelude::*;
 
+use crate::api::error_message;
+use crate::api::parameters::{list_parameters, FrameworkParams};
 use crate::components::{DatasetsPanel, Icon, IconName};
+use crate::state::{use_parameters_version, use_selected_parameters, use_workspace};
+use crate::util::plural;
 
 /// A table the side panel can show.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -95,16 +99,96 @@ pub fn PanelSwitcher(table: Signal<PanelTable>) -> Element {
     }
 }
 
-/// Placeholder until training parameters exist.
+/// Saved parameter sets. Clicking a row (or its name button) opens it in
+/// the Parameters form; clicking the open one again starts a new set.
 #[component]
 fn ParametersPanel(table: Signal<PanelTable>) -> Element {
+    let workspace = use_workspace();
+    let version = use_parameters_version();
+    let mut selected = use_selected_parameters();
+    let list = use_resource(move || async move {
+        let _ = (workspace.read().as_ref().map(|w| w.path.clone()), version());
+        list_parameters().await
+    });
+    let count = match &*list.read() {
+        Some(Ok(list)) => Some(list.sets.len()),
+        _ => None,
+    };
+    let mut toggle = move |name: String| {
+        let again = selected.peek().as_deref() == Some(name.as_str());
+        selected.set(if again { None } else { Some(name) });
+    };
+
     rsx! {
         div { class: "panel-view", hidden: table() != PanelTable::Parameters,
             div { class: "datasets-panel-header",
                 PanelSwitcher { table }
+                if let Some(n) = count {
+                    span { class: "section-card-meta", "{plural(n, \"set\")}" }
+                }
             }
             div { class: "datasets-panel-body",
-                p { class: "panel-empty", "Training parameters will show here." }
+                match &*list.read() {
+                    _ if workspace.read().is_none() => rsx! {
+                        p { class: "panel-empty", "No workspace loaded." }
+                    },
+                    None => rsx! { p { class: "panel-empty", "Loading…" } },
+                    Some(Err(e)) => rsx! {
+                        p { class: "field-error panel-empty", role: "alert", "{error_message(e)}" }
+                    },
+                    Some(Ok(list)) => rsx! {
+                        for warning in list.warnings.iter() {
+                            p { key: "{warning}", class: "field-error panel-status", "{warning}" }
+                        }
+                        if list.sets.is_empty() {
+                            p { class: "panel-empty", "No parameter sets yet. Fill in the form and choose Add Parameter." }
+                        } else {
+                            table { class: "data-table",
+                                thead {
+                                    tr {
+                                        th { scope: "col", "Name" }
+                                        th { scope: "col", "Model" }
+                                        th { scope: "col", class: "num", "Epochs" }
+                                        th { scope: "col", class: "num", "Img" }
+                                        th { scope: "col", "Updated" }
+                                    }
+                                }
+                                tbody {
+                                    for set in list.sets.iter().cloned() {
+                                        {
+                                            let is_selected = selected.read().as_deref() == Some(set.name.as_str());
+                                            let FrameworkParams::Ultralytics(p) = &set.params;
+                                            let (epochs, imgsz) = (p.training.epochs, p.training.imgsz);
+                                            let updated = set.updated.get(..10).unwrap_or(&set.updated).to_string();
+                                            let name = set.name.clone();
+                                            rsx! {
+                                                tr {
+                                                    key: "{set.name}",
+                                                    class: if is_selected { "is-selected" },
+                                                    onclick: move |_| toggle(name.clone()),
+                                                    th { class: "name", scope: "row",
+                                                        // Keyboard access; the click bubbles to the row.
+                                                        button {
+                                                            class: "row-pick",
+                                                            r#type: "button",
+                                                            title: set.description.clone().unwrap_or_else(|| format!("Open {}", set.name)),
+                                                            aria_pressed: if is_selected { "true" } else { "false" },
+                                                            "{set.name}"
+                                                        }
+                                                    }
+                                                    td { "{set.summary()}" }
+                                                    td { class: "num", "{epochs}" }
+                                                    td { class: "num", "{imgsz}" }
+                                                    td { "{updated}" }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                }
             }
         }
     }

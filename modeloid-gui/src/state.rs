@@ -27,6 +27,11 @@ pub struct WorkspaceState {
     /// Whether the selection was last changed with the checkboxes (or Select
     /// all), adding to it, rather than replaced by a click on a row.
     pub batch_selected: Signal<bool>,
+    /// Name of the parameter set selected in the Parameters table; `None`
+    /// means a new one. Cleared when the workspace changes.
+    pub selected_parameters: Signal<Option<String>>,
+    /// Bumped when parameter sets change (saved, deleted, edited on disk).
+    pub parameters_version: Signal<u64>,
 }
 
 /// Call once near the root. Asks the server which workspace is open, so the
@@ -38,9 +43,12 @@ pub fn provide_workspace_state() {
         datasets_version: Signal::new(0),
         selected_datasets: Signal::new(Vec::new()),
         batch_selected: Signal::new(false),
+        selected_parameters: Signal::new(None),
+        parameters_version: Signal::new(0),
     });
     let (mut workspace, mut checked) = (state.workspace, state.checked);
     let (mut datasets_version, mut selected) = (state.datasets_version, state.selected_datasets);
+    let (mut parameters_version, mut selected_parameters) = (state.parameters_version, state.selected_parameters);
 
     use_future(move || async move {
         if let Ok(current) = current_workspace().await {
@@ -61,6 +69,7 @@ pub fn provide_workspace_state() {
                     }
                 }
                 *datasets_version.write() += 1;
+                *parameters_version.write() += 1;
             }
             since = version;
         }
@@ -73,6 +82,7 @@ pub fn provide_workspace_state() {
         if *selected_in.peek() != path {
             selected_in.set(path);
             selected.set(Vec::new());
+            selected_parameters.set(None);
         }
     });
 }
@@ -165,4 +175,14 @@ pub fn provide_activity_state() {
 
 pub fn use_activity() -> ActivityState {
     use_context::<ActivityState>()
+}
+
+/// The parameter set selected in the Parameters table (`None` = a new one).
+pub fn use_selected_parameters() -> Signal<Option<String>> {
+    use_context::<WorkspaceState>().selected_parameters
+}
+
+/// Read to re-run when parameter sets change; bump with `*signal.write() += 1`.
+pub fn use_parameters_version() -> Signal<u64> {
+    use_context::<WorkspaceState>().parameters_version
 }
