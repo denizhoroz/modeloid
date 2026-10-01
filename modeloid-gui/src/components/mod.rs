@@ -15,6 +15,7 @@ mod sidebar;
 mod status_bar;
 mod system_settings;
 mod toast;
+mod warning_tip;
 mod workspace_card;
 mod workspace_options;
 
@@ -35,5 +36,6 @@ pub use sidebar::Sidebar;
 pub use status_bar::StatusBar;
 pub use system_settings::SystemSettings;
 pub use toast::{provide_toasts, use_toasts, ToastHost, ToastKind};
+pub use warning_tip::WarningTip;
 pub use workspace_card::{NoWorkspace, WorkspaceCard};
 pub use workspace_options::{WorkspaceOptions, WorkspaceSettings};

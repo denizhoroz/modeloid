@@ -9,7 +9,7 @@ use crate::api::datasets::list_datasets;
 use crate::api::error_message;
 use crate::api::jobs::JobKind;
 use crate::components::{NoWorkspace, 
-    set_if_newer, use_job, Bar, BarList, JobProgress, NumberInput, OutputChoice, OutputSelect, PrimaryNote, SelectDatasetHint, StatTile,
+    set_if_newer, use_job, Bar, BarList, JobProgress, NumberInput, OutputChoice, OutputSelect, PrimaryNote, SelectDatasetHint, StatTile, WarningTip,
 };
 use crate::state::{use_datasets_version, use_primary_dataset, use_selected_datasets, use_workspace, use_workspace_checked};
 use crate::util::format_count;
@@ -205,7 +205,10 @@ fn ResultCard(plan: ConvertPlan, preview: ConvertPreview) -> Element {
 
     rsx! {
         section { class: "section-card", aria_labelledby: "convert-result-title",
-            h2 { id: "convert-result-title", class: "section-card-title", "Result" }
+            div { class: "section-card-header",
+                h2 { id: "convert-result-title", class: "section-card-title", "Result" }
+                WarningTip { errors: preview.problems.clone(), warnings: preview.notes.clone() }
+            }
             div { class: "stat-tiles",
                 if crops {
                     StatTile { label: "Images", value: format_count(preview.labels), detail: "one per object".to_string() }
@@ -221,16 +224,6 @@ fn ResultCard(plan: ConvertPlan, preview: ConvertPreview) -> Element {
                 p { class: "field-hint", "Counts are before the size limit; the run reports how many were too small." }
             }
             p { class: "field-hint", "{layout}" }
-            if !preview.problems.is_empty() || !preview.notes.is_empty() {
-                ul { class: "warning-list",
-                    for problem in preview.problems.iter() {
-                        li { key: "{problem}", class: "is-error", "{problem}" }
-                    }
-                    for note in preview.notes.iter() {
-                        li { key: "{note}", "{note}" }
-                    }
-                }
-            }
         }
     }
 }

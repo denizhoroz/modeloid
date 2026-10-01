@@ -13,7 +13,7 @@ use crate::api::classes::{
 use crate::api::datasets::{list_datasets, DatasetRow};
 use crate::api::error_message;
 use crate::api::jobs::JobKind;
-use crate::components::{NoWorkspace, set_if_newer, use_job, Bar, BarList, JobProgress, OutputChoice, OutputSelect, SelectDatasetHint};
+use crate::components::{NoWorkspace, set_if_newer, use_job, Bar, BarList, JobProgress, OutputChoice, OutputSelect, SelectDatasetHint, WarningTip};
 use crate::state::{use_batch_selected, use_datasets_version, use_selected_datasets, use_workspace, use_workspace_checked};
 use crate::util::{format_count, plural};
 
@@ -608,33 +608,26 @@ fn PreviewCard(plan: MergePlan, preview: MergePreview) -> Element {
         })
         .collect();
     let unmapped: Vec<String> = preview.unmapped.iter().map(|(id, class)| format!("\"{class}\" in {}", name_of(*id))).collect();
-    let unmapped_text = format!("Choose what happens to: {}", unmapped.join(", "));
+    let mut errors = preview.problems.clone();
+    if !unmapped.is_empty() {
+        errors.push(format!("Choose what happens to: {}", unmapped.join(", ")));
+    }
+    let warnings: Vec<String> = preview.empty_targets.iter().map(|t| format!("\"{t}\" gets no labels.")).chain(missing).collect();
 
     rsx! {
         section { class: "section-card", aria_labelledby: "preview-title",
             div { class: "section-card-header",
                 h2 { id: "preview-title", class: "section-card-title", "Result" }
-                span { class: "section-card-meta", "labels per target class" }
+                span { class: "section-card-aside",
+                    span { class: "section-card-meta", "labels per target class" }
+                    WarningTip { errors, warnings }
+                }
             }
             BarList { bars, label: "Labels per target class" }
             if preview.dropped_labels > 0 || preview.dropped_images > 0 {
                 p { class: "field-hint",
                     if preview.dropped_labels > 0 { "{format_count(preview.dropped_labels)} labels dropped. " }
                     if preview.dropped_images > 0 { "Up to {format_count(preview.dropped_images)} images dropped." }
-                }
-            }
-            ul { class: "warning-list",
-                for problem in preview.problems.iter() {
-                    li { key: "{problem}", class: "is-error", "{problem}" }
-                }
-                if !unmapped.is_empty() {
-                    li { class: "is-error", "{unmapped_text}" }
-                }
-                for target in preview.empty_targets.iter() {
-                    li { key: "empty-{target}", "\"{target}\" gets no labels." }
-                }
-                for line in missing.iter() {
-                    li { key: "{line}", "{line}" }
                 }
             }
         }

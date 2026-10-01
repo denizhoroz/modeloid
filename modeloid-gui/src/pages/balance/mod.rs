@@ -12,7 +12,7 @@ use crate::api::balance::{balance_preview, start_balance, BalancePlan, BalancePr
 use crate::api::datasets::list_datasets;
 use crate::api::error_message;
 use crate::api::jobs::JobKind;
-use crate::components::{NoWorkspace, set_if_newer, use_job, JobProgress, OutputChoice, OutputSelect, PrimaryNote, SelectDatasetHint};
+use crate::components::{NoWorkspace, set_if_newer, use_job, JobProgress, OutputChoice, OutputSelect, PrimaryNote, SelectDatasetHint, WarningTip};
 use crate::state::{use_datasets_version, use_primary_dataset, use_selected_datasets, use_workspace, use_workspace_checked};
 use crate::util::format_count;
 
@@ -178,8 +178,11 @@ fn ResultCard(preview: BalancePreview, #[props(into)] id: String) -> Element {
         section { class: "section-card", aria_labelledby: "{id}",
             div { class: "section-card-header",
                 h2 { id: "{id}", class: "section-card-title", "Result" }
-                span { class: "section-card-meta",
-                    "{format_count(preview.total_before())} → {format_count(preview.total_after())} images"
+                span { class: "section-card-aside",
+                    span { class: "section-card-meta",
+                        "{format_count(preview.total_before())} → {format_count(preview.total_after())} images"
+                    }
+                    WarningTip { errors: preview.problems.clone(), warnings: missing }
                 }
             }
             div { class: "table-scroll",
@@ -218,14 +221,6 @@ fn ResultCard(preview: BalancePreview, #[props(into)] id: String) -> Element {
             }
             if !removed.is_empty() {
                 p { class: "field-hint", "{removed_text}" }
-            }
-            ul { class: "warning-list",
-                for problem in preview.problems.iter() {
-                    li { key: "{problem}", class: "is-error", "{problem}" }
-                }
-                for line in missing.iter() {
-                    li { key: "{line}", "{line}" }
-                }
             }
         }
     }
