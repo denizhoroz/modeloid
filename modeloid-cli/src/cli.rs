@@ -637,6 +637,8 @@ fn cmd_dataset_delete(datasets: &[String], yes: bool) -> Result<(), Error> {
     }
     if !yes {
         println!("Nothing was deleted. Add --yes to delete for good.");
+    } else if !ws.renumber_datasets()?.is_empty() {
+        println!("Datasets renumbered from 1, in their order.");
     }
     Ok(())
 }
@@ -689,6 +691,9 @@ fn cmd_dataset_convert(
     }
     for problem in &preview.problems {
         println!("Problem: {problem}");
+    }
+    if let Some(reason) = &preview.unchanged {
+        println!("{reason}");
     }
     if dry_run || !preview.can_run() {
         return Ok(());

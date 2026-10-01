@@ -73,10 +73,15 @@ pub struct ConvertPreview {
     pub notes: Vec<String>,
     /// Problems that stop the run.
     pub problems: Vec<String>,
+    /// Why nothing would change (e.g. already in that format, with boxes
+    /// only). Not a problem: a run skips the dataset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unchanged: Option<String>,
 }
 
 impl ConvertPreview {
+    /// Whether a run would write anything: no problem, and something changes.
     pub fn can_run(&self) -> bool {
-        self.problems.is_empty()
+        self.problems.is_empty() && self.unchanged.is_none()
     }
 }

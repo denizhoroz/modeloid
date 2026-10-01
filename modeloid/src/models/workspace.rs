@@ -15,7 +15,7 @@ use crate::core::{
     scan::{DatasetStats, scan_dataset},
     stats::{self, ExploreStats, STATS_VERSION},
 };
-use crate::models::dataset::{DATASET_FILE, Dataset, Lineage};
+use crate::models::dataset::{DATASET_FILE, Dataset, Lineage, ParentRef};
 
 /// How `Workspace::import_dir` brings a folder in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -620,7 +620,7 @@ impl Workspace {
         let (_, dataset, mut set) = read?;
         let source = LabelFormat::parse(dataset.annotation_format()).ok_or("unsupported label format")?;
         let preview = convert::preview(plan, source, &stats::analyze(&set));
-        if let Some(problem) = preview.problems.first() {
+        if let Some(problem) = preview.problems.first().or(preview.unchanged.as_ref()) {
             return Err(problem.clone().into());
         }
 
@@ -690,6 +690,71 @@ impl Workspace {
         let _ = fs::remove_file(self.health_cache(id));
         let _ = fs::remove_dir_all(self.thumbs_dir(id));
         Ok(dataset.name().to_string())
+    }
+
+    /// Gives the datasets the ids 1, 2, 3… in their current order, so a
+    /// deleted one leaves no gap. Cached statistics, Health Check reports and
+    /// previews move with their dataset and stay current, and lineage records
+    /// follow renumbered parents. Returns the `(old, new)` ids that changed.
+    /// Call only while no tool works on the datasets.
+    pub fn renumber_datasets(&self) -> Result<Vec<(u32, u32)>, crate::Error> {
+        let datasets = self.list_datasets()?;
+        let changes: Vec<(u32, u32, String)> = datasets
+            .iter()
+            .zip(1..)
+            .filter(|((_, d), new)| d.id() != *new)
+            .map(|((_, d), new)| (d.id(), new, d.name().to_string()))
+            .collect();
+        if changes.is_empty() {
+            return Ok(Vec::new());
+        }
+        let renumbered = |parent: &ParentRef| changes.iter().find(|(old, _, name)| *old == parent.id && *name == parent.name).map(|c| c.1);
+
+        let cache = self.path.join(".cache");
+        // In id order a dataset only moves to an id at or below its own, which
+        // the dataset that had it has already left.
+        for ((dir, mut dataset), new) in datasets.into_iter().zip(1..) {
+            let old = dataset.id();
+            let mut lineage = dataset.lineage().cloned();
+            let mut parents_changed = false;
+            for parent in lineage.iter_mut().flat_map(|l| l.parents.iter_mut()) {
+                if let Some(id) = renumbered(parent) {
+                    parent.id = id;
+                    parents_changed = true;
+                }
+            }
+            if old == new && !parents_changed {
+                continue;
+            }
+
+            let old_stamp = dataset_stamp(&dir)?;
+            dataset.set_id(new);
+            dataset.set_lineage(lineage);
+            dataset.save_to_dir(&dir)?;
+            let new_stamp = dataset_stamp(&dir)?;
+
+            for kind in ["stats", "health"] {
+                let from = cache.join(kind).join(format!("{old}.json"));
+                let to = cache.join(kind).join(format!("{new}.json"));
+                if old != new {
+                    let _ = fs::remove_file(&to);
+                    if io::rename(&from, &to).is_err() {
+                        continue;
+                    }
+                }
+                restamp(&to, &old_stamp, &new_stamp);
+            }
+            if old != new {
+                let (from, to) = (self.thumbs_dir(old), self.thumbs_dir(new));
+                if to.exists() {
+                    let _ = fs::remove_dir_all(&to);
+                }
+                if from.exists() {
+                    let _ = io::rename(&from, &to);
+                }
+            }
+        }
+        Ok(changes.into_iter().map(|(old, new, _)| (old, new)).collect())
     }
 
     /// The folders of derived data that can be rebuilt at any time: image
@@ -1045,6 +1110,20 @@ impl Workspace {
 fn dataset_stamp(dir: &Path) -> Result<String, crate::Error> {
     let meta = fs::metadata(dir.join(DATASET_FILE))?;
     Ok(format!("{}-{:?}", meta.len(), meta.modified().ok()))
+}
+
+/// A cache file at `path` made for the `dataset.toml` stamped `old` belongs to
+/// it again after `dataset.toml` was rewritten without real changes (stamp `new`).
+fn restamp(path: &Path, old: &str, new: &str) {
+    let Ok(bytes) = fs::read(path) else { return };
+    let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(&bytes) else { return };
+    if value.get("stamp").and_then(|s| s.as_str()) != Some(old) {
+        return;
+    }
+    value["stamp"] = new.into();
+    if let Ok(bytes) = serde_json::to_vec(&value) {
+        let _ = fs::write(path, bytes);
+    }
 }
 
 /// Names of the chosen fixes, for the lineage record.
@@ -1492,6 +1571,42 @@ mod tests {
         assert!(ws.datasets_dir().join("dogs").is_dir() && cache.join("stats/2.json").is_file(), "others stay");
         assert_eq!(ws.list_datasets().unwrap().len(), 1);
         assert!(ws.delete_dataset(1).is_err(), "already gone");
+    }
+
+    #[test]
+    fn renumbers_datasets_without_gaps() {
+        let tmp = TempWorkspace::new("renumber");
+        let ws = &tmp.0;
+        for name in ["a", "b", "c"] {
+            let staging = tmp.staging_with(YOLO);
+            ws.save_output(&staging, &new_output(name), Lineage::new("import", &[]), &Silent).unwrap();
+        }
+        let (_, b) = ws.find_dataset(2).unwrap();
+        let staging = tmp.staging_with(YOLO);
+        ws.save_output(&staging, &new_output("d"), Lineage::new("split", &[&b]), &Silent).unwrap();
+
+        // Caches of "c" (id 3), one of them current.
+        let (c_dir, _) = ws.find_dataset(3).unwrap();
+        let stamp = dataset_stamp(&c_dir).unwrap();
+        let cache = ws.path().join(".cache");
+        fs::create_dir_all(cache.join("health")).unwrap();
+        fs::write(cache.join("health/3.json"), serde_json::json!({ "stamp": stamp, "x": 1 }).to_string()).unwrap();
+        fs::create_dir_all(cache.join("thumbs/3")).unwrap();
+        fs::write(cache.join("thumbs/3/a.jpg"), "x").unwrap();
+
+        ws.delete_dataset(1).unwrap();
+        assert_eq!(ws.renumber_datasets().unwrap(), [(2, 1), (3, 2), (4, 3)]);
+        let names: Vec<(u32, String)> = ws.list_datasets().unwrap().iter().map(|(_, d)| (d.id(), d.name().to_string())).collect();
+        assert_eq!(names, [(1, "b".into()), (2, "c".into()), (3, "d".into())]);
+
+        let (c_dir, _) = ws.find_dataset(2).unwrap();
+        let health: serde_json::Value = serde_json::from_slice(&fs::read(cache.join("health/2.json")).unwrap()).unwrap();
+        assert_eq!(health["stamp"], dataset_stamp(&c_dir).unwrap(), "report stays current");
+        assert!(!cache.join("health/3.json").exists() && cache.join("thumbs/2/a.jpg").is_file());
+
+        let (_, d) = ws.find_dataset(3).unwrap();
+        assert_eq!(d.lineage().unwrap().parents, [ParentRef { id: 1, name: "b".into() }], "parent follows");
+        assert!(ws.renumber_datasets().unwrap().is_empty(), "nothing left to do");
     }
 
     #[test]

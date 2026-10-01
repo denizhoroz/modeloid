@@ -154,6 +154,11 @@ impl Dataset {
         Ok(())
     }
 
+    /// Gives the dataset another id (`Workspace::renumber_datasets`).
+    pub(crate) fn set_id(&mut self, id: u32) {
+        self.id = id;
+    }
+
     /// Marks the dataset as modified; call before saving after a merge or edit.
     pub fn touch(&mut self) {
         self.last_updated = Utc::now();

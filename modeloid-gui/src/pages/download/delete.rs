@@ -44,9 +44,14 @@ pub fn DeleteForm() -> Element {
         if ids.is_empty() || !confirmed() || starting() {
             return;
         }
+        // The names shown, so the server can tell when ids moved meanwhile.
+        let names: Vec<String> = match &*datasets.peek() {
+            Some(Ok(all)) => ids.iter().filter_map(|id| all.iter().find(|r| r.id == *id).map(|r| r.name.clone())).collect(),
+            _ => return,
+        };
         form_error.set(None);
         starting.set(true);
-        match start_delete(ids).await {
+        match start_delete(ids, names).await {
             Ok(started) => {
                 set_if_newer(job, started);
                 confirmed.set(false);

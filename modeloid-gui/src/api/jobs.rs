@@ -118,7 +118,7 @@ pub async fn cancel_job(kind: JobKind) -> Result<(), ServerFnError> {
 }
 
 #[cfg(feature = "server")]
-pub use backend::{latest_all, rerun_item, running, start, ItemCtx, Touches};
+pub use backend::{latest_all, renumber_when_idle, rerun_item, running, start, ItemCtx, Touches};
 
 #[cfg(feature = "server")]
 mod backend {
@@ -352,7 +352,7 @@ mod backend {
         runtime.clone().spawn_blocking(move || {
             let mut work = Some(work);
             run_item(&job, &runtime, index, &mut |ctx| work.take().map_or(Err("already ran".into()), |work| work(ctx)));
-            job.update(|j| j.finished = true);
+            finish(&job);
         });
         Ok(shared.snapshot())
     }
@@ -362,7 +362,27 @@ mod backend {
         for index in 0..count {
             run_item(job, runtime, index, work);
         }
+        finish(job);
+    }
+
+    /// Marks `job` finished. When it was the last one running, the datasets
+    /// are renumbered first (a delete or a merge may have left a gap), while
+    /// the job list is held so nothing starts on the old ids meanwhile.
+    fn finish(job: &Arc<Shared>) {
+        let jobs = JOBS.lock().unwrap();
+        if jobs.values().all(|s| Arc::ptr_eq(s, job) || s.finished()) {
+            crate::api::datasets::renumber();
+        }
         job.update(|j| j.finished = true);
+    }
+
+    /// Renumbers the datasets (`Workspace::renumber_datasets`) unless a job is
+    /// running; the next job to finish does it then.
+    pub fn renumber_when_idle() {
+        let jobs = JOBS.lock().unwrap();
+        if jobs.values().all(|s| s.finished()) {
+            crate::api::datasets::renumber();
+        }
     }
 
     fn run_item(job: &Arc<Shared>, runtime: &Handle, index: usize, work: &mut dyn FnMut(&ItemCtx) -> Result<Option<String>, String>) {

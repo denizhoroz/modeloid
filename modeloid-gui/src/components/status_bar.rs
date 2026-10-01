@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use dioxus::prelude::*;
 
 use crate::api::activity::{cancel_task, ActivitySnapshot, JobSummary, TaskInfo};
@@ -97,6 +99,20 @@ pub fn StatusBar() -> Element {
         }
     };
 
+    // A small "!" pops up over the spinner when a job starts, from any page,
+    // and sinks into it. Jobs running when the app opens don't count.
+    let mut running_before = use_signal(|| None::<HashSet<JobKind>>);
+    let mut started = use_signal(|| 0u64);
+    use_effect(move || {
+        let snapshot = activity.snapshot.read();
+        let Some(snapshot) = snapshot.as_ref() else { return };
+        let running: HashSet<JobKind> = snapshot.jobs.iter().filter(|j| !j.finished).map(|j| j.kind).collect();
+        if running_before.peek().as_ref().is_some_and(|before| running.iter().any(|kind| !before.contains(kind))) {
+            *started.write() += 1;
+        }
+        running_before.set(Some(running));
+    });
+
     let rows = activity.snapshot.read().as_ref().map(rows).unwrap_or_default();
     let busy = !rows.is_empty();
     let show_list = list_open() && rows.len() > 1;
@@ -119,10 +135,16 @@ pub fn StatusBar() -> Element {
             // Announces what starts and stops, not every percent.
             p { class: "visually-hidden", role: "status", "{announce}" }
 
-            if busy {
-                span { class: "status-spinner", aria_hidden: "true" }
-            } else {
-                span { class: if lost() { "status-dot is-lost" } else { "status-dot" }, aria_hidden: "true" }
+            span { class: "status-indicator", aria_hidden: "true",
+                if busy {
+                    span { class: "status-spinner" }
+                } else {
+                    span { class: if lost() { "status-dot is-lost" } else { "status-dot" } }
+                }
+                if started() > 0 {
+                    // Keyed by the count, so each new job plays the animation again.
+                    span { key: "{started}", class: "status-alert", "!" }
+                }
             }
 
             match rows.first() {

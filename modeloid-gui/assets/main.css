@@ -298,6 +298,39 @@ button {
     box-shadow: inset 0 -1px 0 var(--color-border-strong);
 }
 
+/* Sortable column headers (datasets panel) */
+.sort-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    height: 100%;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    letter-spacing: inherit;
+    text-transform: inherit;
+    cursor: pointer;
+}
+
+.sort-button abbr {
+    text-decoration: none;
+}
+
+.sort-button:hover,
+.sort-button.is-active {
+    color: var(--color-fg);
+}
+
+/* Room for the arrow on every header, so sorting doesn't shift the columns */
+.sort-arrow {
+    display: inline-block;
+    width: 0.9em;
+    font-size: 0.75em;
+    text-align: center;
+}
+
 .data-table tbody tr:hover {
     background: var(--color-surface-hover);
 }
@@ -901,6 +934,13 @@ a.workspace-button {
 .page > .section-stack,
 .section-stack + .form-error {
     margin-block: var(--space-3);
+}
+
+/* Wherever else a panel follows something (e.g. a job's progress after a
+   form's buttons, inside a tab), it keeps the same gap above it. Stacks and
+   cards space their children with a flex gap already. */
+:not(.section-stack, .section-card) > * + :is(.section-card, .section-stack) {
+    margin-top: var(--space-3);
 }
 
 /* A fieldset draws its legend on the border; floated, the legend is an
@@ -2433,6 +2473,91 @@ button.bar-row:hover,
     background: var(--color-danger-fg);
 }
 
+/* Holds the spinner / dot and the "job started" mark above it */
+.status-indicator {
+    position: relative;
+    display: inline-flex;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+}
+
+/* "!" that pops up over the spinner when a job starts, then sinks into it */
+.status-alert {
+    position: absolute;
+    /* Half the indicator and half the bar: the bar's top edge, plus a gap */
+    bottom: calc(50% + var(--statusbar-height) / 2 + 10px);
+    left: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    margin-left: -7px;
+    border-radius: 50%;
+    background: var(--color-accent);
+    color: var(--color-bg);
+    font-size: 10px;
+    font-weight: 800;
+    line-height: 1;
+    pointer-events: none;
+    opacity: 0;
+    animation: status-alert 1.8s var(--ease-out) forwards;
+}
+
+@keyframes status-alert {
+    0% {
+        opacity: 0;
+        transform: translateY(6px) scale(0.4);
+    }
+
+    15% {
+        opacity: 1;
+        transform: translateY(-4px) scale(1.15);
+    }
+
+    25% {
+        transform: translateY(0) scale(1);
+    }
+
+    30%,
+    45% {
+        transform: translateY(0) rotate(-12deg);
+    }
+
+    37% {
+        transform: translateY(0) rotate(12deg);
+    }
+
+    65% {
+        opacity: 1;
+        transform: translateY(0) rotate(0);
+    }
+
+    /* Sinks through the bar */
+    100% {
+        opacity: 0;
+        transform: translateY(calc(var(--statusbar-height) + 20px)) scale(0.5);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .status-alert {
+        animation: status-alert-fade 1.8s linear forwards;
+    }
+
+    @keyframes status-alert-fade {
+        0%,
+        70% {
+            opacity: 1;
+        }
+
+        100% {
+            opacity: 0;
+        }
+    }
+}
+
 .status-text {
     display: flex;
     gap: var(--space-2);
@@ -2703,6 +2828,11 @@ button.bar-row:hover,
 
 .input-narrow {
     width: 88px;
+}
+
+/* Convert: name suffix for a batch's new datasets */
+.input-suffix {
+    max-width: 200px;
 }
 
 /* Split bar: train | val | test, with a draggable handle on each boundary */

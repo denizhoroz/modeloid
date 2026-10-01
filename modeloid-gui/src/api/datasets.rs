@@ -36,10 +36,13 @@ pub async fn list_datasets() -> Result<Vec<DatasetRow>, ServerFnError> {
 }
 
 /// Starts deleting the datasets `ids` from the workspace, with all their
-/// images and labels (`JobKind::Delete`). Refused while a job works on one of them.
+/// images and labels (`JobKind::Delete`). `names` are the names the page
+/// showed for them: ids are renumbered after jobs, so a page that hasn't
+/// caught up yet is refused rather than deleting another dataset. Refused
+/// while a job works on one of them.
 #[post("/api/datasets/delete")]
-pub async fn start_delete(ids: Vec<u32>) -> Result<crate::api::jobs::Job, ServerFnError> {
-    backend::delete(ids).map_err(ServerFnError::new)
+pub async fn start_delete(ids: Vec<u32>, names: Vec<String>) -> Result<crate::api::jobs::Job, ServerFnError> {
+    backend::delete(ids, names).map_err(ServerFnError::new)
 }
 
 /// Short label for a task name, for the narrow Task column.
@@ -59,6 +62,8 @@ pub fn short_task(task: &str) -> &str {
 #[cfg(feature = "server")]
 #[allow(unused_imports)] // used by the tools still to come
 pub use backend::resolve_output;
+#[cfg(feature = "server")]
+pub use backend::renumber;
 
 #[cfg(feature = "server")]
 mod backend {
@@ -68,7 +73,7 @@ mod backend {
     use crate::api::jobs::{self, Job, JobKind};
     use crate::api::workspace;
 
-    pub fn delete(ids: Vec<u32>) -> Result<Job, String> {
+    pub fn delete(ids: Vec<u32>, expected: Vec<String>) -> Result<Job, String> {
         if ids.is_empty() {
             return Err("Select at least one dataset.".into());
         }
@@ -78,6 +83,9 @@ mod backend {
             .iter()
             .map(|&id| ws.find_dataset(id).map(|(_, d)| d.name().to_string()).map_err(|e| e.to_string()))
             .collect::<Result<_, _>>()?;
+        if names != expected {
+            return Err("The datasets have changed meanwhile. Check the selection and try again.".into());
+        }
         jobs::start(JobKind::Delete, names, jobs::Touches::Datasets(ids.clone()), move |ctx| {
             ws.delete_dataset(ids[ctx.index()]).map(|_| None).map_err(|e| e.to_string())
         })
@@ -93,6 +101,16 @@ mod backend {
             }
             (OutputTarget::Overwrite, &[id]) => Ok(Output::Overwrite { id }),
             (OutputTarget::Overwrite, _) => Err("Overwriting works with exactly one input dataset.".into()),
+        }
+    }
+
+    /// Gives the open workspace's datasets the ids 1, 2, 3… again. Call only
+    /// while no job runs (`jobs::renumber_when_idle`); a failure is only logged.
+    pub fn renumber() {
+        let Some(dir) = workspace::current_dir() else { return };
+        let renumbered = Workspace::load_from_dir(&dir).and_then(|ws| ws.renumber_datasets());
+        if let Err(e) = renumbered {
+            eprintln!("Couldn't renumber the datasets: {e}");
         }
     }
 

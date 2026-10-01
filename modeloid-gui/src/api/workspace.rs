@@ -147,6 +147,8 @@ mod backend {
             .map_err(|e| format!("Couldn't load the workspace: {e}"))?;
 
         set_current(dir);
+        // Ids with gaps, e.g. from datasets deleted outside the app.
+        crate::api::jobs::renumber_when_idle();
         Ok(info(&workspace))
     }
 

@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use dioxus::prelude::*;
 
 use crate::api::datasets::{list_datasets, short_task, DatasetRow};
@@ -42,20 +44,30 @@ pub fn DatasetsPanel() -> Element {
         _ => None,
     };
 
-    // Drop selected datasets that are gone (deleted, or moved outside the app).
+    // The server renumbers datasets after jobs (no gaps once one is deleted),
+    // so the selection follows each dataset by its name, the folder name that
+    // stays the same; datasets that are gone are dropped from it.
     let mut selected = use_selected_datasets();
+    let mut names_before = use_signal(HashMap::<u32, String>::new);
     use_effect(move || {
         if let Some(Ok(rows)) = &*datasets.read() {
-            let gone = selected.peek().iter().any(|id| !rows.iter().any(|r| r.id == *id));
-            if gone {
-                selected.write().retain(|id| rows.iter().any(|r| r.id == *id));
+            let now = remap_selection(&selected.peek(), &names_before.peek(), rows);
+            if now != *selected.peek() {
+                selected.set(now);
             }
+            names_before.set(rows.iter().map(|r| (r.id, r.name.clone())).collect());
         }
     });
-    let all_ids: Vec<u32> = match &*datasets.read() {
-        Some(Ok(rows)) => rows.iter().map(|r| r.id).collect(),
-        _ => Vec::new(),
+    let sort = use_signal(|| Sort { key: SortKey::Id, ascending: true });
+    let sorted: Option<Vec<DatasetRow>> = match &*datasets.read() {
+        Some(Ok(rows)) => {
+            let mut rows = rows.clone();
+            sort().apply(&mut rows);
+            Some(rows)
+        }
+        _ => None,
     };
+    let all_ids: Vec<u32> = sorted.iter().flatten().map(|r| r.id).collect();
     let mut batch = use_batch_selected();
     let selected_count = selected.read().len();
     let total = all_ids.len();
@@ -96,7 +108,7 @@ pub fn DatasetsPanel() -> Element {
                         r#type: "button",
                         disabled: selected_count == total,
                         onclick: move |_| {
-                            // Keep the current order and add the rest after it.
+                            // Keep the current order and add the rest after it, as listed.
                             let mut ids = selected();
                             let rest: Vec<u32> = all_ids.iter().filter(|id| !ids.contains(id)).copied().collect();
                             ids.extend(rest);
@@ -133,7 +145,7 @@ pub fn DatasetsPanel() -> Element {
                     Some(Ok(rows)) if rows.is_empty() => rsx! {
                         p { class: "panel-empty", "No datasets yet. Download one to get started." }
                     },
-                    Some(Ok(rows)) => rsx! { DatasetsTable { rows: rows.clone() } },
+                    Some(Ok(_)) => rsx! { DatasetsTable { rows: sorted.clone().unwrap_or_default(), sort } },
                 }
             }
         }
@@ -144,7 +156,7 @@ pub fn DatasetsPanel() -> Element {
 /// the selection; clicking elsewhere on a row selects only that dataset
 /// (clicking it again when it's the only one clears the selection).
 #[component]
-fn DatasetsTable(rows: Vec<DatasetRow>) -> Element {
+fn DatasetsTable(rows: Vec<DatasetRow>, sort: Signal<Sort>) -> Element {
     let mut selected = use_selected_datasets();
     let mut batch = use_batch_selected();
 
@@ -153,14 +165,9 @@ fn DatasetsTable(rows: Vec<DatasetRow>) -> Element {
             thead {
                 tr {
                     th { class: "check-col", scope: "col", span { class: "visually-hidden", "Selected" } }
-                    th { class: "num", scope: "col", abbr: "ID", "#" }
-                    th { scope: "col", "Name" }
-                    th { scope: "col", "Task" }
-                    th { class: "num", scope: "col", "Images" }
-                    th { class: "num", scope: "col", "Labels" }
-                    th { class: "num", scope: "col", "Classes" }
-                    th { scope: "col", "Format" }
-                    th { class: "num", scope: "col", "Size" }
+                    for column in SortKey::ALL {
+                        SortHeader { key: "{column:?}", column, sort }
+                    }
                 }
             }
             tbody {
@@ -219,5 +226,179 @@ fn DatasetsTable(rows: Vec<DatasetRow>) -> Element {
                 }
             }
         }
+    }
+}
+
+/// Datasets table column the rows are sorted by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SortKey {
+    Id,
+    Name,
+    Task,
+    Images,
+    Labels,
+    Classes,
+    Format,
+    Size,
+}
+
+impl SortKey {
+    /// In column order.
+    const ALL: [SortKey; 8] =
+        [SortKey::Id, SortKey::Name, SortKey::Task, SortKey::Images, SortKey::Labels, SortKey::Classes, SortKey::Format, SortKey::Size];
+
+    fn label(self) -> &'static str {
+        match self {
+            SortKey::Id => "#",
+            SortKey::Name => "Name",
+            SortKey::Task => "Task",
+            SortKey::Images => "Images",
+            SortKey::Labels => "Labels",
+            SortKey::Classes => "Classes",
+            SortKey::Format => "Format",
+            SortKey::Size => "Size",
+        }
+    }
+
+    fn numeric(self) -> bool {
+        matches!(self, SortKey::Id | SortKey::Images | SortKey::Labels | SortKey::Classes | SortKey::Size)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Sort {
+    key: SortKey,
+    ascending: bool,
+}
+
+impl Sort {
+    /// Sorts `rows` by the key; equal rows stay in id order.
+    fn apply(self, rows: &mut [DatasetRow]) {
+        let text = |r: &DatasetRow| match self.key {
+            SortKey::Name => r.name.to_lowercase(),
+            SortKey::Task => short_task(&r.task).to_lowercase(),
+            SortKey::Format => r.format.to_lowercase(),
+            _ => String::new(),
+        };
+        let number = |r: &DatasetRow| match self.key {
+            SortKey::Id => u64::from(r.id),
+            SortKey::Images => u64::from(r.images),
+            SortKey::Labels => u64::from(r.labels),
+            SortKey::Classes => r.classes as u64,
+            SortKey::Size => r.size_bytes,
+            _ => 0,
+        };
+        rows.sort_by(|a, b| {
+            let order = if self.key.numeric() { number(a).cmp(&number(b)) } else { text(a).cmp(&text(b)) };
+            let order = if self.ascending { order } else { order.reverse() };
+            order.then(a.id.cmp(&b.id))
+        });
+    }
+
+    /// The sort after a click on `key`'s header: the other direction for the
+    /// current column; a new column starts A to Z for text and largest first
+    /// for counts (ids lowest first).
+    fn clicked(self, key: SortKey) -> Sort {
+        if key == self.key {
+            Sort { key, ascending: !self.ascending }
+        } else {
+            Sort { key, ascending: !key.numeric() || key == SortKey::Id }
+        }
+    }
+}
+
+/// A column header that sorts the table by its column.
+#[component]
+fn SortHeader(column: SortKey, sort: Signal<Sort>) -> Element {
+    let key = column;
+    let current = sort();
+    let active = current.key == key;
+    let aria_sort = match (active, current.ascending) {
+        (false, _) => "none",
+        (true, true) => "ascending",
+        (true, false) => "descending",
+    };
+    let arrow = match (active, current.ascending) {
+        (false, _) => "",
+        (true, true) => "▲",
+        (true, false) => "▼",
+    };
+    let class = if key.numeric() { "num" } else { "" };
+
+    rsx! {
+        th { class, scope: "col", aria_sort,
+            button {
+                class: if active { "sort-button is-active" } else { "sort-button" },
+                r#type: "button",
+                title: "Sort by {key.label()}",
+                onclick: move |_| sort.set(sort().clicked(key)),
+                if key == SortKey::Id {
+                    abbr { title: "ID", "#" }
+                } else {
+                    "{key.label()}"
+                }
+                span { class: "sort-arrow", "aria-hidden": "true", "{arrow}" }
+            }
+        }
+    }
+}
+
+/// `selected` after the datasets were read again: each id follows its
+/// dataset's name from `before` (id → name at the last read) to its id in
+/// `rows`; ids whose dataset is gone are dropped. Order is kept.
+fn remap_selection(selected: &[u32], before: &HashMap<u32, String>, rows: &[DatasetRow]) -> Vec<u32> {
+    selected
+        .iter()
+        .filter_map(|id| match before.get(id) {
+            Some(name) => rows.iter().find(|r| r.name == *name).map(|r| r.id),
+            // Not seen before (first read): kept if it exists.
+            None => rows.iter().any(|r| r.id == *id).then_some(*id),
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(id: u32, name: &str, images: u32) -> DatasetRow {
+        DatasetRow {
+            id,
+            name: name.into(),
+            task: "object-detection".into(),
+            format: "yolo".into(),
+            images,
+            labels: 0,
+            classes: 0,
+            size_bytes: 0,
+        }
+    }
+
+    #[test]
+    fn sorts_rows() {
+        let mut rows = vec![row(1, "b", 5), row(2, "A", 9), row(3, "c", 5)];
+        let ids = |rows: &[DatasetRow]| rows.iter().map(|r| r.id).collect::<Vec<_>>();
+
+        Sort { key: SortKey::Name, ascending: true }.apply(&mut rows);
+        assert_eq!(ids(&rows), [2, 1, 3], "ignores case");
+        Sort { key: SortKey::Images, ascending: false }.apply(&mut rows);
+        assert_eq!(ids(&rows), [2, 1, 3], "ties stay in id order");
+        Sort { key: SortKey::Id, ascending: false }.apply(&mut rows);
+        assert_eq!(ids(&rows), [3, 2, 1]);
+
+        let sort = Sort { key: SortKey::Id, ascending: true };
+        assert_eq!(sort.clicked(SortKey::Id), Sort { key: SortKey::Id, ascending: false });
+        assert_eq!(sort.clicked(SortKey::Size), Sort { key: SortKey::Size, ascending: false }, "largest first");
+        assert_eq!(sort.clicked(SortKey::Name), Sort { key: SortKey::Name, ascending: true });
+    }
+
+    #[test]
+    fn selection_follows_renumbered_datasets() {
+        let before: HashMap<u32, String> = [(1, "a"), (2, "b"), (3, "c")].map(|(id, n)| (id, n.to_string())).into();
+        // "a" deleted; "b" and "c" moved down.
+        let rows = vec![row(1, "b", 0), row(2, "c", 0)];
+        assert_eq!(remap_selection(&[3, 1, 2], &before, &rows), [2, 1]);
+        assert_eq!(remap_selection(&[2], &HashMap::new(), &rows), [2], "first read keeps ids");
+        assert!(remap_selection(&[5], &HashMap::new(), &rows).is_empty());
     }
 }

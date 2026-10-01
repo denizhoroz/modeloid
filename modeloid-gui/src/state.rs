@@ -128,7 +128,8 @@ pub struct ActivityState {
 }
 
 /// Call once, in the app layout, after `provide_workspace_state`.
-/// Every item a job finishes refreshes the datasets, since tools add or change them.
+/// Every item a job finishes refreshes the datasets, since tools add or change
+/// them, and so does the end of a job (the server renumbers datasets then).
 pub fn provide_activity_state() {
     let state = use_context_provider(|| ActivityState { snapshot: Signal::new(None), error: Signal::new(None) });
     let (mut snapshot, mut error) = (state.snapshot, state.error);
@@ -136,16 +137,16 @@ pub fn provide_activity_state() {
 
     use_future(move || async move {
         let mut since = 0;
-        // Done items of each kind's latest job; `None` before the first answer.
-        let mut done_seen: Option<HashMap<JobKind, usize>> = None;
+        // Done items of each kind's latest job and whether it finished; `None` before the first answer.
+        let mut done_seen: Option<HashMap<JobKind, (usize, bool)>> = None;
         loop {
             match activity_status(since).await {
                 Ok(latest) => {
                     since = latest.version;
-                    let done: HashMap<JobKind, usize> = latest
+                    let done: HashMap<JobKind, (usize, bool)> = latest
                         .jobs
                         .iter()
-                        .map(|j| (j.kind, j.items.iter().filter(|i| i.status == ItemStatus::Done).count()))
+                        .map(|j| (j.kind, (j.items.iter().filter(|i| i.status == ItemStatus::Done).count(), j.finished)))
                         .collect();
                     if done_seen.as_ref().is_some_and(|seen| *seen != done) {
                         *datasets_version.write() += 1;

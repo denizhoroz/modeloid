@@ -62,7 +62,7 @@ pub fn preview(plan: &ConvertPlan, source: LabelFormat, stats: &ExploreStats) ->
     }
     if target == source && preview.outlines_lost == 0 {
         let what = if stats.polygon_count == 0 { " and has no outlines to turn into boxes" } else { "" };
-        preview.problems.push(format!("Nothing would change: the dataset is already in {} format{what}.", format_label(source)));
+        preview.unchanged = Some(format!("Nothing would change: the dataset is already in {} format{what}.", format_label(source)));
     } else if plan.task == TargetTask::Same && preview.outlines_lost > 0 {
         preview.notes.push(format!("Pascal VOC has no outlines: {} outlines become boxes.", preview.outlines_lost));
     } else if plan.task == TargetTask::Detection && stats.polygon_count == 0 {
@@ -196,7 +196,8 @@ mod tests {
         let outlined = analyze(&set(PathBuf::new(), vec![object(0, 0.0, 0.0, 5.0, 5.0, true), object(1, 1.0, 1.0, 2.0, 2.0, false)]));
 
         let same = preview(&plan(TargetTask::Same, "yolo"), LabelFormat::Yolo, &boxes);
-        assert!(same.problems[0].contains("already in YOLO"), "{:?}", same.problems);
+        assert!(same.problems.is_empty() && !same.can_run(), "{same:?}");
+        assert!(same.unchanged.as_ref().is_some_and(|u| u.contains("already in YOLO")), "{same:?}");
         assert!(preview(&plan(TargetTask::Same, "coco"), LabelFormat::Yolo, &boxes).can_run());
         assert!(!preview(&plan(TargetTask::Detection, "yolo"), LabelFormat::Yolo, &boxes).can_run(), "no outlines, same format");
         assert!(!preview(&plan(TargetTask::Same, "parquet"), LabelFormat::Yolo, &boxes).can_run());
