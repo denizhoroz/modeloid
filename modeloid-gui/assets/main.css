@@ -1364,6 +1364,11 @@ fieldset.section-card:disabled {
     background: var(--color-surface);
 }
 
+/* A settings card that is also a .form fills the section like the others */
+.settings-card.form {
+    max-width: none;
+}
+
 .settings-card > .field + .field {
     padding-top: var(--space-3);
     border-top: 1px solid var(--color-border);
