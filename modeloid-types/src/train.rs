@@ -14,14 +14,32 @@ pub struct TrainPreview {
     pub device: String,
     /// Anything here blocks training.
     pub problems: Vec<String>,
+    /// `training/trains/<name>` exists already; blocks training too. Kept
+    /// apart from `problems` so the page can tell it from the run it just
+    /// started under that name.
+    #[serde(default)]
+    pub name_taken: bool,
     /// Good to know, e.g. "COCO labels are converted to YOLO in the run folder".
     pub notes: Vec<String>,
 }
 
 impl TrainPreview {
     pub fn can_run(&self) -> bool {
-        self.problems.is_empty()
+        self.problems.is_empty() && !self.name_taken
     }
+
+    /// What stops training under `name`, if anything.
+    pub fn blocker(&self, name: &str) -> Option<String> {
+        if self.name_taken {
+            Some(name_taken_message(name))
+        } else {
+            self.problems.first().cloned()
+        }
+    }
+}
+
+pub fn name_taken_message(name: &str) -> String {
+    format!("A model named '{name}' already exists in training/trains. Choose another name.")
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

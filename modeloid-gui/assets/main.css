@@ -19,6 +19,7 @@
     --space-2: 8px;
     --space-3: 12px;
     --space-4: 16px;
+    --space-5: 20px;
     --space-6: 24px;
     --space-8: 32px;
 
@@ -723,7 +724,7 @@ a.workspace-button {
 }
 
 .page h1 {
-    margin: 0 0 var(--space-1);
+    margin: 0 0 var(--space-2);
     font-size: var(--text-2xl);
     font-weight: 700;
     letter-spacing: -0.02em;
@@ -739,7 +740,7 @@ a.workspace-button {
 }
 
 .page-lead {
-    margin: 0 0 var(--space-4);
+    margin: 0 0 var(--space-6);
     color: var(--color-fg-muted);
 }
 
@@ -837,14 +838,14 @@ a.workspace-button {
 .form {
     display: flex;
     flex-direction: column;
-    gap: var(--space-4);
+    gap: var(--space-5);
     max-width: 560px;
 }
 
 .field {
     display: flex;
     flex-direction: column;
-    gap: var(--space-1);
+    gap: 6px;
 }
 
 .field-label {
@@ -1001,16 +1002,16 @@ a.workspace-button {
 .section-stack {
     display: flex;
     flex-direction: column;
-    gap: var(--space-3);
+    gap: var(--space-5);
 }
 
 .section-card {
     display: flex;
     flex-direction: column;
-    gap: var(--space-3);
+    gap: var(--space-4);
     min-width: 0;
     margin: 0;
-    padding: var(--space-3);
+    padding: var(--space-4);
     border: 1px solid var(--color-border-strong);
     border-radius: var(--radius-md);
     background: var(--color-surface);
@@ -1021,15 +1022,16 @@ a.workspace-button {
    Inside a .section-stack the stack's gap does this. */
 .page > .section-card,
 .page > .section-stack,
-.section-stack + .form-error {
-    margin-block: var(--space-3);
+.section-stack + .form-error,
+.section-stack + .notice {
+    margin-block: var(--space-5);
 }
 
 /* Wherever else a panel follows something (e.g. a job's progress after a
    form's buttons, inside a tab), it keeps the same gap above it. Stacks and
    cards space their children with a flex gap already. */
-:not(.section-stack, .section-card) > * + :is(.section-card, .section-stack) {
-    margin-top: var(--space-3);
+:not(.section-stack, .section-card, .chart-grid) > * + :is(.section-card, .section-stack) {
+    margin-top: var(--space-5);
 }
 
 /* A fieldset draws its legend on the border; floated, the legend is an
@@ -1095,7 +1097,7 @@ fieldset.section-card > legend.section-card-title {
 
 /* Page-level tabs (Download | Import) */
 .segmented-tabs {
-    margin-bottom: var(--space-3);
+    margin-bottom: var(--space-5);
 }
 
 .segmented-tabs .segmented-option {
@@ -1427,8 +1429,8 @@ fieldset.section-card:disabled {
 .settings-section {
     display: flex;
     flex-direction: column;
-    gap: var(--space-2);
-    margin-top: var(--space-4);
+    gap: var(--space-3);
+    margin-top: var(--space-8);
 }
 
 .settings-section-title {
@@ -1446,8 +1448,8 @@ fieldset.section-card:disabled {
 .settings-card {
     display: flex;
     flex-direction: column;
-    gap: var(--space-3);
-    padding: var(--space-3);
+    gap: var(--space-4);
+    padding: var(--space-4);
     border: 1px solid var(--color-border-strong);
     border-radius: var(--radius-md);
     background: var(--color-surface);
@@ -1459,7 +1461,7 @@ fieldset.section-card:disabled {
 }
 
 .settings-card > .field + .field {
-    padding-top: var(--space-3);
+    padding-top: var(--space-4);
     border-top: 1px solid var(--color-border);
 }
 
@@ -1498,6 +1500,17 @@ fieldset.section-card:disabled {
     min-width: 0;
 }
 
+/* Number boxes and dropdowns in the parameter grid are the same width:
+   the whole column. */
+.param-field .input-narrow {
+    width: 100%;
+}
+
+.param-optional .input {
+    flex: 1;
+    min-width: 0;
+}
+
 .param-field > .field-label {
     display: flex;
     align-items: center;
@@ -1505,15 +1518,17 @@ fieldset.section-card:disabled {
 }
 
 .param-checks {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-2) var(--space-4);
+    display: grid;
+    /* Same columns as .param-grid, so checkboxes line up with the fields above */
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: var(--space-2) var(--space-3);
 }
 
 .param-check {
     flex-direction: row;
     align-items: center;
     gap: var(--space-1);
+    min-height: var(--input-height);
 }
 
 .param-optional {
@@ -1521,6 +1536,23 @@ fieldset.section-card:disabled {
     align-items: center;
     gap: var(--space-2);
     min-height: var(--input-height);
+}
+
+.param-check {
+    min-width: 0;
+}
+
+/* Checkboxes in the form: centred on their text, no offset. Long labels
+   wrap inside their column instead of running into the next one. */
+.param-check .check,
+.param-optional .check {
+    align-items: center;
+    min-width: 0;
+}
+
+.param-check .check input,
+.param-optional .check input {
+    margin: 0;
 }
 
 .param-problems {
@@ -1537,7 +1569,7 @@ fieldset.section-card:disabled {
 }
 
 .param-group > * + * {
-    margin-top: var(--space-3);
+    margin-top: var(--space-4);
 }
 
 .param-group-summary {
@@ -1777,8 +1809,10 @@ fieldset.section-card:disabled {
     font-size: var(--text-sm);
 }
 
+/* The "Choose in the … table" buttons sit at the bottom of their column,
+   so both line up whatever is chosen above them. */
 .train-input .button {
-    margin-top: var(--space-1);
+    margin-top: auto;
 }
 
 .train-console {
@@ -1969,6 +2003,22 @@ fieldset.section-card:disabled {
     font-size: var(--text-base);
 }
 
+/* Text size: each choice shows a sample in its own size (data-scale
+   re-resolves --text-* on the sample). */
+.font-option:has(.scale-sample) .font-option-name {
+    flex: 0 0 80px;
+}
+
+.scale-sample {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    color: var(--color-fg-muted);
+    font-size: var(--text-base);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 /* Import: pick button + chosen path on one line */
 .folder-pick-row {
     display: flex;
@@ -2021,6 +2071,7 @@ fieldset.section-card:disabled {
 
 .form-actions {
     display: flex;
+    align-items: center;
     gap: var(--space-2);
     padding-top: var(--space-1);
 }
@@ -2152,7 +2203,7 @@ fieldset.section-card:disabled {
     align-items: center;
     justify-content: space-between;
     gap: var(--space-2);
-    margin-bottom: var(--space-3);
+    margin-bottom: var(--space-5);
 }
 
 .explore-title {
@@ -2177,8 +2228,8 @@ fieldset.section-card:disabled {
 .stat-tiles {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-    gap: var(--space-2);
-    margin-bottom: var(--space-3);
+    gap: var(--space-3);
+    margin-bottom: var(--space-5);
 }
 
 .stat-tile {
@@ -2211,7 +2262,7 @@ fieldset.section-card:disabled {
 
 .explore-warnings {
     display: block;
-    margin-bottom: var(--space-3);
+    margin-bottom: var(--space-5);
 }
 
 .explore-warnings summary {
@@ -2233,7 +2284,7 @@ fieldset.section-card:disabled {
        around the tall class card, so there are no ragged gaps. */
     grid-auto-flow: row dense;
     align-items: stretch;
-    gap: var(--space-3);
+    gap: var(--space-4);
 }
 
 .chart-card {
@@ -2280,19 +2331,27 @@ fieldset.section-card:disabled {
     pointer-events: none;
 }
 
-/* Bar list: label | bar | value */
+/* Bar list: label | bar | value. Rows share the list's columns (subgrid),
+   so a wider value in one row doesn't shorten that row's bar. */
 .bar-list {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
+    display: grid;
+    grid-template-columns: minmax(80px, 34%) 1fr auto;
+    gap: 2px 0;
     margin: 0;
     padding: 0;
     list-style: none;
 }
 
+.bar-list > li {
+    display: grid;
+    grid-column: 1 / -1;
+    grid-template-columns: subgrid;
+}
+
 .bar-row {
     display: grid;
-    grid-template-columns: minmax(80px, 34%) 1fr auto;
+    grid-column: 1 / -1;
+    grid-template-columns: subgrid;
     align-items: center;
     gap: var(--space-2);
     width: 100%;
@@ -2854,13 +2913,17 @@ button.bar-row:hover,
 }
 
 .data-table .check-col {
-    width: 28px;
+    width: 34px;
     padding-right: 0;
     text-align: center;
+    vertical-align: middle;
 }
 
 .data-table .check-col input {
-    margin: 0;
+    display: block;
+    width: 17px;
+    height: 17px;
+    margin: 0 auto;
     accent-color: var(--color-accent);
     cursor: pointer;
 }
@@ -3284,6 +3347,31 @@ button.bar-row:hover,
 
 .option-row .check input {
     margin: 0;
+}
+
+/* Slider with its value (components/slider.rs) */
+.slider {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-3);
+    width: 100%;
+    max-width: 360px;
+}
+
+.slider-input {
+    flex: 1;
+    min-width: 120px;
+    margin: 0;
+    accent-color: var(--color-accent);
+    cursor: pointer;
+}
+
+.slider-value {
+    min-width: 6ch;
+    font-size: var(--text-sm);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
 }
 
 .input-narrow {
@@ -3822,9 +3910,9 @@ button.bar-row:hover,
 .health-score {
     display: flex;
     align-items: center;
-    gap: var(--space-4);
-    margin-bottom: var(--space-3);
-    padding: var(--space-3) var(--space-4);
+    gap: var(--space-6);
+    margin-bottom: var(--space-5);
+    padding: var(--space-4) var(--space-5);
     border: 1px solid var(--color-border);
     border-left: 4px solid var(--color-accent);
     border-radius: var(--radius-md);
@@ -3836,6 +3924,33 @@ button.bar-row:hover,
     font-weight: 700;
     font-variant-numeric: tabular-nums;
     line-height: 1;
+}
+
+.health-score-main {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+}
+
+/* Images checked · Problems, under the big number */
+.health-score-facts {
+    display: flex;
+    gap: var(--space-4);
+    margin: 0;
+}
+
+.health-score-facts dt {
+    color: var(--color-fg-muted);
+    font-size: var(--text-xs);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.health-score-facts dd {
+    margin: 0;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
 }
 
 .health-score-text {
@@ -4177,9 +4292,12 @@ button.bar-row:hover,
     vertical-align: middle;
 }
 
-.data-table th.name:has(.class-swatch) {
+/* Flex inside the cell, never on it: a flex th stops being a table cell
+   and the row's bottom border breaks there. */
+.class-name-cell {
     display: flex;
     align-items: center;
+    min-width: 0;
 }
 
 .data-table .name .row-pick {

@@ -2,7 +2,7 @@ use dioxus::prelude::*;
 
 use crate::api::error_message;
 use crate::api::system::{cache_size, clear_cache, get_system, save_system, SystemView, MAX_DOWNLOAD_CONNECTIONS, MAX_JOBS, THUMB_SIZES};
-use crate::components::{use_toasts, InfoTip, NumberInput, ToastKind};
+use crate::components::{use_toasts, InfoTip, Slider, ToastKind};
 use crate::state::use_workspace;
 use crate::util::format_bytes;
 
@@ -54,36 +54,32 @@ fn SystemForm(view: SystemView) -> Element {
                     "Worker threads "
                     InfoTip {
                         label: "About worker threads",
-                        text: "Used for copying and extracting files, checking images in Health Check and cutting out crops. Fewer threads leave the computer more responsive while a job runs; jobs take longer.",
+                        text: "Used for copying and extracting files, checking images in Health Check and cutting out crops. Fewer threads leave the computer more responsive while a job runs; jobs take longer. 0 is automatic: all {cores} CPU cores of this computer.",
                     }
                 }
-                select {
-                    id: "system-threads",
-                    class: "input select",
-                    value: "{current.threads}",
-                    onchange: move |e| {
-                        if let Ok(n) = e.value().parse() {
-                            prefs.write().threads = n;
-                        }
-                    },
-                    option { value: "0", selected: current.threads == 0, "Automatic (all {cores} CPU cores)" }
-                    for n in 1..=cores {
-                        option { key: "{n}", value: "{n}", selected: current.threads == n, "{n}" }
-                    }
+                Slider {
+                    value: current.threads,
+                    label: "Worker threads",
+                    max: cores,
+                    text: (current.threads == 0).then(|| format!("Automatic ({cores})")),
+                    onchange: move |n| prefs.write().threads = n,
                 }
-                p { class: "field-hint", "This computer has {cores} CPU cores." }
             }
 
             div { class: "field",
-                span { class: "field-label", "Download connections" }
-                div { class: "option-row",
-                    NumberInput {
-                        value: current.download_connections,
-                        label: "Download connections",
-                        max: MAX_DOWNLOAD_CONNECTIONS,
-                        onchange: move |n| prefs.write().download_connections = n,
+                span { class: "field-label",
+                    "Download connections "
+                    InfoTip {
+                        label: "About download connections",
+                        text: "Parts of one large file fetched at the same time, when the server allows it.",
                     }
-                    span { class: "field-hint", "1 to {MAX_DOWNLOAD_CONNECTIONS}. Parts of one large file fetched at the same time, when the server allows it." }
+                }
+                Slider {
+                    value: current.download_connections,
+                    label: "Download connections",
+                    min: 1,
+                    max: MAX_DOWNLOAD_CONNECTIONS,
+                    onchange: move |n| prefs.write().download_connections = n,
                 }
             }
 
@@ -92,17 +88,20 @@ fn SystemForm(view: SystemView) -> Element {
                     "Jobs at once "
                     InfoTip {
                         label: "About jobs at once",
-                        text: "With more than one, a second tool can start while another works, e.g. a download during a Health Check. Each tool still runs one job at a time, and a job waits while another one uses the same dataset.",
+                        text: "With more than one, a second tool can start while another works, e.g. a download during a Health Check. Each tool still runs one job at a time, and a job waits while another one uses the same dataset. Every job uses the worker threads above.",
                     }
                 }
-                div { class: "option-row",
-                    NumberInput { value: current.max_jobs, label: "Jobs at once", max: MAX_JOBS, onchange: move |n| prefs.write().max_jobs = n }
-                    span { class: "field-hint", "1 to {MAX_JOBS}. Every job uses the worker threads above." }
-                }
+                Slider { value: current.max_jobs, label: "Jobs at once", min: 1, max: MAX_JOBS, onchange: move |n| prefs.write().max_jobs = n }
             }
 
             div { class: "field",
-                label { class: "field-label", r#for: "system-thumbs", "Preview size" }
+                label { class: "field-label", r#for: "system-thumbs",
+                    "Preview size "
+                    InfoTip {
+                        label: "About preview size",
+                        text: "Longest side of the gallery's image previews. Larger ones are sharper, slower to make and take more disk space.",
+                    }
+                }
                 select {
                     id: "system-thumbs",
                     class: "input select",
@@ -116,7 +115,6 @@ fn SystemForm(view: SystemView) -> Element {
                         option { key: "{size}", value: "{size}", selected: current.thumb_size == size, "{size} px" }
                     }
                 }
-                p { class: "field-hint", "Longest side of the gallery's image previews. Larger ones are sharper, slower to make and take more disk space." }
             }
 
             if let Some(message) = error() {

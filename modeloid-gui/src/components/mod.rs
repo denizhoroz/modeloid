@@ -15,6 +15,7 @@ mod python_setup;
 mod resize_handle;
 mod side_panel;
 mod sidebar;
+mod slider;
 mod status_bar;
 pub mod table;
 mod system_settings;
@@ -41,6 +42,7 @@ pub use python_setup::{open_python_settings, LibrariesMissing, PythonAutoSetup, 
 pub use resize_handle::ResizeHandle;
 pub use side_panel::{use_panel_table, PanelSwitcher, PanelTable, PanelTableState, SidePanel};
 pub use sidebar::Sidebar;
+pub use slider::Slider;
 pub use status_bar::StatusBar;
 pub use system_settings::SystemSettings;
 pub use toast::{provide_toasts, use_toasts, ToastHost, ToastKind};

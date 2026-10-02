@@ -8,6 +8,7 @@ use dioxus::prelude::*;
 use super::{use_preview, ResultCard, RunCard, SeedField};
 use crate::api::balance::{BalancePlan, Resplit};
 use crate::api::jobs::JobKind;
+use crate::components::InfoTip;
 use crate::util::format_count;
 
 const NAMES: [&str; 3] = ["Train", "Val", "Test"];
@@ -55,7 +56,7 @@ pub fn SplitTab(id: u32, name: String) -> Element {
                             }
                             span {
                                 "Stratify by class "
-                                span { class: "finding-detail", "(each split gets a similar class mix)" }
+                                InfoTip { label: "About stratifying", text: "Each split gets a similar class mix." }
                             }
                         }
                         SeedField { plan, used: p.seed, hint: "The same seed gives the same split again." }

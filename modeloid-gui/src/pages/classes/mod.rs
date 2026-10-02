@@ -13,7 +13,7 @@ use crate::api::classes::{
 use crate::api::datasets::{list_datasets, DatasetRow};
 use crate::api::error_message;
 use crate::api::jobs::JobKind;
-use crate::components::{NoWorkspace, set_if_newer, use_job, Bar, BarList, JobProgress, OutputChoice, OutputSelect, SelectDatasetHint, WarningTip};
+use crate::components::{InfoTip, NoWorkspace, set_if_newer, use_job, Bar, BarList, JobProgress, OutputChoice, OutputSelect, SelectDatasetHint, WarningTip};
 use crate::state::{use_batch_selected, use_datasets_version, use_selected_datasets, use_workspace, use_workspace_checked};
 use crate::util::{format_count, plural};
 
@@ -53,9 +53,16 @@ fn Editor() -> Element {
 
     // New inputs: fresh suggestion. Datasets added or removed with the
     // checkboxes keep earlier edits that still apply; a row click starts over.
+    // The same inputs changing on disk (e.g. this tool overwrote them, so a
+    // renamed class has its new name now) re-read their classes and keep the
+    // edits that still apply.
+    let mut last_inputs = use_signal(Vec::<u32>::new);
     use_effect(move || {
         let ids = inputs();
-        let keep_edits = *batch.peek();
+        let _ = datasets_version();
+        let same_inputs = *last_inputs.peek() == ids;
+        last_inputs.set(ids.clone());
+        let keep_edits = same_inputs || *batch.peek();
         spawn(async move {
             if ids.is_empty() {
                 plan.set(None);
@@ -570,8 +577,10 @@ fn OptionsCard(plan: Signal<Option<MergePlan>>, multiple: bool) -> Element {
                             },
                         }
                         span { class: "choice-body",
-                            span { class: "choice-label", "{label}" }
-                            span { class: "choice-detail", "{detail}" }
+                            span { class: "choice-label",
+                                "{label} "
+                                InfoTip { label: "About {label}", text: "{detail}" }
+                            }
                         }
                     }
                 }

@@ -10,9 +10,11 @@ use crate::api::error_message;
 use crate::api::jobs::{ItemStatus, JobKind};
 use crate::api::parameters::{list_parameters, Batch, FrameworkParams, ParameterSet};
 use crate::api::pyenv::python_env_overview;
-use crate::api::train::{start_training, train_log, train_preview};
-use crate::components::{set_if_newer, use_job, use_panel_table, JobProgress, LibrariesMissing, NoWorkspace, PanelTable};
-use crate::state::{use_datasets_version, use_parameters_version, use_primary_dataset, use_primary_parameters, use_workspace, use_workspace_checked};
+use crate::api::train::{list_models, name_taken_message, start_training, train_log, train_preview};
+use crate::components::{set_if_newer, use_job, use_panel_table, InfoTip, JobProgress, LibrariesMissing, NoWorkspace, PanelTable};
+use crate::state::{
+    use_datasets_version, use_models_version, use_parameters_version, use_primary_dataset, use_primary_parameters, use_workspace, use_workspace_checked,
+};
 use crate::util::format_count;
 
 /// Lines of console output kept on the page (the full log is in console.log).
@@ -50,6 +52,29 @@ fn describe(set: &ParameterSet) -> String {
     format!("{} · {} epochs · {} px · {batch}", set.summary(), p.training.epochs, p.training.imgsz)
 }
 
+/// The model without its file extension or folder, e.g. "yolo11n-seg".
+fn model_stem(set: &ParameterSet) -> String {
+    let FrameworkParams::Ultralytics(p) = &set.params;
+    let file = p.model_name();
+    let file = file.rsplit(['/', '\\']).next().unwrap_or_default().to_string();
+    match file.rsplit_once('.') {
+        Some((stem, _)) if !stem.is_empty() => stem.to_string(),
+        _ => file,
+    }
+}
+
+/// `<dataset>-<model>`, numbered ("-2", "-3", …) past names in `taken`.
+fn suggest_name(dataset: &str, model: &str, taken: &[String]) -> String {
+    let base = format!("{dataset}-{model}");
+    let mut name = base.clone();
+    let mut n = 2;
+    while taken.contains(&name) {
+        name = format!("{base}-{n}");
+        n += 1;
+    }
+    name
+}
+
 #[component]
 fn TrainForm() -> Element {
     let dataset_id = use_primary_dataset();
@@ -69,17 +94,29 @@ fn TrainForm() -> Element {
     let set: Option<ParameterSet> =
         params_name().and_then(|name| params.read().as_ref()?.as_ref().ok()?.sets.iter().find(|s| s.name == name).cloned());
 
-    // Model name: "<parameters>-<dataset>" until the user types one.
+    let (job, poll_error) = use_job(JobKind::Train);
+    // The run the job is (or was) training, named after its folder.
+    let job_run = job.read().as_ref().and_then(|j| j.items.first()).map(|i| i.label.clone());
+
+    // Model name: "<dataset>-<model>", the next free one, until the user types one.
+    let models_version = use_models_version();
+    let models = use_resource(move || async move {
+        let _ = models_version();
+        list_models().await
+    });
+    let mut taken: Vec<String> = models.read().as_ref().and_then(|r| r.as_ref().ok()).map(|l| l.models.iter().map(|m| m.name.clone()).collect()).unwrap_or_default();
+    taken.extend(job_run.clone());
     let mut typed_name = use_signal(|| None::<String>);
     let suggested = match (&set, &dataset) {
-        (Some(set), Some(ds)) => format!("{}-{}", set.name, ds.name),
+        (Some(set), Some(ds)) => suggest_name(&ds.name, &model_stem(set), &taken),
         _ => String::new(),
     };
     let name = typed_name().unwrap_or(suggested);
     let (name_for_preview, name_for_start) = (name.clone(), name.clone());
     let (dataset_ready, params_ready) = (dataset.as_ref().map(|d| d.id), set.as_ref().map(|s| s.name.clone()));
+    // Its own run's folder isn't "taken" while that run shows below.
+    let own_run = job_run.as_deref() == Some(name.as_str());
 
-    let (job, poll_error) = use_job(JobKind::Train);
     let running = job.read().as_ref().is_some_and(|j| !j.finished);
     let finished_version = use_memo(move || job.read().as_ref().filter(|j| j.finished).map(|j| j.version));
 
@@ -107,13 +144,16 @@ fn TrainForm() -> Element {
             }
             libraries_missing.set(false);
             match start_training(ds, ps, name).await {
-                Ok(started) => set_if_newer(job, started),
+                Ok(started) => {
+                    set_if_newer(job, started);
+                    // The next run gets the next free name.
+                    typed_name.set(None);
+                }
                 Err(e) => start_error.set(Some(error_message(&e))),
             }
         }
     };
 
-    let console_name = job.read().as_ref().and_then(|j| j.items.first()).map(|i| i.label.clone());
     let live_line = job
         .read()
         .as_ref()
@@ -170,22 +210,26 @@ fn TrainForm() -> Element {
             section { class: "section-card", aria_labelledby: "train-output-title",
                 h2 { id: "train-output-title", class: "section-card-title", "Output" }
                 div { class: "field",
-                    label { class: "field-label", r#for: "train-name", "Model name" }
+                    label { class: "field-label", r#for: "train-name",
+                        "Model name "
+                        InfoTip { label: "About the model name", text: "Saved in training/trains/<model name>/: weights, plots and results in its runs folder." }
+                    }
                     input {
                         id: "train-name",
                         class: "input",
                         value: "{name}",
                         placeholder: "e.g. yolo11n-cars",
-                        aria_describedby: "train-name-hint",
                         oninput: move |e| typed_name.set(Some(e.value())),
                     }
-                    p { id: "train-name-hint", class: "field-hint", "Saved in training/trains/<model name>/: weights, plots and results in its runs folder." }
                 }
                 match &*preview.read() {
                     Some(Some(Ok(p))) => rsx! {
                         p { class: "field-hint", "Trains {p.model} on {p.device}." }
-                        if !p.problems.is_empty() {
+                        if !p.problems.is_empty() || (p.name_taken && !own_run) {
                             ul { class: "param-problems", aria_label: "Fix these first",
+                                if p.name_taken && !own_run {
+                                    li { class: "field-error", {name_taken_message(&name)} }
+                                }
                                 for problem in p.problems.iter() {
                                     li { key: "{problem}", class: "field-error", "{problem}" }
                                 }
@@ -218,7 +262,7 @@ fn TrainForm() -> Element {
             if let Some(job) = job() {
                 JobProgress { job, title: "Training", noun: "model", verb: "trained", output_label: "Result" }
             }
-            if let Some(run) = console_name {
+            if let Some(run) = job_run {
                 TrainConsole { key: "{run}", run, version: job_version, live: live_line }
             }
         }
@@ -280,8 +324,9 @@ fn TrainConsole(run: String, version: u64, live: Option<String>) -> Element {
     }));
 
     rsx! {
-        section { class: "section-card", aria_labelledby: "train-console-title",
-            div { class: "section-card-header",
+        // Collapsed by default; the progress panel above says how it goes.
+        details { class: "section-card param-group", aria_labelledby: "train-console-title",
+            summary { class: "param-group-summary",
                 h2 { id: "train-console-title", class: "section-card-title", "Console" }
                 span { class: "section-card-meta", "training/trains/{run}/console.log" }
             }
@@ -296,5 +341,24 @@ fn TrainConsole(run: String, version: u64, live: Option<String>) -> Element {
                 p { class: "field-error", "{message}" }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::parameters::Weights;
+
+    #[test]
+    fn suggests_dataset_and_model_names() {
+        let mut set = ParameterSet::new("baseline");
+        assert_eq!(model_stem(&set), "yolo11n");
+        let FrameworkParams::Ultralytics(p) = &mut set.params;
+        p.model.weights = Weights::File("training/trains/old/weights/best.pt".into());
+        assert_eq!(model_stem(&set), "best");
+
+        let taken = vec!["cars-yolo11n".to_string(), "cars-yolo11n-2".to_string()];
+        assert_eq!(suggest_name("cars", "yolo11n", &[]), "cars-yolo11n");
+        assert_eq!(suggest_name("cars", "yolo11n", &taken), "cars-yolo11n-3");
     }
 }

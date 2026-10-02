@@ -12,7 +12,7 @@ use crate::api::edit::{
 };
 use crate::api::error_message;
 use crate::api::jobs::JobKind;
-use crate::components::{set_if_newer, use_job, use_toasts, Icon, IconName, JobProgress, PrimaryNote, SelectDatasetHint, StatTile};
+use crate::components::{set_if_newer, use_job, use_toasts, Icon, InfoTip, IconName, JobProgress, PrimaryNote, SelectDatasetHint, StatTile};
 use crate::routes::Route;
 use crate::state::{use_datasets_version, use_primary_dataset, use_selected_datasets};
 use crate::util::{format_count, plural};
@@ -211,11 +211,9 @@ fn DetailsSection(id: u32, details: DatasetDetails, datasets_path: String) -> El
                     r#type: "text",
                     autocomplete: "off",
                     placeholder: "e.g. cars, night, drone",
-                    aria_describedby: "edit-tags-help",
                     value: "{tags_value}",
                     oninput: move |e| tags.set(Some(e.value())),
                 }
-                p { id: "edit-tags-help", class: "field-hint", "Separate tags with commas." }
             }
 
             if let Some(message) = error() {
@@ -310,7 +308,10 @@ fn ImagesSection(id: u32) -> Element {
 
     rsx! {
         section { class: "section-card", aria_labelledby: "edit-images-title",
-            h2 { id: "edit-images-title", class: "section-card-title", "Add images" }
+            h2 { id: "edit-images-title", class: "section-card-title",
+                "Add images "
+                InfoTip { label: "About adding images", text: "Images are copied into the dataset's images folder. Names already taken get a number added." }
+            }
             div {
                 class: zone_class,
                 ondragenter: move |e| {
@@ -338,7 +339,6 @@ fn ImagesSection(id: u32) -> Element {
                     "Choose images"
                 }
             }
-            p { class: "field-hint", "Images are copied into the dataset's images folder. Names already taken get a number added." }
             if let Some(message) = error() {
                 p { class: "form-error", role: "alert", "{message}" }
             }

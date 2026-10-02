@@ -50,7 +50,7 @@ pub fn FormatSection(selected: Signal<String>, custom: Signal<String>, error: Op
                     "Roboflow export format "
                     InfoTip {
                         label: "About the export format",
-                        text: "Roboflow offers different formats per project type. If the project doesn't offer the one chosen here, Modeloid switches to one it does and tells you which.",
+                        text: "Annotation format Roboflow exports the dataset in; other sources download as they are. Roboflow offers different formats per project type. If the project doesn't offer the one chosen here, Modeloid switches to one it does and tells you which.",
                     }
                 }
                 select {
@@ -67,14 +67,14 @@ pub fn FormatSection(selected: Signal<String>, custom: Signal<String>, error: Op
                     }
                     option { value: OTHER, selected: is_other, "Other…" }
                 }
-                if !is_other {
-                    p { class: "field-hint", "Annotation format Roboflow exports the dataset in. Other sources download as they are." }
-                }
             }
 
             if is_other {
                 div { class: "field",
-                    label { class: "field-label", r#for: "download-format-custom", "Format name" }
+                    label { class: "field-label", r#for: "download-format-custom",
+                        "Format name "
+                        InfoTip { label: "About the format name", text: "The export format name as Roboflow calls it." }
+                    }
                     input {
                         id: "download-format-custom",
                         class: "input",
@@ -88,7 +88,7 @@ pub fn FormatSection(selected: Signal<String>, custom: Signal<String>, error: Op
                     }
                     match &error {
                         Some(message) => rsx! { p { class: "field-error", role: "alert", "{message}" } },
-                        None => rsx! { p { class: "field-hint", "The export format name as Roboflow calls it." } },
+                        None => rsx! {},
                     }
                 }
             }

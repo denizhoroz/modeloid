@@ -79,16 +79,19 @@ pub fn AppearanceSettings() -> Element {
 
             fieldset { class: "field appearance-field",
                 legend { class: "field-label", "Text size" }
-                div { class: "segmented", role: "radiogroup", aria_label: "Text size",
+                div { class: "font-list",
                     for (id, label) in SCALES {
-                        button {
-                            key: "{id}",
-                            class: if current.scale == id { "segmented-option is-selected" } else { "segmented-option" },
-                            r#type: "button",
-                            role: "radio",
-                            aria_checked: if current.scale == id { "true" } else { "false" },
-                            onclick: move |_| choose(|a, v| a.scale = v.into(), id),
-                            "{label}"
+                        label { key: "{id}", class: "font-option",
+                            input {
+                                r#type: "radio",
+                                name: "appearance-scale",
+                                value: id,
+                                checked: current.scale == id,
+                                onchange: move |_| choose(|a, v| a.scale = v.into(), id),
+                            }
+                            span { class: "font-option-name", "{label}" }
+                            // Shown in its own size, whatever size is chosen now.
+                            span { class: "scale-sample", "data-scale": id, "The quick brown fox jumps over the lazy dog" }
                         }
                     }
                 }

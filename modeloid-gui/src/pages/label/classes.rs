@@ -237,56 +237,59 @@ pub fn ClassesPanel() -> Element {
                                             }
                                             td { class: "num muted", "{class + 1}" }
                                             th { class: "name", scope: "row",
-                                                span { class: "class-swatch", style: "background: {class_color(class)}", "aria-hidden": "true" }
-                                                if let Some(typed) = editing {
-                                                    input {
-                                                        class: "input label-rename",
-                                                        aria_label: "New name for {row.name}",
-                                                        value: "{typed}",
-                                                        onmounted: move |e| async move {
-                                                            let _ = e.set_focus(true).await;
-                                                        },
-                                                        onclick: move |e| e.stop_propagation(),
-                                                        oninput: move |e| renaming.set(Some((class, e.value()))),
-                                                        onkeydown: move |e| {
-                                                            e.stop_propagation();
-                                                            match e.key() {
-                                                                Key::Enter => {
-                                                                    let name = renaming.peek().as_ref().map(|(_, n)| n.clone()).unwrap_or_default();
+                                                // The cell stays a table cell (its border runs on); the flex box is inside.
+                                                span { class: "class-name-cell",
+                                                    span { class: "class-swatch", style: "background: {class_color(class)}", "aria-hidden": "true" }
+                                                    if let Some(typed) = editing {
+                                                        input {
+                                                            class: "input label-rename",
+                                                            aria_label: "New name for {row.name}",
+                                                            value: "{typed}",
+                                                            onmounted: move |e| async move {
+                                                                let _ = e.set_focus(true).await;
+                                                            },
+                                                            onclick: move |e| e.stop_propagation(),
+                                                            oninput: move |e| renaming.set(Some((class, e.value()))),
+                                                            onkeydown: move |e| {
+                                                                e.stop_propagation();
+                                                                match e.key() {
+                                                                    Key::Enter => {
+                                                                        let name = renaming.peek().as_ref().map(|(_, n)| n.clone()).unwrap_or_default();
+                                                                        spawn(async move { rename(class, name).await });
+                                                                    }
+                                                                    Key::Escape => renaming.set(None),
+                                                                    _ => {}
+                                                                }
+                                                            },
+                                                            onblur: move |_| {
+                                                                if let Some((_, name)) = renaming.peek().clone() {
                                                                     spawn(async move { rename(class, name).await });
                                                                 }
-                                                                Key::Escape => renaming.set(None),
-                                                                _ => {}
-                                                            }
-                                                        },
-                                                        onblur: move |_| {
-                                                            if let Some((_, name)) = renaming.peek().clone() {
-                                                                spawn(async move { rename(class, name).await });
-                                                            }
-                                                        },
-                                                    }
-                                                } else {
-                                                    button {
-                                                        class: "row-pick",
-                                                        r#type: "button",
-                                                        title: "Use {row.name} for new boxes{hint}. Double-click or F2 to rename.",
-                                                        aria_pressed: if is_active { "true" } else { "false" },
-                                                        ondoubleclick: move |e| {
-                                                            e.stop_propagation();
-                                                            if !read_only {
-                                                                renaming.set(Some((class, name.clone())));
-                                                            }
-                                                        },
-                                                        onkeydown: {
-                                                            let name = row.name.clone();
-                                                            move |e: KeyboardEvent| {
-                                                                if e.key() == Key::F2 && !read_only {
-                                                                    e.stop_propagation();
+                                                            },
+                                                        }
+                                                    } else {
+                                                        button {
+                                                            class: "row-pick",
+                                                            r#type: "button",
+                                                            title: "Use {row.name} for new boxes{hint}. Double-click or F2 to rename.",
+                                                            aria_pressed: if is_active { "true" } else { "false" },
+                                                            ondoubleclick: move |e| {
+                                                                e.stop_propagation();
+                                                                if !read_only {
                                                                     renaming.set(Some((class, name.clone())));
                                                                 }
-                                                            }
-                                                        },
-                                                        "{row.name}"
+                                                            },
+                                                            onkeydown: {
+                                                                let name = row.name.clone();
+                                                                move |e: KeyboardEvent| {
+                                                                    if e.key() == Key::F2 && !read_only {
+                                                                        e.stop_propagation();
+                                                                        renaming.set(Some((class, name.clone())));
+                                                                    }
+                                                                }
+                                                            },
+                                                            "{row.name}"
+                                                        }
                                                     }
                                                 }
                                             }

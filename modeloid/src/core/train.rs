@@ -120,7 +120,7 @@ impl Workspace {
         if let Err(e) = crate::validate_dataset_name(name) {
             problems.push(format!("Model name: {e}"));
         } else if self.train_dir(name).exists() {
-            problems.push(format!("A model named '{name}' already exists in training/trains. Choose another name."));
+            preview.name_taken = true;
         }
         problems.extend(set.problems().into_iter().map(|p| format!("Parameters: {p}")));
 
@@ -194,8 +194,8 @@ impl Workspace {
     /// if needed, counted on `reporter`) and `config.json`.
     pub fn prepare_train(&self, id: u32, set: &ParameterSet, name: &str, choice: TrainDevice, reporter: &dyn Reporter) -> Result<PreparedTrain, crate::Error> {
         let plan = self.train_plan(id, set, name, choice)?;
-        if let Some(problem) = plan.preview.problems.first() {
-            return Err(problem.clone().into());
+        if let Some(problem) = plan.preview.blocker(name) {
+            return Err(problem.into());
         }
         let p = ultra(set);
         let dir = self.train_dir(name);

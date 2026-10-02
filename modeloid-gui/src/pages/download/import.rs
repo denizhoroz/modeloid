@@ -7,7 +7,7 @@ use crate::api::error_message;
 use crate::api::import::{name_from_path, start_import, ImportKind};
 use crate::api::jobs::JobKind;
 use crate::api::dialogs::{pick_file, pick_folder, DialogPurpose};
-use crate::components::{set_if_newer, use_job, Icon, IconName, JobProgress};
+use crate::components::{set_if_newer, use_job, Icon, IconName, InfoTip, JobProgress};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum SourceKind {
@@ -167,8 +167,10 @@ pub fn ImportForm(datasets_path: String) -> Element {
                                 onchange: move |_| move_folder.set(false),
                             }
                             span { class: "choice-body",
-                                span { class: "choice-label", "Copy" }
-                                span { class: "choice-detail", "The original folder stays where it is." }
+                                span { class: "choice-label",
+                                    "Copy "
+                                    InfoTip { label: "About copying", text: "The original folder stays where it is." }
+                                }
                             }
                         }
                         label { class: if move_folder() { "choice is-selected" } else { "choice" },
@@ -179,8 +181,10 @@ pub fn ImportForm(datasets_path: String) -> Element {
                                 onchange: move |_| move_folder.set(true),
                             }
                             span { class: "choice-body",
-                                span { class: "choice-label", "Move" }
-                                span { class: "choice-detail", "Faster on the same drive. The original folder is gone afterwards." }
+                                span { class: "choice-label",
+                                    "Move "
+                                    InfoTip { label: "About moving", text: "Faster on the same drive. The original folder is gone afterwards." }
+                                }
                             }
                         }
                     }

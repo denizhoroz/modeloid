@@ -226,4 +226,22 @@ mod tests {
         assert_eq!(merged.format, "yolo");
         assert_eq!(merged.split, modeloid_types::classes::SplitMode::Keep);
     }
+
+    #[test]
+    fn renamed_class_keeps_its_labels_after_an_overwrite() {
+        // Before the run: cat renamed to kitty.
+        let mut old = MergePlan { inputs: vec![1], targets: vec!["cat".into(), "dog".into()], format: "yolo".into(), ..Default::default() };
+        old.set_rule("cat", ClassAction::To("cat".into()));
+        old.set_rule("dog", ClassAction::To("dog".into()));
+        rename_target(&mut old, "cat", "kitty").unwrap();
+        // After overwriting, the dataset's class is called kitty.
+        let mut new = MergePlan { inputs: vec![1], targets: vec!["kitty".into(), "dog".into()], format: "yolo".into(), ..Default::default() };
+        new.set_rule("kitty", ClassAction::To("kitty".into()));
+        new.set_rule("dog", ClassAction::To("dog".into()));
+
+        let merged = carry_over(&old, new);
+        assert_eq!(merged.targets, ["kitty", "dog"]);
+        assert_eq!(merged.resolve(1, "kitty"), Some(&ClassAction::To("kitty".into())));
+        assert!(merged.rules.iter().all(|r| r.source != "cat"));
+    }
 }

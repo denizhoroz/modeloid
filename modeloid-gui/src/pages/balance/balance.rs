@@ -8,7 +8,7 @@ use dioxus::prelude::*;
 use super::{use_preview, ResultCard, RunCard, SeedField};
 use crate::api::balance::{BalancePlan, BalancePreview};
 use crate::api::jobs::JobKind;
-use crate::components::NumberInput;
+use crate::components::{InfoTip, Slider};
 use crate::util::format_count;
 
 #[component]
@@ -43,8 +43,8 @@ pub fn BalanceTab(id: u32, name: String) -> Element {
                                 span { "Random subset" }
                             }
                             if let Some(percent) = subset {
-                                NumberInput { value: percent, label: "Subset in percent", onchange: move |n| plan.write().subset_percent = Some(n) }
-                                span { class: "field-hint", "% of the images, taken from each split, before the threshold applies" }
+                                Slider { value: percent, label: "Subset in percent", min: 1, unit: "%", onchange: move |n| plan.write().subset_percent = Some(n) }
+                                InfoTip { label: "About the subset", text: "Share of the images, taken from each split, before the threshold applies." }
                             }
                         }
                         SeedField { plan, used: p.seed, hint: "The same seed gives the same subset and the same cut again." }

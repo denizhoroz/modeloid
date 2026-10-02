@@ -2,6 +2,7 @@ use dioxus::prelude::*;
 
 use crate::api::error_message;
 use crate::api::workspace::{parse_seed, update_workspace, WorkspaceInfo};
+use crate::components::InfoTip;
 use crate::state::use_workspace;
 
 /// Default label format choices: stored value and name. Empty = no default.
@@ -22,7 +23,10 @@ pub fn WorkspaceOptions(
 
     rsx! {
         div { class: "field",
-            label { class: "field-label", r#for: "ws-seed", "Seed" }
+            label { class: "field-label", r#for: "ws-seed",
+                "Seed "
+                InfoTip { label: "About the seed", text: "Random choices (splits, subsets, cuts) start from this number, so the same settings give the same result again." }
+            }
             input {
                 id: "ws-seed",
                 class: "input input-narrow",
@@ -35,27 +39,22 @@ pub fn WorkspaceOptions(
             }
             match &seed_error {
                 Some(message) => rsx! { p { id: "ws-seed-help", class: "field-error", role: "alert", "{message}" } },
-                None => rsx! {
-                    p { id: "ws-seed-help", class: "field-hint",
-                        "Random choices (splits, subsets, cuts) start from this number, so the same settings give the same result again."
-                    }
-                },
+                None => rsx! {},
             }
         }
         div { class: "field",
-            label { class: "field-label", r#for: "ws-format", "Default label format" }
+            label { class: "field-label", r#for: "ws-format",
+                "Default label format "
+                InfoTip { label: "About the default format", text: "The format Convert and Classes & Merge start on. You can still choose another one each time." }
+            }
             select {
                 id: "ws-format",
                 class: "input select",
-                aria_describedby: "ws-format-help",
                 value: "{format}",
                 onchange: move |e| format.set(e.value()),
                 for (value, label) in FORMATS {
                     option { key: "{value}", value, selected: format() == value, "{label}" }
                 }
-            }
-            p { id: "ws-format-help", class: "field-hint",
-                "The format Convert and Classes & Merge start on. You can still choose another one each time."
             }
         }
     }

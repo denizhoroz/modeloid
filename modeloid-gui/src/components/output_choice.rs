@@ -1,6 +1,7 @@
 use dioxus::prelude::*;
 
 use crate::api::datasets::{validate_dataset_name, OutputTarget};
+use crate::components::InfoTip;
 
 /// What the user chose in an `OutputSelect`.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -73,8 +74,10 @@ pub fn OutputSelect(
                         onchange: move |_| choice.write().overwrite = false,
                     }
                     span { class: "choice-body",
-                        span { class: "choice-label", "Save as new dataset" }
-                        span { class: "choice-detail", "The source stays as it is." }
+                        span { class: "choice-label",
+                            "Save as new dataset "
+                            InfoTip { label: "About saving as new", text: "The source stays as it is." }
+                        }
                     }
                 }
 
@@ -110,7 +113,10 @@ pub fn OutputSelect(
                 }
             } else {
                 div { class: "field",
-                    label { class: "field-label", r#for: "{id}-name", "Dataset name" }
+                    label { class: "field-label", r#for: "{id}-name",
+                        "Dataset name "
+                        InfoTip { label: "About the name", text: "Folder name inside the workspace's datasets folder." }
+                    }
                     input {
                         id: "{id}-name",
                         class: "input",
@@ -119,10 +125,8 @@ pub fn OutputSelect(
                         autocomplete: "off",
                         value: "{name}",
                         aria_invalid: if error.is_some() { "true" },
-                        aria_describedby: "{id}-name-hint",
                         oninput: move |e| choice.write().name = Some(e.value()),
                     }
-                    p { id: "{id}-name-hint", class: "field-hint", "Folder name inside the workspace's datasets folder." }
                 }
             }
 

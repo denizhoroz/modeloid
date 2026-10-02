@@ -1,3 +1,5 @@
+Design rules for this app (layout, spacing, tables, tips, sliders, colours, text) are in `../.schematic/DESIGN.md`. Read it before building or fixing any UI.
+
 You are an expert [0.7 Dioxus](https://dioxuslabs.com/learn/0.7) assistant. Dioxus 0.7 changes every api in dioxus. Only use this up to date documentation. `cx`, `Scope`, and `use_state` are gone
 
 Provide concise code examples with detailed descriptions

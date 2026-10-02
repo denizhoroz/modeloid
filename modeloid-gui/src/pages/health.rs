@@ -12,7 +12,7 @@ use crate::api::error_message;
 use crate::api::explore::thumb_url;
 use crate::api::health::{health_report, health_summaries, start_health_check, start_health_fix, HealthFixes, HealthSummary, HealthView};
 use crate::api::jobs::JobKind;
-use crate::components::{set_if_newer, use_job, JobProgress, NoWorkspace, OutputChoice, OutputSelect, SelectDatasetHint, StatTile};
+use crate::components::{set_if_newer, use_job, InfoTip, JobProgress, NoWorkspace, OutputChoice, OutputSelect, SelectDatasetHint};
 use crate::state::{use_datasets_version, use_selected_datasets, use_workspace, use_workspace_checked};
 use crate::util::{format_count, plural};
 
@@ -248,7 +248,7 @@ fn SummaryTable(rows: Vec<HealthSummary>, ids: Vec<u32>, focus: Signal<u32>) -> 
 
 /// The big number: the share of images without a problem.
 #[component]
-fn HealthScore(counts: HealthCounts) -> Element {
+fn HealthScore(counts: HealthCounts, checked: u32) -> Element {
     let percent = counts.health_percent();
     let (level, word) = match percent {
         100 => ("is-good", "No problems found"),
@@ -264,7 +264,13 @@ fn HealthScore(counts: HealthCounts) -> Element {
 
     rsx! {
         div { class: "health-score {level}", role: "group", aria_label: "Overall health",
-            span { class: "health-score-value", "{percent}%" }
+            div { class: "health-score-main",
+                span { class: "health-score-value", "{percent}%" }
+                dl { class: "health-score-facts",
+                    div { dt { "Images checked" } dd { "{format_count(checked)}" } }
+                    div { dt { "Problems" } dd { "{format_count(counts.problems() as u32)}" } }
+                }
+            }
             div { class: "health-score-text",
                 span { class: "health-score-label", "Health · {word}" }
                 span { class: "health-score-detail", "{detail}" }
@@ -297,18 +303,7 @@ fn Report(id: u32, name: Option<String>, view: HealthView) -> Element {
             }
         }
 
-        HealthScore { counts: counts.clone() }
-
-        div { class: "stat-tiles",
-            StatTile { label: "Images checked", value: format_count(report.image_count) }
-            StatTile {
-                label: "Problems",
-                value: format_count(counts.problems() as u32),
-                detail: if counts.problems() == 0 { Some("all clear".to_string()) } else { None },
-            }
-            StatTile { label: "Duplicate groups", value: format_count((counts.exact_groups + counts.near_groups) as u32), detail: format!("{} across splits", counts.leak_groups) }
-            StatTile { label: "Without labels", value: format_count(counts.unlabeled_images as u32), detail: "images".to_string() }
-        }
+        HealthScore { counts: counts.clone(), checked: report.image_count }
 
         div { class: "findings",
             Finding { title: "Corrupt or unreadable images", count: counts.corrupt_images, problem: true,
@@ -638,8 +633,10 @@ fn FixForm(datasets: Vec<HealthSummary>, total: HealthCounts, disabled: bool, st
                         label { class: if !overwrite_all() { "choice is-selected" } else { "choice" },
                             input { r#type: "radio", name: "health-output", checked: !overwrite_all(), onchange: move |_| overwrite_all.set(false) }
                             span { class: "choice-body",
-                                span { class: "choice-label", "Save as new datasets" }
-                                span { class: "choice-detail", "The sources stay as they are." }
+                                span { class: "choice-label",
+                                    "Save as new datasets "
+                                    InfoTip { label: "About saving as new", text: "The sources stay as they are." }
+                                }
                             }
                         }
                         label { class: if overwrite_all() { "choice is-selected" } else { "choice" },

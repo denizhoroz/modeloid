@@ -12,7 +12,7 @@ use crate::api::balance::{balance_preview, start_balance, BalancePlan, BalancePr
 use crate::api::datasets::list_datasets;
 use crate::api::error_message;
 use crate::api::jobs::JobKind;
-use crate::components::{NoWorkspace, set_if_newer, use_job, JobProgress, OutputChoice, OutputSelect, PrimaryNote, SelectDatasetHint, WarningTip};
+use crate::components::{InfoTip, NoWorkspace, set_if_newer, use_job, JobProgress, OutputChoice, OutputSelect, PrimaryNote, SelectDatasetHint, WarningTip};
 use crate::state::{use_datasets_version, use_primary_dataset, use_selected_datasets, use_workspace, use_workspace_checked};
 use crate::util::format_count;
 
@@ -126,7 +126,10 @@ fn SeedField(plan: Signal<BalancePlan>, used: u64, #[props(into)] hint: String) 
     rsx! {
         div { class: "option-row",
             label { class: "field field-inline",
-                span { class: "field-label", "Seed" }
+                span { class: "field-label",
+                    "Seed "
+                    InfoTip { label: "About the seed", text: "Using seed {used}; empty uses the workspace seed. {hint}" }
+                }
                 input {
                     class: "input input-narrow",
                     r#type: "number",
@@ -143,7 +146,6 @@ fn SeedField(plan: Signal<BalancePlan>, used: u64, #[props(into)] hint: String) 
                     },
                 }
             }
-            span { class: "field-hint", "Using seed {used}; empty uses the workspace's. {hint}" }
         }
     }
 }

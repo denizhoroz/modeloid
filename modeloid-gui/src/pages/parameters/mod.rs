@@ -6,14 +6,19 @@ mod fields;
 
 use dioxus::prelude::*;
 
+use crate::api::datasets::{list_datasets, DatasetRow};
 use crate::api::error_message;
 use crate::api::parameters::{
     list_parameters, save_parameters, AugmentationConfig, AutoAugment, Batch, Cache, Family, FrameworkParams,
     LossConfig, ModelSize, Optimizer, ParameterSet, RunConfig, ScheduleConfig, Task, UltralyticsParams, Weights,
 };
-use crate::components::{use_toasts, InfoTip, NoWorkspace, PythonNotice, ToastKind};
+use crate::components::{use_panel_table, use_toasts, InfoTip, NoWorkspace, PanelTable, PythonNotice, ToastKind};
 use crate::components::table;
-use crate::state::{use_parameters_version, use_primary_parameters, use_selected_parameters, use_workspace, use_workspace_checked};
+use crate::state::{
+    use_datasets_version, use_parameters_version, use_primary_dataset, use_primary_parameters, use_selected_datasets, use_selected_parameters,
+    use_workspace, use_workspace_checked,
+};
+use crate::util::format_count;
 use fields::{options, BoolField, ChoiceField, FloatField, IntField, OptionalFloatField, OptionalIntField};
 
 /// The form's Ultralytics settings.
@@ -187,6 +192,7 @@ fn ParameterEditor() -> Element {
                 }
             }
 
+            PrepareSection { form }
             ModelSection { form, p: p.clone() }
             TrainingSection { form, p: p.clone() }
             ScheduleSection { form, p: p.clone() }
@@ -238,6 +244,158 @@ fn ParameterEditor() -> Element {
                     }
                     if is_edit && !dirty() {
                         span { class: "form-actions-note", "Change something to save it." }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The task a dataset's labels train: outlines segment, class folders
+/// classify, boxes detect.
+fn dataset_task(row: &DatasetRow) -> Task {
+    match row.task.as_str() {
+        "instance-segmentation" => Task::Segment,
+        "classification" | "single-label-classification" => Task::Classify,
+        _ => Task::Detect,
+    }
+}
+
+/// Sets the model up for `row`: its task, and a family that has (pretrained)
+/// weights for it. The name is suggested when empty.
+fn prepare_from(set: &mut ParameterSet, row: &DatasetRow) {
+    let task = dataset_task(row);
+    let FrameworkParams::Ultralytics(p) = &mut set.params;
+    let m = &mut p.model;
+    m.task = task;
+    let pretrained = m.weights == Weights::Pretrained;
+    if !m.family.tasks().contains(&task) || (pretrained && !m.family.pretrained_tasks().contains(&task)) {
+        m.family = Family::Yolo11;
+    }
+    if !m.family.sizes().contains(&m.size) {
+        m.size = m.family.sizes()[0];
+    }
+    if set.name.trim().is_empty() {
+        set.name = format!("{}-{}", row.name, task.id());
+    }
+}
+
+/// What training does with a dataset's label format.
+fn format_note(format: &str) -> &'static str {
+    let format = format.trim().to_ascii_lowercase();
+    if format.starts_with("yolo") {
+        "YOLO labels are trained on as they are."
+    } else if format == "folders" {
+        "Class folders are trained on as they are."
+    } else if format.starts_with("coco") || format.starts_with("voc") || format == "pascal-voc" {
+        "Training writes a YOLO copy of the labels into the run folder."
+    } else {
+        "This label format can't be trained on yet; Convert can turn it into YOLO."
+    }
+}
+
+/// Fill the model settings from a dataset (optional; open by default). "Select dataset" opens
+/// the Datasets table; the next dataset picked there is used, then the panel
+/// goes back to Parameters.
+#[component]
+fn PrepareSection(form: Signal<ParameterSet>) -> Element {
+    let mut form = form;
+    let mut panel = use_panel_table();
+    let primary = use_primary_dataset();
+    let mut selected = use_selected_datasets();
+    let datasets_version = use_datasets_version();
+    let datasets = use_resource(move || async move {
+        let _ = datasets_version();
+        list_datasets().await
+    });
+    // Waiting for a pick in the Datasets table; the dataset chosen when it started.
+    let mut waiting = use_signal(|| None::<Option<u32>>);
+    // The dataset used last, for the summary.
+    let mut used = use_signal(|| None::<DatasetRow>);
+
+    let row_of = move |id: u32| datasets.read().as_ref()?.as_ref().ok()?.iter().find(|r| r.id == id).cloned();
+    let mut apply = move |row: DatasetRow| {
+        prepare_from(&mut form.write(), &row);
+        used.set(Some(row));
+        waiting.set(None);
+        panel.set(PanelTable::Parameters);
+    };
+
+    // Any pick in the Datasets table while waiting. Clicking the dataset that
+    // was selected already clears the selection (table rule): that means
+    // "this one", so it is selected again and used.
+    use_effect(move || {
+        let picked = primary();
+        let Some(start) = *waiting.peek() else { return };
+        let chosen = match (picked, start) {
+            (Some(id), _) => id,
+            (None, Some(id)) => {
+                selected.set(vec![id]);
+                id
+            }
+            (None, None) => return,
+        };
+        if let Some(row) = row_of(chosen) {
+            apply(row);
+        }
+    });
+
+    let current = primary().and_then(row_of);
+    let meta = match used() {
+        Some(row) => format!("from {}", row.name),
+        None => "optional".to_string(),
+    };
+
+    rsx! {
+        details { class: "section-card param-group", open: true, aria_labelledby: "param-prepare-title",
+            summary { class: "param-group-summary",
+                h2 { id: "param-prepare-title", class: "section-card-title",
+                    "Prepare from dataset "
+                    InfoTip { label: "About preparing from a dataset", text: "Sets the task and a model that fits it from a dataset's labels. Everything stays editable." }
+                }
+                span { class: "section-card-meta", "{meta}" }
+            }
+            if let Some(row) = used() {
+                div { class: "train-input-chosen",
+                    span { class: "train-input-name", "{row.name}" }
+                    span { class: "train-input-detail",
+                        "{row.task} · {row.format} · {format_count(row.images)} images · {row.classes} classes → task {dataset_task(&row).label()}. {format_note(&row.format)}"
+                    }
+                }
+            }
+            if waiting().is_some() {
+                div { class: "notice", role: "status",
+                    p { "Choose a dataset in the Datasets table." }
+                    div { class: "notice-actions",
+                        button {
+                            class: "button button-ghost button-sm",
+                            r#type: "button",
+                            onclick: move |_| {
+                                waiting.set(None);
+                                panel.set(PanelTable::Parameters);
+                            },
+                            "Cancel"
+                        }
+                    }
+                }
+            } else {
+                div { class: "form-actions",
+                    button {
+                        class: "button button-secondary button-sm",
+                        r#type: "button",
+                        onclick: move |_| {
+                            waiting.set(Some(primary()));
+                            panel.set(PanelTable::Datasets);
+                        },
+                        "Select dataset"
+                    }
+                    if let Some(row) = current {
+                        button {
+                            class: "button button-ghost button-sm",
+                            r#type: "button",
+                            onclick: move |_| apply(row.clone()),
+                            "Use {row.name}"
+                        }
                     }
                 }
             }
@@ -342,6 +500,10 @@ fn TrainingSection(form: Signal<ParameterSet>, p: UltralyticsParams) -> Element 
                 div { class: "field param-field",
                     span { class: "field-label", "Batch size" InfoTip { text: "Images per training step. Auto picks the largest batch that fits about 60% of GPU memory.", label: "About batch size" } }
                     div { class: "param-optional",
+                        if let Batch::Size(n) = t.batch {
+                            crate::components::NumberInput { value: n, label: "Batch size", max: 1024,
+                                onchange: move |v| edit(form, |p| p.training.batch = Batch::Size(v)) }
+                        }
                         label { class: "check",
                             input {
                                 r#type: "checkbox",
@@ -349,10 +511,6 @@ fn TrainingSection(form: Signal<ParameterSet>, p: UltralyticsParams) -> Element 
                                 onchange: move |e| edit(form, |p| p.training.batch = if e.checked() { Batch::Auto } else { Batch::Size(16) }),
                             }
                             span { "Auto" }
-                        }
-                        if let Batch::Size(n) = t.batch {
-                            crate::components::NumberInput { value: n, label: "Batch size", max: 1024,
-                                onchange: move |v| edit(form, |p| p.training.batch = Batch::Size(v)) }
                         }
                     }
                 }
@@ -572,5 +730,35 @@ fn RunSection(form: Signal<ParameterSet>, p: UltralyticsParams) -> Element {
                     onchange: move |v| edit(form, |p| p.run.plots = v) }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(task: &str) -> DatasetRow {
+        DatasetRow { id: 1, name: "cars".into(), task: task.into(), format: "coco".into(), images: 10, labels: 20, classes: 2, size_bytes: 0 }
+    }
+
+    #[test]
+    fn prepares_task_and_family() {
+        let mut set = ParameterSet::new("");
+        let FrameworkParams::Ultralytics(p) = &mut set.params;
+        p.model.family = Family::RtDetr;
+        p.model.size = ModelSize::L;
+
+        prepare_from(&mut set, &row("instance-segmentation"));
+        let m = &ultra(&set).model;
+        // RT-DETR can't segment: back to YOLO11, size kept when it has it.
+        assert_eq!((m.task, m.family, m.size), (Task::Segment, Family::Yolo11, ModelSize::L));
+        assert_eq!(set.name, "cars-segment");
+
+        set.name = "mine".into();
+        prepare_from(&mut set, &row("classification"));
+        assert_eq!(ultra(&set).model.task, Task::Classify);
+        assert_eq!(set.name, "mine");
+        assert_eq!(dataset_task(&row("object-detection")), Task::Detect);
+        assert!(format_note("yolov8").starts_with("YOLO"));
     }
 }

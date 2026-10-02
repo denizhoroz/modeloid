@@ -13,7 +13,7 @@ use crate::api::datasets::{list_datasets, validate_dataset_name, DatasetRow};
 use crate::api::error_message;
 use crate::api::jobs::JobKind;
 use crate::components::{
-    set_if_newer, use_job, Bar, BarList, JobProgress, NoWorkspace, NumberInput, OutputChoice, OutputSelect, SelectDatasetHint, StatTile, WarningTip,
+    set_if_newer, use_job, Bar, BarList, InfoTip, JobProgress, NoWorkspace, NumberInput, OutputChoice, OutputSelect, SelectDatasetHint, Slider, StatTile, WarningTip,
 };
 use crate::state::{use_datasets_version, use_primary_dataset, use_selected_datasets, use_workspace, use_workspace_checked};
 use crate::util::{format_count, plural};
@@ -135,16 +135,14 @@ fn Converter(id: u32) -> Element {
 fn TargetCard(plan: Signal<ConvertPlan>, preview: ConvertPreview) -> Element {
     let mut plan = plan;
     let current = plan();
-    let outlines = if preview.outlines > 0 {
-        format!("{} outlines become their bounding boxes.", format_count(preview.outlines))
-    } else {
-        "This dataset has no outlines; its labels are boxes already.".to_string()
-    };
-    let tasks = [
-        (TargetTask::Same, "Same labels, another format", "Boxes stay boxes and outlines stay outlines, where the format has them.".to_string()),
-        (TargetTask::Detection, "Detection (boxes only)", outlines),
-        (TargetTask::Classification, "Classification (one image per object)", "Every object is cut out into a folder named after its class.".to_string()),
-    ];
+    // Only what the labels can become: boxes only when there are outlines to drop.
+    let has_outlines = preview.outlines > 0;
+    let same = if has_outlines { "Boxes stay boxes and outlines stay outlines, where the format has them." } else { "Boxes stay boxes." };
+    let mut tasks = vec![(TargetTask::Same, "Same labels, another format", same.to_string())];
+    if has_outlines {
+        tasks.push((TargetTask::Detection, "Detection (boxes only)", format!("{} outlines become their bounding boxes.", format_count(preview.outlines))));
+    }
+    tasks.push((TargetTask::Classification, "Classification (one image per object)", "Every object is cut out into a folder named after its class.".to_string()));
 
     rsx! {
         section { class: "section-card", aria_labelledby: "convert-target-title",
@@ -159,22 +157,29 @@ fn TargetCard(plan: Signal<ConvertPlan>, preview: ConvertPreview) -> Element {
                             onchange: move |_| plan.write().task = task,
                         }
                         span { class: "choice-body",
-                            span { class: "choice-label", "{label}" }
-                            span { class: "choice-detail", "{detail}" }
+                            span { class: "choice-label",
+                                "{label} "
+                                InfoTip { label: "About {label}", text: "{detail}" }
+                            }
                         }
                     }
                 }
             }
             if current.task == TargetTask::Classification {
                 div { class: "option-row",
-                    span { class: "field-label", "Padding" }
-                    NumberInput { value: current.padding_percent, label: "Padding in percent", max: MAX_PADDING, onchange: move |n| plan.write().padding_percent = n }
-                    span { class: "field-hint", "% of the box's width and height, added on each side for context" }
+                    span { class: "field-label",
+                        "Padding "
+                        InfoTip { label: "About padding", text: "Share of the box's width and height, added on each side for context." }
+                    }
+                    Slider { value: current.padding_percent, label: "Padding in percent", max: MAX_PADDING, unit: "%", onchange: move |n| plan.write().padding_percent = n }
                 }
                 div { class: "option-row",
-                    span { class: "field-label", "Smallest crop" }
+                    span { class: "field-label",
+                        "Smallest crop "
+                        InfoTip { label: "About the smallest crop", text: "Objects smaller than this in width or height are skipped." }
+                    }
                     NumberInput { value: current.min_size, label: "Smallest crop in pixels", max: 10_000, onchange: move |n| plan.write().min_size = n }
-                    span { class: "field-hint", "pixels; objects smaller than this in width or height are skipped" }
+                    span { class: "field-hint", "px" }
                 }
             } else {
                 div { class: "field field-inline",
@@ -222,7 +227,9 @@ fn ResultCard(plan: ConvertPlan, preview: ConvertPreview) -> Element {
                 } else {
                     StatTile { label: "Images", value: format_count(preview.images) }
                     StatTile { label: "Labels", value: format_count(preview.labels) }
-                    StatTile { label: "Outlines kept", value: format_count(kept), detail: format!("{} become boxes", format_count(preview.outlines_lost)) }
+                    if preview.outlines > 0 {
+                        StatTile { label: "Outlines kept", value: format_count(kept), detail: format!("{} become boxes", format_count(preview.outlines_lost)) }
+                    }
                 }
             }
             if crops && !bars.is_empty() {
@@ -377,6 +384,7 @@ fn BatchConverter(ids: Vec<u32>) -> Element {
 /// What happens to each dataset of a batch.
 #[component]
 fn BatchResultCard(names: Vec<String>, previews: Vec<ConvertPreview>) -> Element {
+    let has_outlines = previews.iter().any(|p| p.outlines > 0);
     let converted = previews.iter().filter(|p| p.can_run()).count();
     let skipped = previews.iter().filter(|p| p.problems.is_empty() && p.unchanged.is_some()).count();
     let mut errors = Vec::new();
@@ -406,7 +414,9 @@ fn BatchResultCard(names: Vec<String>, previews: Vec<ConvertPreview>) -> Element
                             th { scope: "col", "From" }
                             th { class: "num", scope: "col", "Images" }
                             th { class: "num", scope: "col", "Labels" }
-                            th { class: "num", scope: "col", "Outlines to boxes" }
+                            if has_outlines {
+                                th { class: "num", scope: "col", "Outlines to boxes" }
+                            }
                             th { scope: "col", "Result" }
                         }
                     }
@@ -417,7 +427,9 @@ fn BatchResultCard(names: Vec<String>, previews: Vec<ConvertPreview>) -> Element
                                 td { class: "muted", if preview.source_format.is_empty() { "–" } else { "{preview.source_format}" } }
                                 td { class: "num", "{format_count(preview.images)}" }
                                 td { class: "num", "{format_count(preview.labels)}" }
-                                td { class: "num muted", "{format_count(preview.outlines_lost)}" }
+                                if has_outlines {
+                                    td { class: "num muted", "{format_count(preview.outlines_lost)}" }
+                                }
                                 match (preview.problems.first(), &preview.unchanged) {
                                     (Some(problem), _) => rsx! { td { class: "field-error", title: "{problem}", "Problem" } },
                                     (None, Some(reason)) => rsx! { td { class: "muted", title: "{reason}", "Skipped, nothing changes" } },
@@ -487,8 +499,10 @@ fn BatchRunCard(plan: ConvertPlan, ids: Vec<u32>, names: Vec<String>, previews: 
                     label { class: if !overwrite() { "choice is-selected" } else { "choice" },
                         input { r#type: "radio", name: "convert-batch-output", checked: !overwrite(), onchange: move |_| overwrite.set(false) }
                         span { class: "choice-body",
-                            span { class: "choice-label", "Save as new datasets" }
-                            span { class: "choice-detail", "The sources stay as they are." }
+                            span { class: "choice-label",
+                                "Save as new datasets "
+                                InfoTip { label: "About saving as new", text: "The sources stay as they are." }
+                            }
                         }
                     }
                     label { class: if overwrite() { "choice is-selected" } else { "choice" },

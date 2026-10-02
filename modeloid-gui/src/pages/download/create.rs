@@ -6,6 +6,7 @@ use dioxus::prelude::*;
 use crate::api::datasets::validate_dataset_name;
 use crate::api::edit::{create_dataset, NewDataset, CREATE_FORMATS, CREATE_TYPES};
 use crate::api::error_message;
+use crate::components::InfoTip;
 use crate::state::{use_datasets_version, use_selected_datasets};
 
 #[component]
@@ -60,7 +61,10 @@ pub fn CreateForm(datasets_path: String, default_format: String, on_add_images: 
     rsx! {
         form { class: "section-stack", novalidate: true, onsubmit: submit,
             section { class: "section-card", aria_labelledby: "create-details-title",
-                h2 { id: "create-details-title", class: "section-card-title", "Details" }
+                h2 { id: "create-details-title", class: "section-card-title",
+                    "Details "
+                    InfoTip { label: "About new datasets", text: "The dataset starts empty: 0 images, 0 labels. Add images in the Edit tab." }
+                }
                 div { class: "field",
                     label { class: "field-label", r#for: "create-name", "Name" }
                     input {
@@ -127,7 +131,6 @@ pub fn CreateForm(datasets_path: String, default_format: String, on_add_images: 
                         }
                     }
                 }
-                p { class: "field-hint", "The dataset starts empty: 0 images, 0 labels. Add images in the Edit tab." }
             }
 
             if let Some(message) = form_error() {

@@ -4,7 +4,7 @@
 
 use dioxus::prelude::*;
 
-pub use modeloid_types::train::{TrainLog, TrainPreview, TrainRecord, TrainStatus};
+pub use modeloid_types::train::{name_taken_message, TrainLog, TrainPreview, TrainRecord, TrainStatus};
 use serde::{Deserialize, Serialize};
 
 use crate::api::jobs::Job;
@@ -101,8 +101,8 @@ mod backend {
         let choice = device_choice(&env);
         // Checked now, so a mistake shows at once instead of as a failed job.
         let preview = ws.train_preview(dataset, &set, &name, choice).map_err(|e| e.to_string())?;
-        if let Some(problem) = preview.problems.first() {
-            return Err(problem.clone());
+        if let Some(problem) = preview.blocker(&name) {
+            return Err(problem);
         }
         jobs::start(JobKind::Train, vec![name.clone()], jobs::Touches::Datasets(vec![dataset]), move |ctx| {
             let reporter = ctx.reporter();
