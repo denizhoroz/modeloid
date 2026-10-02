@@ -54,10 +54,8 @@ pub const NAV: &[NavCategory] = &[
         items: &[
             item("Parameters", "parameters"),
             item("Train Model", "train"),
-            item("Test Model", "test"),
-            item("Visualize Results", "visualize-results"),
+            item("Performance", "performance"),
             item("Tune Hyperparameters", "tune"),
-            item("Test Pretrained Models", "pretrained"),
         ],
     },
 ];

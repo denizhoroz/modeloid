@@ -25,8 +25,8 @@ mod workspace_card;
 mod workspace_options;
 
 pub use appearance_settings::AppearanceSettings;
-pub use charts::{Bar, BarList, Heatmap, HistogramChart, StatTile};
-pub use choose_dataset::{PrimaryNote, SelectDatasetHint};
+pub use charts::{format_value, Bar, BarList, Heatmap, HistogramChart, LineChart, LineSeries, StatTile};
+pub use choose_dataset::{PrimaryNote, SelectDatasetHint, SelectModelHint};
 pub use credential_field::CredentialField;
 pub use decimal_input::DecimalInput;
 pub use datasets_panel::DatasetsPanel;
@@ -40,7 +40,7 @@ pub use output_choice::{OutputChoice, OutputSelect};
 #[allow(unused_imports)] // LibrariesMissing and open_python_settings: for Train Model
 pub use python_setup::{open_python_settings, LibrariesMissing, PythonAutoSetup, PythonNotice, PythonSetupCard};
 pub use resize_handle::ResizeHandle;
-pub use side_panel::{use_panel_table, PanelSwitcher, PanelTable, PanelTableState, SidePanel};
+pub use side_panel::{status_label, use_panel_table, PanelSwitcher, PanelTable, PanelTableState, SidePanel};
 pub use sidebar::Sidebar;
 pub use slider::Slider;
 pub use status_bar::StatusBar;

@@ -4,7 +4,7 @@
 
 use dioxus::prelude::*;
 
-pub use modeloid_types::train::{name_taken_message, TrainLog, TrainPreview, TrainRecord, TrainStatus};
+pub use modeloid_types::train::{column_title, name_taken_message, ImageGroup, RunImage, RunResults, TrainLog, TrainPreview, TrainRecord, TrainStatus};
 use serde::{Deserialize, Serialize};
 
 use crate::api::jobs::Job;
@@ -47,20 +47,32 @@ pub async fn train_log(name: String, offset: u64) -> Result<TrainLog, ServerFnEr
     backend::log(name, offset).await.map_err(ServerFnError::new)
 }
 
+/// What run `name` left in its `runs/` folder: results per epoch, pictures, weights.
+#[post("/api/train/results")]
+pub async fn run_results(name: String) -> Result<RunResults, ServerFnError> {
+    backend::results(name).await.map_err(ServerFnError::new)
+}
+
+/// A picture of run `name` (`/files/run/{name}/{path}`), only inside its `runs/` folder.
+#[cfg(feature = "server")]
+pub fn run_image_file(name: &str, path: &str) -> Result<std::path::PathBuf, String> {
+    backend::open()?.run_image(name, path).map_err(|e| e.to_string())
+}
+
 #[cfg(feature = "server")]
 mod backend {
     use modeloid::core::pyenv::{PyEnv, TrainDevice};
     use modeloid::core::train;
     use modeloid::{ParameterSet, Settings, Workspace};
 
-    use super::{ModelList, TrainLog, TrainPreview};
+    use super::{ModelList, RunResults, TrainLog, TrainPreview};
     use crate::api::jobs::{self, Job, JobKind};
     use crate::api::{activity, workspace};
 
     /// Most console text sent in one answer.
     const LOG_CHUNK: usize = 256 * 1024;
 
-    fn open() -> Result<Workspace, String> {
+    pub fn open() -> Result<Workspace, String> {
         let dir = workspace::current_dir().ok_or("Load or create a workspace first.")?;
         Workspace::load_from_dir(&dir).map_err(|e| format!("Couldn't open the workspace: {e}"))
     }
@@ -141,6 +153,10 @@ mod backend {
         })
         .await
         .map_err(|e| e.to_string())?
+    }
+
+    pub async fn results(name: String) -> Result<RunResults, String> {
+        tokio::task::spawn_blocking(move || open()?.train_results(&name).map_err(|e| e.to_string())).await.map_err(|e| e.to_string())?
     }
 
     pub async fn log(name: String, offset: u64) -> Result<TrainLog, String> {

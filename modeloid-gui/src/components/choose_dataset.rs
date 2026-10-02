@@ -11,6 +11,17 @@ pub fn SelectDatasetHint() -> Element {
     }
 }
 
+/// Shown while a page has no model: models are chosen in the Models table.
+#[component]
+pub fn SelectModelHint() -> Element {
+    rsx! {
+        div { class: "notice select-hint", role: "status",
+            p { "Select a model in the models panel" }
+            span { class: "select-hint-arrow", aria_hidden: "true", "→" }
+        }
+    }
+}
+
 /// For single-dataset tools when several datasets are selected.
 #[component]
 pub fn PrimaryNote(count: usize) -> Element {

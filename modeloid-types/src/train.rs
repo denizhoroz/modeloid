@@ -117,3 +117,140 @@ mod tests {
         assert_eq!(strip_ansi("plain"), "plain");
     }
 }
+
+/// What a run left in its `runs/` folder, for the Performance page.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct RunResults {
+    pub record: TrainRecord,
+    /// `results.csv` headers, trimmed (e.g. "epoch", "train/box_loss", "metrics/mAP50(B)").
+    pub columns: Vec<String>,
+    /// One row per epoch; cells that aren't numbers are NaN.
+    pub rows: Vec<Vec<f64>>,
+    /// Plots and example batches, in showing order.
+    pub images: Vec<RunImage>,
+    /// `weights/*.pt`.
+    pub weights: Vec<RunFile>,
+    /// Files that couldn't be read, as messages.
+    pub warnings: Vec<String>,
+}
+
+impl RunResults {
+    /// Values of column `name`, one per epoch.
+    pub fn column(&self, name: &str) -> Option<Vec<f64>> {
+        let i = self.columns.iter().position(|c| c == name)?;
+        Some(self.rows.iter().map(|r| r.get(i).copied().unwrap_or(f64::NAN)).collect())
+    }
+
+    /// The metric that picks the best epoch: mAP50-95 (boxes, then masks),
+    /// else top-1 accuracy, else the first metric.
+    pub fn key_metric(&self) -> Option<&str> {
+        ["metrics/mAP50-95(B)", "metrics/mAP50-95(M)", "metrics/accuracy_top1"]
+            .into_iter()
+            .find(|k| self.columns.iter().any(|c| c == k))
+            .or_else(|| self.columns.iter().map(String::as_str).find(|c| c.starts_with("metrics/")))
+    }
+
+    /// Row of the best epoch by `key_metric` (highest); `None` without metrics.
+    pub fn best_row(&self) -> Option<usize> {
+        let values = self.column(self.key_metric()?)?;
+        values.iter().enumerate().filter(|(_, v)| v.is_finite()).max_by(|a, b| a.1.total_cmp(b.1)).map(|(i, _)| i)
+    }
+}
+
+/// A picture Ultralytics saved, relative to the run's `runs/` folder.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunImage {
+    /// e.g. "BoxPR_curve.png", forward slashes.
+    pub path: String,
+    /// e.g. "Precision–recall curve (boxes)".
+    pub title: String,
+    pub group: ImageGroup,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum ImageGroup {
+    /// Curves, confusion matrices, the results overview.
+    Metrics,
+    /// What the labels look like (label distribution, correlogram).
+    Labels,
+    /// Augmented training batches.
+    Training,
+    /// Validation batches: labels and predictions.
+    Validation,
+    Other,
+}
+
+impl ImageGroup {
+    pub fn label(self) -> &'static str {
+        match self {
+            ImageGroup::Metrics => "Curves and confusion matrices",
+            ImageGroup::Labels => "Labels",
+            ImageGroup::Training => "Training batches",
+            ImageGroup::Validation => "Validation: labels and predictions",
+            ImageGroup::Other => "Other images",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunFile {
+    /// Relative to `runs/`, e.g. "weights/best.pt".
+    pub path: String,
+    pub size: u64,
+}
+
+/// Readable name of a column, e.g. "train/box_loss" → "Box loss",
+/// "metrics/mAP50-95(B)" → "mAP50-95 (boxes)".
+pub fn column_title(column: &str) -> String {
+    let name = column.rsplit('/').next().unwrap_or(column);
+    let (name, kind) = match name.strip_suffix("(B)") {
+        Some(n) => (n, " (boxes)"),
+        None => match name.strip_suffix("(M)") {
+            Some(n) => (n, " (masks)"),
+            None => (name, ""),
+        },
+    };
+    let base = match name {
+        "box_loss" => "Box loss".to_string(),
+        "cls_loss" => "Class loss".to_string(),
+        "dfl_loss" => "DFL loss".to_string(),
+        "seg_loss" => "Mask loss".to_string(),
+        "pose_loss" => "Pose loss".to_string(),
+        "kobj_loss" => "Keypoint loss".to_string(),
+        "loss" => "Loss".to_string(),
+        "precision" => "Precision".to_string(),
+        "recall" => "Recall".to_string(),
+        "accuracy_top1" => "Top-1 accuracy".to_string(),
+        "accuracy_top5" => "Top-5 accuracy".to_string(),
+        "pg0" | "pg1" | "pg2" => "Learning rate".to_string(),
+        n if n.starts_with("mAP") => n.to_string(),
+        n => {
+            let n = n.replace('_', " ");
+            let mut c = n.chars();
+            c.next().map(|f| f.to_uppercase().chain(c).collect()).unwrap_or_default()
+        }
+    };
+    format!("{base}{kind}")
+}
+
+#[cfg(test)]
+mod results_tests {
+    use super::*;
+
+    #[test]
+    fn names_columns_and_picks_the_best_epoch() {
+        assert_eq!(column_title("train/box_loss"), "Box loss");
+        assert_eq!(column_title("metrics/mAP50-95(B)"), "mAP50-95 (boxes)");
+        assert_eq!(column_title("metrics/precision(M)"), "Precision (masks)");
+        assert_eq!(column_title("metrics/accuracy_top1"), "Top-1 accuracy");
+
+        let r = RunResults {
+            columns: vec!["epoch".into(), "metrics/mAP50(B)".into(), "metrics/mAP50-95(B)".into()],
+            rows: vec![vec![1.0, 0.5, 0.2], vec![2.0, 0.6, 0.4], vec![3.0, 0.7, f64::NAN], vec![4.0, 0.6, 0.3]],
+            ..Default::default()
+        };
+        assert_eq!(r.key_metric(), Some("metrics/mAP50-95(B)"));
+        assert_eq!(r.best_row(), Some(1));
+        assert_eq!(RunResults::default().best_row(), None);
+    }
+}

@@ -9,6 +9,7 @@ use crate::pages::download::Download;
 use crate::pages::explore::Explore;
 use crate::pages::health::HealthCheck;
 use crate::pages::parameters::Parameters;
+use crate::pages::performance::Performance;
 use crate::pages::train::TrainModel;
 
 /// Placeholder page for every sidebar tool until each one is implemented.
@@ -33,6 +34,7 @@ pub fn Tool(section: String, tool: String) -> Element {
         ("dataset", "convert") => return rsx! { Convert {} },
         ("training", "parameters") => return rsx! { Parameters {} },
         ("training", "train") => return rsx! { TrainModel {} },
+        ("training", "performance") => return rsx! { Performance {} },
         _ => {}
     }
 

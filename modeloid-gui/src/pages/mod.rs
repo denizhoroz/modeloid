@@ -9,6 +9,7 @@ mod home;
 pub(crate) mod label;
 mod not_found;
 mod parameters;
+mod performance;
 mod settings;
 mod train;
 mod tool;

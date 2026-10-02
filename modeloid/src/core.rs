@@ -7,6 +7,7 @@ pub mod edit;
 pub mod health;
 pub mod io;
 pub mod labels;
+pub mod performance;
 pub mod limits;
 pub mod progress;
 pub mod pyenv;

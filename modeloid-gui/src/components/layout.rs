@@ -20,19 +20,30 @@ pub fn AppLayout() -> Element {
     // Lives here so the panel keeps its width across dataset pages.
     let panel_width = use_signal(|| 420.0);
     use_context_provider(|| PanelWidth(panel_width));
-    let section = match use_route::<Route>() {
-        Route::Tool { section, .. } => section,
-        _ => String::new(),
+    let (section, tool) = match use_route::<Route>() {
+        Route::Tool { section, tool } => (section, tool),
+        _ => (String::new(), String::new()),
     };
     let show_panel = PanelTable::for_section(&section).is_some();
     // Lives here too, so the chosen table survives page changes within a
-    // category; a page of another category switches to that category's table.
-    let mut panel_table = use_signal(|| PanelTable::for_section(&section).unwrap_or(PanelTable::Datasets));
+    // category; a page of another category switches to that category's table,
+    // and a page with a table of its own (Performance → Models) to that one.
+    let mut panel_table = use_signal(|| PanelTable::for_tool(&section, &tool).unwrap_or(PanelTable::Datasets));
     use_context_provider(|| PanelTableState(panel_table));
-    use_effect(use_reactive((&section,), move |(section,)| {
-        if let Some(table) = PanelTable::for_section(&section) {
-            panel_table.set(table);
+    // The page shown before: its category and the table it opened on.
+    let mut last = use_signal(|| (String::new(), None::<PanelTable>));
+    use_effect(use_reactive((&section, &tool), move |(section, tool)| {
+        let page = PanelTable::for_tool(&section, &tool);
+        let (last_section, last_page) = last.peek().clone();
+        let new_category = last_section != section;
+        let own_table = page != PanelTable::for_section(&section);
+        let left_own_table = last_page != PanelTable::for_section(&last_section);
+        if new_category || own_table || left_own_table {
+            if let Some(table) = page {
+                panel_table.set(table);
+            }
         }
+        last.set((section, page));
     }));
 
     rsx! {

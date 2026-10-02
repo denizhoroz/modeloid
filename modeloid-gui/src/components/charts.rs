@@ -1,5 +1,5 @@
-//! Small charts for Explore, built from HTML (no chart library): bar lists,
-//! histograms and a heatmap. One data hue (`--viz-series`), a blue
+//! Small charts, built from HTML and SVG (no chart library): bar lists,
+//! histograms, a heatmap and line charts. One data hue (`--viz-series`), a
 //! sequential ramp for the heatmap, hover tooltips from `data-tip`.
 
 use dioxus::prelude::*;
@@ -167,6 +167,142 @@ pub fn Heatmap(cells: Vec<u32>, size: usize, #[props(into)] label: String) -> El
     }
 }
 
+/// One line of a `LineChart`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LineSeries {
+    /// e.g. "train", "val"; named in the legend and the tooltips.
+    pub label: String,
+    /// One value per x; NaN leaves a gap.
+    pub values: Vec<f64>,
+    /// Second line of a pair (e.g. validation): dashed, same hue, so the
+    /// legend's words and the dash tell them apart, not a colour.
+    pub dashed: bool,
+}
+
+/// Short number for axes and tooltips: 3 significant-ish digits.
+pub fn format_value(v: f64) -> String {
+    let a = v.abs();
+    if !v.is_finite() {
+        "–".into()
+    } else if v.fract() == 0.0 && a < 1e9 {
+        // Whole numbers (epochs, counts) without decimals.
+        format!("{v:.0}")
+    } else if a >= 100.0 {
+        format!("{v:.0}")
+    } else if a >= 1.0 {
+        format!("{v:.2}")
+    } else if a >= 0.001 {
+        format!("{v:.3}")
+    } else {
+        format!("{v:.1e}")
+    }
+}
+
+/// Lines over `x` (e.g. epochs), y scaled to the values' range. Each x has a
+/// hover column with every series' value; `marker` draws a line at one x
+/// (e.g. the best epoch).
+#[component]
+pub fn LineChart(
+    x: Vec<f64>,
+    series: Vec<LineSeries>,
+    #[props(into)] label: String,
+    /// Name of x in tooltips, e.g. "Epoch".
+    #[props(into, default = "".to_string())]
+    x_name: String,
+    #[props(default)] marker: Option<usize>,
+) -> Element {
+    let n = x.len();
+    let finite = series.iter().flat_map(|s| s.values.iter().copied()).filter(|v| v.is_finite());
+    let (mut lo, mut hi) = finite.fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), v| (lo.min(v), hi.max(v)));
+    if !lo.is_finite() {
+        (lo, hi) = (0.0, 1.0);
+    } else if hi - lo < 1e-12 {
+        (lo, hi) = (lo - 0.5, hi + 0.5);
+    }
+    // x across 0..100, y from 100 (lowest) to 0 (highest), a little air.
+    let px = |i: usize| if n > 1 { i as f64 / (n - 1) as f64 * 100.0 } else { 50.0 };
+    let py = |v: f64| 96.0 - (v - lo) / (hi - lo) * 92.0;
+    // A polyline per unbroken run of values.
+    let paths: Vec<(bool, Vec<Vec<(f64, f64)>>)> = series
+        .iter()
+        .map(|s| {
+            let mut runs = Vec::new();
+            let mut run = Vec::new();
+            for (i, v) in s.values.iter().enumerate().take(n) {
+                if v.is_finite() {
+                    run.push((px(i), py(*v)));
+                } else if !run.is_empty() {
+                    runs.push(std::mem::take(&mut run));
+                }
+            }
+            if !run.is_empty() {
+                runs.push(run);
+            }
+            (s.dashed, runs)
+        })
+        .collect();
+    let first = x.first().copied().map(format_value).unwrap_or_default();
+    let last = x.last().copied().map(format_value).unwrap_or_default();
+    let legend = series.len() > 1;
+
+    rsx! {
+        figure { class: "line-chart", role: "img", aria_label: "{label}",
+            div { class: "line-chart-plot",
+                span { class: "line-chart-y line-chart-y-top", aria_hidden: "true", "{format_value(hi)}" }
+                span { class: "line-chart-y line-chart-y-bottom", aria_hidden: "true", "{format_value(lo)}" }
+                svg { class: "line-chart-svg", view_box: "0 0 100 100", preserve_aspect_ratio: "none", "aria-hidden": "true",
+                    if let Some(m) = marker.filter(|m| *m < n) {
+                        line { class: "line-chart-marker", x1: "{px(m):.2}", x2: "{px(m):.2}", y1: "0", y2: "100" }
+                    }
+                    for (si, (dashed, runs)) in paths.iter().enumerate() {
+                        for (ri, run) in runs.iter().enumerate() {
+                            if let [(cx, cy)] = run.as_slice() {
+                                // A lone value: a dot instead of a line.
+                                circle { key: "{si}-{ri}", class: "line-chart-dot", cx: "{cx:.2}", cy: "{cy:.2}", r: "1.2" }
+                            } else {
+                                polyline {
+                                    key: "{si}-{ri}",
+                                    class: if *dashed { "line-chart-line is-dashed" } else { "line-chart-line" },
+                                    points: run.iter().map(|(x, y)| format!("{x:.2},{y:.2}")).collect::<Vec<_>>().join(" "),
+                                }
+                            }
+                        }
+                    }
+                }
+                div { class: "line-chart-hits",
+                    for i in 0..n {
+                        {
+                            let values: Vec<String> = series
+                                .iter()
+                                .map(|s| {
+                                    let v = s.values.get(i).copied().unwrap_or(f64::NAN);
+                                    if legend { format!("{} {}", s.label, format_value(v)) } else { format_value(v) }
+                                })
+                                .collect();
+                            let tip = format!("{x_name} {}: {}", format_value(x[i]), values.join(", "));
+                            rsx! { div { key: "{i}", class: "line-chart-hit", "data-tip": "{tip.trim()}" } }
+                        }
+                    }
+                }
+            }
+            div { class: "line-chart-x", aria_hidden: "true",
+                span { "{first}" }
+                span { "{last}" }
+            }
+            if legend {
+                div { class: "line-chart-legend",
+                    for s in series.iter() {
+                        span { key: "{s.label}", class: "line-chart-key",
+                            span { class: if s.dashed { "line-chart-swatch is-dashed" } else { "line-chart-swatch" } }
+                            "{s.label}"
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Big number with a caption, for headline figures.
 #[component]
 pub fn StatTile(#[props(into)] label: String, #[props(into)] value: String, #[props(default)] detail: Option<String>) -> Element {
@@ -178,5 +314,19 @@ pub fn StatTile(#[props(into)] label: String, #[props(into)] value: String, #[pr
                 span { class: "stat-detail", "{detail}" }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn formats_chart_values() {
+        assert_eq!(format_value(24.0), "24");
+        assert_eq!(format_value(1.2345), "1.23");
+        assert_eq!(format_value(0.55512), "0.555");
+        assert_eq!(format_value(0.0001), "1.0e-4");
+        assert_eq!(format_value(f64::NAN), "–");
     }
 }

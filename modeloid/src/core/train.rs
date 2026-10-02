@@ -29,7 +29,7 @@ pub use modeloid_types::train::*;
 const RECORD_FILE: &str = "train.toml";
 const CONSOLE_FILE: &str = "console.log";
 /// Ultralytics' run folder name inside a run (`project` = the run folder).
-const RUNS_NAME: &str = "runs";
+pub(crate) const RUNS_NAME: &str = "runs";
 
 /// Where a dataset's images are for Ultralytics.
 #[derive(Debug, Clone, PartialEq, Eq)]

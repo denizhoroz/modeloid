@@ -43,6 +43,15 @@ impl PanelTable {
         }
     }
 
+    /// The table a page opens on: its own (Performance works on a model),
+    /// else its category's.
+    pub fn for_tool(section: &str, tool: &str) -> Option<PanelTable> {
+        match (section, tool) {
+            ("training", "performance") => Some(PanelTable::Models),
+            _ => PanelTable::for_section(section),
+        }
+    }
+
     /// The table a sidebar category opens on; `None` for pages without the panel.
     pub fn for_section(section: &str) -> Option<PanelTable> {
         match section {
@@ -361,7 +370,7 @@ const MODEL_COLUMNS: [Column; 7] = [
     Column::text("Started"),
 ];
 
-fn status_label(status: TrainStatus) -> &'static str {
+pub fn status_label(status: TrainStatus) -> &'static str {
     match status {
         TrainStatus::Running => "running",
         TrainStatus::Done => "done",

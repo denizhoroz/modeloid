@@ -38,6 +38,20 @@ pub fn plural(count: usize, word: &str) -> String {
     }
 }
 
+/// `text` for one URL path segment, or for a path when `keep_slashes`:
+/// everything but letters, digits and `-_.~` percent-encoded.
+pub fn encode_url_path(text: &str, keep_slashes: bool) -> String {
+    let mut out = String::with_capacity(text.len());
+    for b in text.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
+            b'/' if keep_slashes => out.push('/'),
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -60,5 +74,11 @@ mod tests {
     fn pluralizes() {
         assert_eq!(plural(1, "link"), "1 link");
         assert_eq!(plural(0, "link"), "0 links");
+    }
+
+    #[test]
+    fn encodes_url_paths() {
+        assert_eq!(encode_url_path("my run/a b.png", true), "my%20run/a%20b.png");
+        assert_eq!(encode_url_path("a/b", false), "a%2Fb");
     }
 }
