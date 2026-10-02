@@ -13,6 +13,7 @@ use crate::api::edit::{
 use crate::api::error_message;
 use crate::api::jobs::JobKind;
 use crate::components::{set_if_newer, use_job, use_toasts, Icon, IconName, JobProgress, PrimaryNote, SelectDatasetHint, StatTile};
+use crate::routes::Route;
 use crate::state::{use_datasets_version, use_primary_dataset, use_selected_datasets};
 use crate::util::{format_count, plural};
 
@@ -354,7 +355,7 @@ fn ImagesSection(id: u32) -> Element {
     }
 }
 
-/// How many images still need labels. The labelling tool itself is still to come.
+/// How many images still need labels, and the way into the labelling interface.
 #[component]
 fn LabellingSection(id: u32) -> Element {
     let datasets_version = use_datasets_version();
@@ -362,9 +363,11 @@ fn LabellingSection(id: u32) -> Element {
         let _ = datasets_version();
         label_status(id).await
     });
-    let toasts = use_toasts();
+    let nav = use_navigator();
 
     let current = status.read().clone();
+    // Datasets whose labels can't be read (e.g. class folders) can't be labelled here.
+    let can_label = matches!(current, Some(Ok(_)));
     rsx! {
         section { class: "section-card", aria_labelledby: "edit-labelling-title",
             h2 { id: "edit-labelling-title", class: "section-card-title", "Labelling" }
@@ -386,7 +389,10 @@ fn LabellingSection(id: u32) -> Element {
                 button {
                     class: "button",
                     r#type: "button",
-                    onclick: move |_| toasts.info("The labelling interface isn't built yet."),
+                    disabled: !can_label,
+                    onclick: move |_| {
+                        nav.push(Route::Label { id, index: 0 });
+                    },
                     "Open labelling"
                 }
             }

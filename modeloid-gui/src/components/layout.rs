@@ -4,6 +4,11 @@ use crate::components::{provide_toasts, Icon, IconName, PanelTable, PanelTableSt
 use crate::routes::Route;
 use crate::state::{provide_activity_state, provide_workspace_state};
 
+/// Width of the right-hand panel, shared by the tool pages' side panel and
+/// the labelling page's Classes panel. Provided by `AppLayout`.
+#[derive(Clone, Copy)]
+pub struct PanelWidth(pub Signal<f64>);
+
 /// App shell: sidebar on the left, current page on the right.
 /// On narrow screens the sidebar becomes a drawer opened from the top bar.
 #[component]
@@ -14,6 +19,7 @@ pub fn AppLayout() -> Element {
     let mut drawer_open = use_signal(|| false);
     // Lives here so the panel keeps its width across dataset pages.
     let panel_width = use_signal(|| 420.0);
+    use_context_provider(|| PanelWidth(panel_width));
     let section = match use_route::<Route>() {
         Route::Tool { section, .. } => section,
         _ => String::new(),

@@ -33,7 +33,7 @@ pub use fonts::Fonts;
 pub use icon::{Icon, IconName};
 pub use info_tip::InfoTip;
 pub use job_progress::{set_if_newer, use_job, JobProgress};
-pub use layout::AppLayout;
+pub use layout::{AppLayout, PanelWidth};
 pub use number_input::NumberInput;
 pub use output_choice::{OutputChoice, OutputSelect};
 #[allow(unused_imports)] // LibrariesMissing and open_python_settings: for Train Model

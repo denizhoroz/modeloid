@@ -6,6 +6,7 @@ mod download;
 mod explore;
 mod health;
 mod home;
+pub(crate) mod label;
 mod not_found;
 mod parameters;
 mod settings;
@@ -14,6 +15,7 @@ mod tool;
 
 pub use create_workspace::CreateWorkspace;
 pub use home::Home;
+pub use label::Label;
 pub use not_found::NotFound;
 pub use settings::Settings;
 pub use tool::Tool;

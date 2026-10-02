@@ -3911,3 +3911,341 @@ button.bar-row:hover,
     pointer-events: none;
     opacity: 0.6;
 }
+
+/* ==========================================================================
+   Labelling interface: tools | image (bar above) | handle | Classes panel
+   ========================================================================== */
+.label-page {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto min(var(--panel-width), 50%);
+    height: calc(100dvh - var(--statusbar-height));
+    outline: none;
+}
+
+.label-tools {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-1);
+    padding: var(--space-2) var(--space-1);
+    border-right: 1px solid var(--color-border);
+    background: var(--color-surface);
+}
+
+.label-tools .label-tool {
+    width: 36px;
+    height: 36px;
+    color: var(--color-fg-muted);
+}
+
+.label-tools .label-tool:hover:not(:disabled) {
+    color: var(--color-fg);
+}
+
+.label-tools .label-tool.is-active {
+    background: var(--color-accent-soft);
+    color: var(--color-accent-fg);
+    box-shadow: inset 2px 0 0 var(--color-accent);
+}
+
+.label-tools .label-tool:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
+.label-tools-rule {
+    width: 24px;
+    margin: var(--space-1) 0;
+    border: 0;
+    border-top: 1px solid var(--color-border);
+}
+
+.label-main {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+}
+
+.label-topbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-1) var(--space-3);
+    border-bottom: 1px solid var(--color-border);
+    background: var(--color-surface);
+}
+
+.label-topbar-info {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    font-size: var(--text-sm);
+}
+
+.label-topbar-info .tag {
+    flex-shrink: 0;
+}
+
+.label-image-name {
+    overflow: hidden;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.label-save {
+    flex-shrink: 0;
+    margin-left: var(--space-3);
+    color: var(--color-fg-muted);
+    font-size: var(--text-xs);
+    white-space: nowrap;
+}
+
+.label-save.is-saved {
+    color: var(--color-accent-fg);
+}
+
+.label-save.is-failed {
+    color: var(--color-danger-fg);
+}
+
+.link-button {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-decoration: underline;
+    cursor: pointer;
+}
+
+.label-topbar-position {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    font-size: var(--text-sm);
+    font-variant-numeric: tabular-nums;
+}
+
+.input.label-jump {
+    width: 7ch;
+    text-align: right;
+}
+
+.label-total {
+    color: var(--color-fg-muted);
+    white-space: nowrap;
+}
+
+.label-topbar-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--space-1);
+}
+
+.label-topbar-actions .icon-button {
+    width: 32px;
+    height: 32px;
+}
+
+.label-topbar-actions .icon-button:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
+.input.label-filter {
+    width: auto;
+}
+
+.label-notice {
+    margin: var(--space-2) var(--space-3) 0;
+}
+
+.label-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-3);
+    padding: var(--space-4, 16px);
+    color: var(--color-fg-muted);
+}
+
+.label-stage-wrap {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+}
+
+/* Below the image: a quiet checkerboard, so transparent and dark images both show */
+.label-stage {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    background-color: var(--color-bg);
+    background-image:
+        linear-gradient(45deg, var(--color-surface) 25%, transparent 25%, transparent 75%, var(--color-surface) 75%),
+        linear-gradient(45deg, var(--color-surface) 25%, transparent 25%, transparent 75%, var(--color-surface) 75%);
+    background-position: 0 0, 8px 8px;
+    background-size: 16px 16px;
+    user-select: none;
+}
+
+.label-frame {
+    position: absolute;
+}
+
+.label-frame img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: fill;
+    -webkit-user-drag: none;
+}
+
+.label-overlay {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+    pointer-events: none;
+}
+
+.label-shape {
+    fill: color-mix(in srgb, var(--label-color) 14%, transparent);
+    stroke: var(--label-color);
+    stroke-width: 1.5px;
+    vector-effect: non-scaling-stroke;
+}
+
+.label-shape.is-selected {
+    fill: color-mix(in srgb, var(--label-color) 26%, transparent);
+    stroke-width: 2.5px;
+}
+
+.label-draft {
+    fill: color-mix(in srgb, var(--label-color) 14%, transparent);
+    stroke: var(--label-color);
+    stroke-width: 1.5px;
+    stroke-dasharray: 5 3;
+    vector-effect: non-scaling-stroke;
+}
+
+.label-handle {
+    fill: #ffffff;
+    stroke: #111111;
+    stroke-width: 1px;
+    vector-effect: non-scaling-stroke;
+}
+
+/* Over the image only, so pointer positions are relative to the stage */
+.label-hit {
+    position: absolute;
+    inset: 0;
+    touch-action: none;
+}
+
+.box-tag.label-tag {
+    color: #111111;
+    white-space: nowrap;
+    pointer-events: none;
+}
+
+.label-classes {
+    border-left: 0;
+}
+
+.label-classes-title {
+    flex: 1;
+    margin: 0;
+}
+
+.label-classes-search {
+    padding: var(--space-2) var(--space-3);
+    border-bottom: 1px solid var(--color-border);
+}
+
+.class-swatch {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    margin-right: var(--space-2);
+    border-radius: 2px;
+    vertical-align: middle;
+}
+
+.data-table th.name:has(.class-swatch) {
+    display: flex;
+    align-items: center;
+}
+
+.data-table .name .row-pick {
+    flex: 1;
+    min-width: 0;
+}
+
+.data-table tbody tr.is-checked {
+    background: var(--color-surface-hover);
+}
+
+.input.label-rename {
+    min-height: 22px;
+    padding: 0 var(--space-1);
+    font-size: var(--text-xs);
+}
+
+.label-add-class {
+    display: flex;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+}
+
+.label-add-class .button {
+    flex-shrink: 0;
+    gap: var(--space-1);
+}
+
+@media (max-width: 767px) {
+    /* Tools above the image, the Classes panel below it */
+    .label-page {
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-rows: auto minmax(60dvh, 1fr) auto;
+        height: auto;
+        min-height: calc(100dvh - var(--statusbar-height));
+    }
+
+    .label-page > .resize-handle {
+        display: none;
+    }
+
+    .label-tools {
+        flex-direction: row;
+        flex-wrap: wrap;
+        border-right: 0;
+        border-bottom: 1px solid var(--color-border);
+    }
+
+    .label-tools-rule {
+        width: 0;
+        height: 24px;
+        margin: 0 var(--space-1);
+        border-top: 0;
+        border-left: 1px solid var(--color-border);
+    }
+
+    .label-topbar {
+        grid-template-columns: minmax(0, 1fr) auto;
+    }
+
+    .label-topbar-info {
+        grid-column: 1 / -1;
+    }
+
+    .label-classes {
+        max-height: 50dvh;
+        border-top: 1px solid var(--color-border);
+    }
+}

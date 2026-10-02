@@ -18,6 +18,17 @@ pub enum IconName {
     Refresh,
     EyeOff,
     Warning,
+    Pointer,
+    Square,
+    Hand,
+    Trash,
+    Undo,
+    Redo,
+    ZoomIn,
+    ZoomOut,
+    Fit,
+    ChevronLeft,
+    ChevronRight,
 }
 
 /// Decorative icon, hidden from screen readers. Pair it with visible text
@@ -97,6 +108,48 @@ fn shapes(name: IconName) -> Element {
         IconName::Refresh => rsx! {
             path { d: "M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" }
             path { d: "M21 3v5h-5" }
+        },
+        IconName::Pointer => rsx! {
+            path { d: "M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z" }
+        },
+        IconName::Square => rsx! {
+            rect { width: "18", height: "18", x: "3", y: "3", rx: "2" }
+        },
+        IconName::Hand => rsx! {
+            path { d: "M18 11V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2" }
+            path { d: "M14 10V4a2 2 0 0 0-2-2a2 2 0 0 0-2 2v2" }
+            path { d: "M10 10.5V6a2 2 0 0 0-2-2a2 2 0 0 0-2 2v8" }
+            path { d: "M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15" }
+        },
+        IconName::Trash => rsx! {
+            path { d: "M3 6h18" }
+            path { d: "M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" }
+            path { d: "M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" }
+        },
+        IconName::Undo => rsx! {
+            path { d: "M9 14 4 9l5-5" }
+            path { d: "M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5a5.5 5.5 0 0 1-5.5 5.5H11" }
+        },
+        IconName::Redo => rsx! {
+            path { d: "m15 14 5-5-5-5" }
+            path { d: "M20 9H9.5A5.5 5.5 0 0 0 4 14.5A5.5 5.5 0 0 0 9.5 20H13" }
+        },
+        IconName::ZoomIn => rsx! {
+            circle { cx: "11", cy: "11", r: "8" }
+            path { d: "m21 21-4.3-4.3M11 8v6M8 11h6" }
+        },
+        IconName::ZoomOut => rsx! {
+            circle { cx: "11", cy: "11", r: "8" }
+            path { d: "m21 21-4.3-4.3M8 11h6" }
+        },
+        IconName::Fit => rsx! {
+            path { d: "M8 3H5a2 2 0 0 0-2 2v3M21 8V5a2 2 0 0 0-2-2h-3M3 16v3a2 2 0 0 0 2 2h3M16 21h3a2 2 0 0 0 2-2v-3" }
+        },
+        IconName::ChevronLeft => rsx! {
+            path { d: "m15 18-6-6 6-6" }
+        },
+        IconName::ChevronRight => rsx! {
+            path { d: "m9 18 6-6-6-6" }
         },
         IconName::Wrench => rsx! {
             path { d: "M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" }

@@ -63,6 +63,74 @@ pub fn is_image_name(name: &str) -> bool {
         .is_some_and(|(_, ext)| IMAGE_EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str()))
 }
 
+/// One label of the labelling interface, in image pixels.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LabelObject {
+    /// Index into the class list.
+    pub class: usize,
+    /// x, y (top left), width, height.
+    pub bbox: [f64; 4],
+    /// Outline of a segmentation label; shown, not drawn (boxes only for now).
+    pub polygon: Option<Vec<[f64; 2]>>,
+}
+
+/// An image opened in the labelling interface, with its labels.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LabelImage {
+    /// Position in the dataset's images (stable while its files don't change).
+    pub index: usize,
+    pub name: String,
+    pub split: Option<crate::Split>,
+    pub width: u32,
+    pub height: u32,
+    pub objects: Vec<LabelObject>,
+}
+
+/// What the labelling interface needs about a dataset when it opens.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LabelSession {
+    /// The dataset's name, sent back with every change: ids are renumbered
+    /// after jobs, so a stale page is refused rather than changing another dataset.
+    pub dataset: String,
+    /// Label format, e.g. "yolo".
+    pub format: String,
+    pub classes: Vec<String>,
+    /// Labels of each class over the whole dataset.
+    pub totals: Vec<u32>,
+    /// Whether each image has at least one label, by index.
+    pub labelled: Vec<bool>,
+    /// Why the dataset can't be changed right now (a job works on it).
+    pub busy: Option<String>,
+}
+
+/// What saving one image's labels changed.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SavedLabels {
+    pub totals: Vec<u32>,
+    pub labelled: bool,
+}
+
+/// A new or renamed class name, trimmed: not empty, at most 64 characters,
+/// no line breaks, and not one of `existing` (ignoring case) other than the
+/// one at `except` (the class being renamed).
+pub fn validate_class_name(name: &str, existing: &[String], except: Option<usize>) -> Result<String, String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("Enter a class name.".into());
+    }
+    if name.chars().count() > 64 {
+        return Err("Class names can be at most 64 characters.".into());
+    }
+    if name.chars().any(char::is_control) {
+        return Err("Class names can't contain line breaks or tabs.".into());
+    }
+    let taken = existing.iter().enumerate().any(|(i, c)| Some(i) != except && c.to_lowercase() == name.to_lowercase());
+    if taken {
+        return Err(format!("There already is a class called '{name}'."));
+    }
+    Ok(name.to_string())
+}
+
 /// Tags typed as a comma separated list: trimmed, empty ones and repeats dropped.
 pub fn parse_tags(text: &str) -> Vec<String> {
     let mut tags: Vec<String> = Vec::new();
@@ -82,6 +150,17 @@ mod tests {
     fn parses_tags() {
         assert_eq!(parse_tags(" cars, night ,,cars, "), ["cars", "night"]);
         assert!(parse_tags("  ").is_empty());
+    }
+
+    #[test]
+    fn validates_class_names() {
+        let existing = vec!["Car".to_string(), "bus".to_string()];
+        assert_eq!(validate_class_name("  truck ", &existing, None), Ok("truck".into()));
+        assert!(validate_class_name(" ", &existing, None).is_err());
+        assert!(validate_class_name("car", &existing, None).is_err(), "case doesn't make it new");
+        assert_eq!(validate_class_name("car", &existing, Some(0)), Ok("car".into()), "renaming itself");
+        assert!(validate_class_name("a\nb", &existing, None).is_err());
+        assert!(validate_class_name(&"x".repeat(65), &existing, None).is_err());
     }
 
     #[test]

@@ -313,7 +313,7 @@ fn read_yolo(dir: &Path, progress: &dyn Progress) -> io::Result<LabelSet> {
 }
 
 /// `.../images/x.jpg` → `.../labels/x.txt`; without an `images` folder, `x.txt` next to the image.
-fn yolo_label_path(image: &Path) -> PathBuf {
+pub(crate) fn yolo_label_path(image: &Path) -> PathBuf {
     let parts: Vec<_> = image.components().collect();
     let images_at = parts.iter().rposition(|c| c.as_os_str().eq_ignore_ascii_case("images"));
     let path = match images_at {
@@ -362,32 +362,36 @@ fn write_yolo(set: &LabelSet, dir: &Path, progress: &dyn Progress) -> io::Result
         }
 
         let name = names.take(image.split, &image.name);
-
-        let (w, h) = (image.width.max(1) as f64, image.height.max(1) as f64);
-        let mut text = String::new();
-        for object in &image.objects {
-            text.push_str(&object.class.to_string());
-            match &object.polygon {
-                Some(points) => {
-                    for [x, y] in points {
-                        text.push_str(&format!(" {} {}", num(x / w), num(y / h)));
-                    }
-                }
-                None => {
-                    let b = object.bbox;
-                    let (cx, cy) = ((b.x + b.w / 2.0) / w, (b.y + b.h / 2.0) / h);
-                    text.push_str(&format!(" {} {} {} {}", num(cx), num(cy), num(b.w / w), num(b.h / h)));
-                }
-            }
-            text.push('\n');
-        }
         let label = labels_dir.join(Path::new(&name).with_extension("txt"));
-        jobs.push(FileJob { from: &image.file, to: images_dir.join(&name), label: Some((label, text)) });
+        jobs.push(FileJob { from: &image.file, to: images_dir.join(&name), label: Some((label, yolo_text(image))) });
     }
 
     let yaml = data_yaml(&set.classes, &splits);
     fs::write(dir.join("data.yaml"), &yaml)?;
     Ok(Written { bytes: write_files(&jobs, progress)? + yaml.len() as u64 })
+}
+
+/// The YOLO label file of `image`: a line per object, normalized to 0..1.
+pub(crate) fn yolo_text(image: &ImageLabels) -> String {
+    let (w, h) = (image.width.max(1) as f64, image.height.max(1) as f64);
+    let mut text = String::new();
+    for object in &image.objects {
+        text.push_str(&object.class.to_string());
+        match &object.polygon {
+            Some(points) => {
+                for [x, y] in points {
+                    text.push_str(&format!(" {} {}", num(x / w), num(y / h)));
+                }
+            }
+            None => {
+                let b = object.bbox;
+                let (cx, cy) = ((b.x + b.w / 2.0) / w, (b.y + b.h / 2.0) / h);
+                text.push_str(&format!(" {} {} {} {}", num(cx), num(cy), num(b.w / w), num(b.h / h)));
+            }
+        }
+        text.push('\n');
+    }
+    text
 }
 
 /// Ultralytics `data.yaml`. Split paths are relative to the yaml's folder.
@@ -421,17 +425,17 @@ pub fn data_yaml(classes: &[String], splits: &BTreeSet<Option<Split>>) -> String
 // ---------- COCO ----------
 
 #[derive(Deserialize)]
-struct CocoFile {
-    images: Vec<CocoImage>,
+pub(crate) struct CocoFile {
+    pub(crate) images: Vec<CocoImage>,
     annotations: Vec<CocoAnnotation>,
     #[serde(default)]
     categories: Vec<Value>,
 }
 
 #[derive(Deserialize)]
-struct CocoImage {
+pub(crate) struct CocoImage {
     id: i64,
-    file_name: String,
+    pub(crate) file_name: String,
     #[serde(default)]
     width: u32,
     #[serde(default)]
@@ -450,8 +454,10 @@ struct CocoAnnotation {
 
 fn read_coco(dir: &Path, progress: &dyn Progress) -> io::Result<LabelSet> {
     let mut set = LabelSet::default();
+    let files = walk(dir)?;
+    let mut listed = HashSet::new();
 
-    for path in walk(dir)?.iter().filter(|p| extension(p) == "json") {
+    for path in files.iter().filter(|p| extension(p) == "json") {
         let Ok(coco) = serde_json::from_slice::<CocoFile>(&fs::read(path)?) else { continue };
         let json_dir = path.parent().unwrap_or(dir);
 
@@ -462,6 +468,7 @@ fn read_coco(dir: &Path, progress: &dyn Progress) -> io::Result<LabelSet> {
         for img in &coco.images {
             tick(progress)?;
             let file = json_dir.join(&img.file_name);
+            listed.insert(file.clone());
             let (width, height) = if img.width > 0 && img.height > 0 {
                 (img.width, img.height)
             } else {
@@ -493,12 +500,20 @@ fn read_coco(dir: &Path, progress: &dyn Progress) -> io::Result<LabelSet> {
             set.images[image].objects.push(Object { class, bbox, polygon });
         }
     }
+
+    // Images no file lists yet (e.g. just added to a new dataset): no labels.
+    for file in files.iter().filter(|p| is_image(p) && !listed.contains(*p)) {
+        tick(progress)?;
+        if let Some((width, height)) = image_size(file, &mut set.warnings) {
+            set.images.push(new_image(file, file.strip_prefix(dir).unwrap_or(file), width, height));
+        }
+    }
     Ok(set)
 }
 
 /// (id, name) of real classes. Roboflow adds a root category (supercategory
 /// "none") that every real class points to; it's left out.
-fn coco_categories(categories: &[Value]) -> Vec<(i64, String)> {
+pub(crate) fn coco_categories(categories: &[Value]) -> Vec<(i64, String)> {
     let is_root = |c: &Value| {
         let name = c["name"].as_str();
         c["supercategory"].as_str() == Some("none")
@@ -538,20 +553,7 @@ fn write_coco(set: &LabelSet, dir: &Path, progress: &dyn Progress) -> io::Result
         let (images, annotations) = splits.entry(image.split).or_default();
         images.push(json!({ "id": image_id, "file_name": name, "width": image.width, "height": image.height }));
         for object in &image.objects {
-            let b = object.bbox;
-            let (segmentation, area) = match &object.polygon {
-                Some(points) => (json!([points.iter().flatten().collect::<Vec<_>>()]), polygon_area(points)),
-                None => (json!([]), b.area()),
-            };
-            annotations.push(json!({
-                "id": annotation_id,
-                "image_id": image_id,
-                "category_id": object.class + 1,
-                "bbox": [b.x, b.y, b.w, b.h],
-                "area": area,
-                "segmentation": segmentation,
-                "iscrowd": 0,
-            }));
+            annotations.push(coco_annotation(object, annotation_id, image_id as i64, object.class as i64 + 1));
             annotation_id += 1;
         }
     }
@@ -572,6 +574,24 @@ fn write_coco(set: &LabelSet, dir: &Path, progress: &dyn Progress) -> io::Result
     Ok(Written { bytes })
 }
 
+/// One COCO annotation entry for `object`.
+pub(crate) fn coco_annotation(object: &Object, id: i64, image_id: i64, category_id: i64) -> Value {
+    let b = object.bbox;
+    let (segmentation, area) = match &object.polygon {
+        Some(points) => (json!([points.iter().flatten().collect::<Vec<_>>()]), polygon_area(points)),
+        None => (json!([]), b.area()),
+    };
+    json!({
+        "id": id,
+        "image_id": image_id,
+        "category_id": category_id,
+        "bbox": [b.x, b.y, b.w, b.h],
+        "area": area,
+        "segmentation": segmentation,
+        "iscrowd": 0,
+    })
+}
+
 fn polygon_area(points: &[[f64; 2]]) -> f64 {
     let n = points.len();
     let twice: f64 = (0..n).map(|i| points[i][0] * points[(i + 1) % n][1] - points[(i + 1) % n][0] * points[i][1]).sum();
@@ -580,8 +600,18 @@ fn polygon_area(points: &[[f64; 2]]) -> f64 {
 
 // ---------- Pascal VOC ----------
 
+/// Class list of a VOC dataset, one name per line, in its folder. VOC files
+/// only name the classes they use; this keeps the order and unused ones.
+pub const VOC_CLASSES_FILE: &str = "classes.txt";
+
 fn read_voc(dir: &Path, progress: &dyn Progress) -> io::Result<LabelSet> {
     let mut set = LabelSet::default();
+    let listed = dir.join(VOC_CLASSES_FILE);
+    if listed.is_file() {
+        for name in read_lossy(&listed)?.lines().map(str::trim).filter(|n| !n.is_empty()) {
+            set.class_index(name);
+        }
+    }
 
     let files = walk(dir)?;
     let images: Vec<&PathBuf> = files.iter().filter(|p| is_image(p)).collect();
@@ -644,30 +674,35 @@ fn write_voc(set: &LabelSet, dir: &Path, progress: &dyn Progress) -> io::Result<
             fs::create_dir_all(&split_dir)?;
         }
         let name = names.take(image.split, &image.name);
-
-        let mut xml = format!(
-            "<annotation>\n\t<filename>{}</filename>\n\t<size>\n\t\t<width>{}</width>\n\t\t<height>{}</height>\n\t\t<depth>3</depth>\n\t</size>\n",
-            escape_xml(&name),
-            image.width,
-            image.height
-        );
-        for object in &image.objects {
-            let b = object.bbox;
-            let class = set.classes.get(object.class).map_or("unknown", String::as_str);
-            xml.push_str(&format!(
-                "\t<object>\n\t\t<name>{}</name>\n\t\t<bndbox>\n\t\t\t<xmin>{}</xmin>\n\t\t\t<ymin>{}</ymin>\n\t\t\t<xmax>{}</xmax>\n\t\t\t<ymax>{}</ymax>\n\t\t</bndbox>\n\t</object>\n",
-                escape_xml(class),
-                num(b.x),
-                num(b.y),
-                num(b.x + b.w),
-                num(b.y + b.h)
-            ));
-        }
-        xml.push_str("</annotation>\n");
+        let xml = voc_xml(set, image, &name);
         let label = split_dir.join(Path::new(&name).with_extension("xml"));
         jobs.push(FileJob { from: &image.file, to: split_dir.join(&name), label: Some((label, xml)) });
     }
     Ok(Written { bytes: write_files(&jobs, progress)? })
+}
+
+/// The VOC annotation file of `image`, saved under the file name `name`.
+pub(crate) fn voc_xml(set: &LabelSet, image: &ImageLabels, name: &str) -> String {
+    let mut xml = format!(
+        "<annotation>\n\t<filename>{}</filename>\n\t<size>\n\t\t<width>{}</width>\n\t\t<height>{}</height>\n\t\t<depth>3</depth>\n\t</size>\n",
+        escape_xml(name),
+        image.width,
+        image.height
+    );
+    for object in &image.objects {
+        let b = object.bbox;
+        let class = set.classes.get(object.class).map_or("unknown", String::as_str);
+        xml.push_str(&format!(
+            "\t<object>\n\t\t<name>{}</name>\n\t\t<bndbox>\n\t\t\t<xmin>{}</xmin>\n\t\t\t<ymin>{}</ymin>\n\t\t\t<xmax>{}</xmax>\n\t\t\t<ymax>{}</ymax>\n\t\t</bndbox>\n\t</object>\n",
+            escape_xml(class),
+            num(b.x),
+            num(b.y),
+            num(b.x + b.w),
+            num(b.y + b.h)
+        ));
+    }
+    xml.push_str("</annotation>\n");
+    xml
 }
 
 /// Text inside the first `<tag>...</tag>`. Enough for VOC files, not a general XML parser.
@@ -786,7 +821,7 @@ impl UniqueNames {
 }
 
 /// All files under `dir`, sorted so reads are deterministic.
-fn walk(dir: &Path) -> io::Result<Vec<PathBuf>> {
+pub(crate) fn walk(dir: &Path) -> io::Result<Vec<PathBuf>> {
     let mut files = Vec::new();
     let mut pending = vec![dir.to_path_buf()];
     while let Some(current) = pending.pop() {
@@ -807,11 +842,11 @@ fn is_image(path: &Path) -> bool {
     IMAGE_EXTENSIONS.contains(&extension(path).as_str())
 }
 
-fn extension(path: &Path) -> String {
+pub(crate) fn extension(path: &Path) -> String {
     path.extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).unwrap_or_default()
 }
 
-fn read_lossy(path: &Path) -> io::Result<String> {
+pub(crate) fn read_lossy(path: &Path) -> io::Result<String> {
     Ok(String::from_utf8_lossy(&fs::read(path)?).into_owned())
 }
 

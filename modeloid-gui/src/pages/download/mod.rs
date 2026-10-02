@@ -39,6 +39,13 @@ pub fn Download() -> Element {
     let workspace = use_workspace();
     let checked = use_workspace_checked();
     let mut tab = use_signal(|| Tab::Create);
+    // Coming back from the labelling interface: open on Edit.
+    use_hook(move || {
+        if *crate::pages::label::RETURN_TO_EDIT.peek() {
+            *crate::pages::label::RETURN_TO_EDIT.write() = false;
+            tab.set(Tab::Edit);
+        }
+    });
 
     rsx! {
         document::Title { "Datasets · Modeloid" }

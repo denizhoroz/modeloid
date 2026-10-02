@@ -136,6 +136,13 @@ impl Dataset {
         self.touch();
     }
 
+    /// Updates the label count and class list after labels were edited in place.
+    pub fn set_labels(&mut self, label_count: u32, class_names: Vec<String>) {
+        self.label_count = label_count;
+        self.class_names = class_names;
+        self.touch();
+    }
+
     pub fn load_from_dir(dir: &Path) -> Result<Self, crate::Error> {
         let path = dir.join(DATASET_FILE);
         let contents = fs::read_to_string(&path)

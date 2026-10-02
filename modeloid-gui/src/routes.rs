@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 
 use crate::components::AppLayout;
-use crate::pages::{CreateWorkspace, Home, NotFound, Settings, Tool};
+use crate::pages::{CreateWorkspace, Home, Label, NotFound, Settings, Tool};
 
 /// Every page of the app. Tool pages share one route; `section` and `tool`
 /// are slugs looked up in `nav::NAV`.
@@ -17,6 +17,9 @@ pub enum Route {
 
         #[route("/settings")]
         Settings {},
+
+        #[route("/label/:id/:index")]
+        Label { id: u32, index: usize },
 
         #[route("/:section/:tool")]
         Tool { section: String, tool: String },
@@ -38,5 +41,6 @@ mod tests {
             "/dataset/datasets".parse::<Route>().unwrap(),
             Route::Tool { section: "dataset".into(), tool: "datasets".into() }
         );
+        assert_eq!("/label/3/12".parse::<Route>().unwrap(), Route::Label { id: 3, index: 12 });
     }
 }

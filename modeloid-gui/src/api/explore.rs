@@ -30,7 +30,7 @@ pub fn image_url(id: u32, index: usize) -> String {
 }
 
 #[cfg(feature = "server")]
-pub use backend::{image_file, labels as cached_labels};
+pub use backend::{edit_labels, image_file, labels as cached_labels};
 
 #[cfg(feature = "server")]
 mod backend {
@@ -51,11 +51,19 @@ mod backend {
         Workspace::load_from_dir(&dir).map_err(|e| format!("Couldn't open the workspace: {e}"))
     }
 
+    /// Label edits one at a time, so two can't change the cached set at once.
+    static EDITS: Mutex<()> = Mutex::new(());
+
+    /// Cache key of dataset `id` in folder `dir`: its dataset.toml's stamp.
+    fn cache_key(ws: &Workspace, dir: &std::path::Path, id: u32) -> Result<String, String> {
+        let meta = std::fs::metadata(dir.join("dataset.toml")).map_err(|e| e.to_string())?;
+        Ok(format!("{}|{id}|{}|{:?}", ws.path().display(), meta.len(), meta.modified().ok()))
+    }
+
     /// Dataset `id`'s folder and labels, read only when it isn't the cached one.
     pub fn labels(ws: &Workspace, id: u32, progress: &dyn Progress) -> Result<(PathBuf, Arc<LabelSet>), String> {
         let (dir, _) = ws.find_dataset(id).map_err(|e| e.to_string())?;
-        let meta = std::fs::metadata(dir.join("dataset.toml")).map_err(|e| e.to_string())?;
-        let key = format!("{}|{id}|{}|{:?}", ws.path().display(), meta.len(), meta.modified().ok());
+        let key = cache_key(ws, &dir, id)?;
 
         if let Some((cached_key, set)) = LABELS.lock().unwrap().as_ref() {
             if *cached_key == key {
@@ -66,6 +74,24 @@ mod backend {
         let set = Arc::new(set);
         *LABELS.lock().unwrap() = Some((key, set.clone()));
         Ok((dir, set))
+    }
+
+    /// Runs `change` (a labelling edit, which rewrites dataset.toml) on dataset
+    /// `id`'s labels and keeps the changed set cached, so the next request
+    /// doesn't read every label file again. A failed change drops the cache:
+    /// the files may be half changed.
+    pub fn edit_labels<T>(ws: &Workspace, id: u32, change: impl FnOnce(&mut LabelSet) -> Result<T, String>) -> Result<T, String> {
+        let _one_at_a_time = EDITS.lock().unwrap_or_else(|e| e.into_inner());
+        let (dir, set) = labels(ws, id, &Silent)?;
+        *LABELS.lock().unwrap() = None;
+        // Usually the only reference now, so nothing is copied.
+        let mut set = Arc::try_unwrap(set).unwrap_or_else(|shared| (*shared).clone());
+        let result = change(&mut set);
+        if result.is_ok() {
+            let key = cache_key(ws, &dir, id)?;
+            *LABELS.lock().unwrap() = Some((key, Arc::new(set)));
+        }
+        result
     }
 
     /// Opens the workspace and names the load after dataset `id`.
