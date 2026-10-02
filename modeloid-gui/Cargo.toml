@@ -15,7 +15,9 @@ modeloid-types = { path = "../modeloid-types" }
 # Server only: the server runs on the user's machine, so it can use the filesystem and native dialogs
 modeloid = { path = "../modeloid", optional = true }
 rfd = { version = "0.17.2", optional = true }
-tokio = { version = "1.53.1", features = ["rt", "sync", "time", "macros"], optional = true }
+tokio = { version = "1.53.1", features = ["rt", "sync", "time", "macros", "fs", "io-util"], optional = true }
+# Reads uploaded files as streams (see api/edit.rs)
+futures-util = { version = "0.3", optional = true }
 # Brings native dialogs to the front (see api/dialogs.rs)
 raw-window-handle = { version = "0.6", optional = true }
 
@@ -31,7 +33,7 @@ default = ["web"]
 web = ["dioxus/web"]
 desktop = ["dioxus/desktop"]
 mobile = ["dioxus/mobile"]
-server = ["dioxus/server", "dep:modeloid", "dep:rfd", "dep:tokio", "dep:raw-window-handle", "dep:windows-sys"]
+server = ["dioxus/server", "dep:modeloid", "dep:rfd", "dep:tokio", "dep:futures-util", "dep:raw-window-handle", "dep:windows-sys"]
 
 [dev-dependencies]
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time"] }

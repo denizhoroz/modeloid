@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 pub enum JobKind {
     Download,
     Import,
+    AddImages,
     HealthCheck,
     HealthFix,
     Rescan,
@@ -35,6 +36,7 @@ impl JobKind {
         match self {
             JobKind::Download => "Download",
             JobKind::Import => "Import",
+            JobKind::AddImages => "Add images",
             JobKind::HealthCheck => "Health Check",
             JobKind::HealthFix => "Health Check fix",
             JobKind::Rescan => "Rescan",
@@ -122,7 +124,7 @@ pub async fn cancel_job(kind: JobKind) -> Result<(), ServerFnError> {
 }
 
 #[cfg(feature = "server")]
-pub use backend::{latest_all, renumber_when_idle, rerun_item, running, start, ItemCtx, Touches};
+pub use backend::{busy, latest_all, renumber_when_idle, rerun_item, running, start, ItemCtx, Touches};
 
 #[cfg(feature = "server")]
 mod backend {
@@ -215,6 +217,16 @@ mod backend {
     /// The jobs that haven't finished yet.
     pub fn running() -> Vec<Job> {
         JOBS.lock().unwrap().values().filter(|s| !s.finished()).map(|s| s.snapshot()).collect()
+    }
+
+    /// Why dataset `id` can't be changed right now: the running job working on it.
+    pub fn busy(id: u32) -> Result<(), String> {
+        let jobs = JOBS.lock().unwrap();
+        let touches = Touches::Datasets(vec![id]);
+        match jobs.values().find(|s| !s.finished() && s.touches.overlaps(&touches)) {
+            Some(other) => Err(format!("The {} job is working on this dataset. Wait for it to finish.", other.snapshot().kind.label())),
+            None => Ok(()),
+        }
     }
 
     /// Whether a `kind` job touching `touches` may start now, given the

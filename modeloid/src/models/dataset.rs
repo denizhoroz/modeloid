@@ -204,6 +204,23 @@ impl Dataset {
         &self.description
     }
 
+    pub fn dataset_link(&self) -> &str {
+        &self.dataset_link
+    }
+
+    pub fn license(&self) -> &str {
+        &self.license
+    }
+
+    pub fn tags(&self) -> &[String] {
+        &self.tags
+    }
+
+    /// Only the record; the caller renames the folder (`Workspace::edit_dataset`).
+    pub fn set_name(&mut self, name: String) {
+        self.name = name;
+    }
+
     pub fn lineage(&self) -> Option<&Lineage> {
         self.lineage.as_ref()
     }

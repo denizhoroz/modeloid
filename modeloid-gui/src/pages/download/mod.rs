@@ -1,7 +1,10 @@
-//! Dataset Manager > Datasets: bring datasets into the workspace (download
-//! from online sources, import a folder / zip from this computer) and delete
-//! them from it.
+//! Dataset Manager > Datasets: make datasets (create an empty one, edit its
+//! details and add images), bring them into the workspace (download from
+//! online sources, import a folder / zip from this computer) and delete them
+//! from it.
 
+mod create;
+mod edit;
 mod formats;
 mod import;
 mod links;
@@ -17,12 +20,16 @@ use crate::routes::Route;
 use crate::state::{use_workspace, use_workspace_checked};
 use crate::util::plural;
 
+use create::CreateForm;
+use edit::EditForm;
 use formats::{FormatSection, DEFAULT_FORMAT, OTHER};
 use import::ImportForm;
 use links::{collect_links, LinkMode, LinksSection};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Tab {
+    Create,
+    Edit,
     Download,
     Import,
 }
@@ -31,7 +38,7 @@ enum Tab {
 pub fn Download() -> Element {
     let workspace = use_workspace();
     let checked = use_workspace_checked();
-    let mut tab = use_signal(|| Tab::Download);
+    let mut tab = use_signal(|| Tab::Create);
 
     rsx! {
         document::Title { "Datasets · Modeloid" }
@@ -39,13 +46,18 @@ pub fn Download() -> Element {
             p { class: "page-eyebrow", "Dataset Manager" }
             h1 { "Datasets" }
             p { class: "page-lead",
-                "Download datasets from Roboflow, Kaggle, Hugging Face or a zip link, or import one from this computer. To delete datasets, select them in the Datasets table and choose Remove."
+                "Create an empty dataset and add your own images, edit a dataset's details, download datasets from Roboflow, Kaggle, Hugging Face or a zip link, or import one from this computer. To delete datasets, select them in the Datasets table and choose Remove."
             }
 
             match workspace() {
                 Some(info) => rsx! {
-                    div { class: "segmented segmented-tabs", role: "tablist", aria_label: "Download or import",
-                        for (value, label, id) in [(Tab::Download, "Download", "download"), (Tab::Import, "Import", "import")] {
+                    div { class: "segmented segmented-tabs", role: "tablist", aria_label: "Dataset actions",
+                        for (value, label, id) in [
+                            (Tab::Create, "Create", "create"),
+                            (Tab::Edit, "Edit", "edit"),
+                            (Tab::Download, "Download", "download"),
+                            (Tab::Import, "Import", "import"),
+                        ] {
                             button {
                                 key: "{id}",
                                 id: "tab-{id}",
@@ -60,6 +72,16 @@ pub fn Download() -> Element {
                         }
                     }
                     // All stay mounted so typed input and progress survive switching tabs.
+                    div { id: "panel-create", role: "tabpanel", aria_labelledby: "tab-create", hidden: tab() != Tab::Create,
+                        CreateForm {
+                            datasets_path: info.datasets_path.clone(),
+                            default_format: info.default_format.clone(),
+                            on_add_images: move |_| tab.set(Tab::Edit),
+                        }
+                    }
+                    div { id: "panel-edit", role: "tabpanel", aria_labelledby: "tab-edit", hidden: tab() != Tab::Edit,
+                        EditForm { datasets_path: info.datasets_path.clone() }
+                    }
                     div { id: "panel-download", role: "tabpanel", aria_labelledby: "tab-download", hidden: tab() != Tab::Download,
                         DownloadForm { datasets_path: info.datasets_path.clone() }
                     }

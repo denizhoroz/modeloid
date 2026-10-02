@@ -4,6 +4,7 @@
 pub mod balance;
 pub mod classes;
 pub mod convert;
+pub mod edit;
 pub mod health;
 pub mod parameters;
 pub mod pyenv;

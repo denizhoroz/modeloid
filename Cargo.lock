@@ -3566,6 +3566,7 @@ name = "modeloid-gui"
 version = "0.1.0"
 dependencies = [
  "dioxus",
+ "futures-util",
  "modeloid",
  "modeloid-types",
  "raw-window-handle 0.6.2",

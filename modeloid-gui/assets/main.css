@@ -3876,3 +3876,38 @@ button.bar-row:hover,
 .delete-table tbody tr {
     cursor: default;
 }
+
+/* Datasets > Edit: drop images here, or choose them */
+.drop-zone {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    min-height: 140px;
+    padding: var(--space-4) var(--space-3);
+    border: 1px dashed var(--color-border-strong);
+    border-radius: var(--radius-md);
+    color: var(--color-fg-muted);
+    text-align: center;
+    transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.drop-zone.is-hover {
+    border-color: var(--color-accent);
+    background: var(--color-accent-soft);
+    color: var(--color-fg);
+}
+
+.drop-zone.is-busy {
+    opacity: 0.7;
+}
+
+.drop-zone-text {
+    margin: 0;
+}
+
+.drop-zone label.is-disabled {
+    pointer-events: none;
+    opacity: 0.6;
+}

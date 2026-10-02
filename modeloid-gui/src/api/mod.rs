@@ -9,6 +9,7 @@ pub mod convert;
 pub mod datasets;
 pub mod dialogs;
 pub mod download;
+pub mod edit;
 pub mod explore;
 #[cfg(feature = "server")]
 pub mod files;
