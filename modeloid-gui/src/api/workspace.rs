@@ -133,6 +133,7 @@ mod backend {
         workspace.set_seed(seed);
         workspace.set_default_format(Some(default_format)).map_err(|e| e.to_string())?;
         workspace.save().map_err(|e| format!("Couldn't save the workspace: {e}"))?;
+        crate::api::history::record("Settings", "Workspace", "Save settings", workspace.name(), None);
         Ok(info(&workspace))
     }
 

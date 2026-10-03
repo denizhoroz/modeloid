@@ -39,6 +39,8 @@
     --z-topbar: 10;
     --z-scrim: 40;
     --z-drawer: 50;
+    --z-popover-backdrop: 60;
+    --z-popover: 61;
     --z-skip: 100;
 }
 
@@ -640,6 +642,159 @@ a.workspace-button {
     margin-top: auto;
     padding-top: var(--space-2);
     border-top: 1px solid var(--color-border);
+}
+
+/* History sits above Settings' line; together they stay at the bottom */
+.sidebar-history {
+    margin-top: auto;
+}
+
+.sidebar-history + .sidebar-footer {
+    margin-top: 0;
+}
+
+/* The History overlay: opens beside the sidebar, next to its button */
+.history-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: var(--z-popover-backdrop);
+}
+
+.history-overlay {
+    position: fixed;
+    left: calc(var(--sidebar-width) + var(--space-2));
+    /* Its bottom lines up with the History button's: below the button are the
+       sidebar's gap, Settings' line and padding, Settings and the sidebar's padding */
+    bottom: calc(var(--nav-item-height) + var(--space-3) * 2 + var(--space-2) + 1px);
+    z-index: var(--z-popover);
+    display: flex;
+    flex-direction: column;
+    width: min(440px, calc(100vw - var(--sidebar-width) - var(--space-4)));
+    max-height: min(70vh, 640px);
+    background: var(--color-surface);
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-md);
+    box-shadow: 0 6px 20px var(--color-scrim);
+}
+
+.history-overlay:focus {
+    outline: none;
+}
+
+.history-header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-3) var(--space-4);
+    border-bottom: 1px solid var(--color-border);
+}
+
+.history-header .section-card-title {
+    margin: 0;
+}
+
+.history-close {
+    margin-left: auto;
+}
+
+.history-body {
+    overflow-y: auto;
+    padding: var(--space-3) var(--space-4) var(--space-4);
+}
+
+.history-body > .field-hint,
+.history-body > .form-error {
+    margin: 0;
+}
+
+.history-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.history-entry {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+}
+
+.history-entry-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-2);
+}
+
+.history-path {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0 var(--space-1);
+    margin: 0;
+    color: var(--color-fg-muted);
+    font-size: var(--text-xs);
+}
+
+.history-process {
+    color: var(--color-fg);
+    font-size: var(--text-sm);
+}
+
+.history-items {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.history-item {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0 var(--space-2);
+    min-width: 0;
+    font-size: var(--text-xs);
+}
+
+.history-item-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.history-item-outcome {
+    color: var(--color-fg-muted);
+}
+
+.history-item-outcome.is-failed {
+    color: var(--color-danger-fg);
+}
+
+.history-item-outcome.is-warning {
+    color: var(--color-warning);
+}
+
+.history-item-detail {
+    flex-basis: 100%;
+    margin: 0;
+    color: var(--color-fg-muted);
+    overflow-wrap: anywhere;
+}
+
+.history-item-detail.field-error {
+    color: var(--color-danger-fg);
 }
 
 .sidebar-link.is-active {
@@ -2145,6 +2300,13 @@ fieldset.section-card:disabled {
     .sidebar.is-open {
         transform: none;
         visibility: visible;
+    }
+
+    .history-overlay {
+        left: var(--space-4);
+        right: var(--space-4);
+        bottom: var(--space-4);
+        width: auto;
     }
 
     .scrim {

@@ -40,12 +40,24 @@ pub async fn class_lists() -> Result<Vec<ClassList>, ServerFnError> {
 
 #[post("/api/classes/lists/save")]
 pub async fn save_class_list(list: ClassList) -> Result<(), ServerFnError> {
-    backend::blocking(move |ws| ws.save_class_list(&list).map_err(|e| e.to_string())).await
+    backend::blocking(move |ws| {
+        ws.save_class_list(&list).map_err(|e| e.to_string())?;
+        #[cfg(feature = "server")]
+        crate::api::history::record("Dataset Manager", "Classes & Merge", "Save class list", list.name.clone(), None);
+        Ok(())
+    })
+    .await
 }
 
 #[post("/api/classes/lists/delete")]
 pub async fn delete_class_list(name: String) -> Result<(), ServerFnError> {
-    backend::blocking(move |ws| ws.delete_class_list(&name).map_err(|e| e.to_string())).await
+    backend::blocking(move |ws| {
+        ws.delete_class_list(&name).map_err(|e| e.to_string())?;
+        #[cfg(feature = "server")]
+        crate::api::history::record("Dataset Manager", "Classes & Merge", "Delete class list", name.clone(), None);
+        Ok(())
+    })
+    .await
 }
 
 #[cfg(feature = "server")]

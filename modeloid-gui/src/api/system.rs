@@ -72,7 +72,10 @@ mod backend {
     pub async fn clear_cache() -> Result<u64, String> {
         tokio::task::spawn_blocking(|| {
             let ws = open().ok_or("Load or create a workspace first.")??;
-            ws.clear_cache().map_err(|e| e.to_string())
+            let freed = ws.clear_cache().map_err(|e| e.to_string())?;
+            // The history went with the cache; this starts the new one.
+            crate::api::history::record("Settings", "System", "Clear cache", crate::util::format_bytes(freed), Some("Previews, statistics and history removed".into()));
+            Ok(freed)
         })
         .await
         .map_err(|e| e.to_string())?

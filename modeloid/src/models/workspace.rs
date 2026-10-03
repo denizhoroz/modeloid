@@ -893,15 +893,16 @@ impl Workspace {
         Ok(changes.into_iter().map(|(old, new, _)| (old, new)).collect())
     }
 
-    /// The folders of derived data that can be rebuilt at any time: image
-    /// previews, Explore statistics and Health Check's memory of decoded
-    /// images. Health Check reports and temporary job folders aren't among them.
-    fn rebuildable_caches(&self) -> [PathBuf; 3] {
+    /// The folders clearing the cache empties: derived data that can be
+    /// rebuilt at any time (image previews, Explore statistics, Health Check's
+    /// memory of decoded images) and the history. Health Check reports and
+    /// temporary job folders aren't among them.
+    fn rebuildable_caches(&self) -> [PathBuf; 4] {
         let cache = self.path.join(".cache");
-        [cache.join("thumbs"), cache.join("stats"), cache.join("images")]
+        [cache.join("thumbs"), cache.join("stats"), cache.join("images"), self.history_dir()]
     }
 
-    /// Bytes of cached previews and statistics.
+    /// Bytes of cached previews, statistics and history.
     pub fn cache_size(&self) -> u64 {
         fn size(dir: &Path) -> u64 {
             let Ok(entries) = fs::read_dir(dir) else { return 0 };
@@ -917,8 +918,8 @@ impl Workspace {
         self.rebuildable_caches().iter().map(|dir| size(dir)).sum()
     }
 
-    /// Deletes cached previews and statistics; they are made again when
-    /// needed. Returns the bytes freed.
+    /// Deletes cached previews and statistics (made again when needed) and
+    /// the history. Returns the bytes freed.
     pub fn clear_cache(&self) -> Result<u64, crate::Error> {
         let freed = self.cache_size();
         for dir in self.rebuildable_caches() {
@@ -1804,7 +1805,7 @@ mod tests {
         let tmp = TempWorkspace::new("cache");
         let ws = &tmp.0;
         let cache = ws.path().join(".cache");
-        for (rel, bytes) in [("thumbs/1/a.jpg", 100), ("stats/1.json", 20), ("health/1.json", 7)] {
+        for (rel, bytes) in [("thumbs/1/a.jpg", 90), ("stats/1.json", 20), ("history/history.jsonl", 10), ("health/1.json", 7)] {
             fs::create_dir_all(cache.join(rel).parent().unwrap()).unwrap();
             fs::write(cache.join(rel), vec![0u8; bytes]).unwrap();
         }
@@ -1812,6 +1813,7 @@ mod tests {
         assert_eq!(ws.clear_cache().unwrap(), 120);
         assert_eq!(ws.cache_size(), 0);
         assert!(cache.join("health/1.json").is_file() && cache.join("tmp").is_dir(), "reports and job folders stay");
+        assert!(ws.history().is_empty(), "history goes with the cache");
         assert_eq!(ws.clear_cache().unwrap(), 0, "nothing to clear is fine");
     }
 

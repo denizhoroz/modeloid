@@ -48,7 +48,7 @@ mod backend {
 
     use super::{LabelImage, LabelObject, LabelSession, SavedLabels};
     use crate::api::explore::{cached_labels, edit_labels};
-    use crate::api::{activity, jobs, workspace};
+    use crate::api::{activity, history, jobs, workspace};
 
     fn open() -> Result<Workspace, String> {
         let dir = workspace::current_dir().ok_or("Load or create a workspace first.")?;
@@ -143,24 +143,32 @@ mod backend {
     }
 
     pub async fn add_class(id: u32, dataset: String, name: String) -> Result<Vec<String>, String> {
+        let note = format!("In {dataset}");
         change(id, dataset, move |ws, set| {
             ws.add_label_class(id, set, &name).map_err(|e| e.to_string())?;
+            history::record("Dataset Manager", "Labelling", "Add class", name.clone(), Some(note));
             Ok(set.classes.clone())
         })
         .await
     }
 
     pub async fn rename_class(id: u32, dataset: String, class: usize, name: String) -> Result<Vec<String>, String> {
+        let note = format!("In {dataset}");
         change(id, dataset, move |ws, set| {
+            let old = set.classes.get(class).cloned().unwrap_or_default();
             ws.rename_label_class(id, set, class, &name).map_err(|e| e.to_string())?;
+            history::record("Dataset Manager", "Labelling", "Rename class", format!("{old} → {name}"), Some(note));
             Ok(set.classes.clone())
         })
         .await
     }
 
     pub async fn remove_classes(id: u32, dataset: String, classes: Vec<usize>) -> Result<LabelSession, String> {
+        let note = format!("In {dataset}");
         change(id, dataset.clone(), move |ws, set| {
+            let names: Vec<String> = classes.iter().filter_map(|&c| set.classes.get(c).cloned()).collect();
             ws.remove_label_classes(id, set, &classes).map_err(|e| e.to_string())?;
+            history::record("Dataset Manager", "Labelling", "Remove classes", names.join(", "), Some(note));
             let format = ws.find_dataset(id).map_err(|e| e.to_string())?.1.annotation_format().to_string();
             Ok(session_of(dataset, format, set, id))
         })

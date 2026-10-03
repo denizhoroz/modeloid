@@ -26,12 +26,31 @@ pub async fn list_parameters() -> Result<ParameterList, ServerFnError> {
 /// `replacing`, renaming it if the name changed. Returns it as saved.
 #[post("/api/parameters/save")]
 pub async fn save_parameters(set: ParameterSet, replacing: Option<String>) -> Result<ParameterSet, ServerFnError> {
-    backend::blocking(move |ws| ws.save_parameter_set(&set, replacing.as_deref()).map_err(|e| e.to_string())).await
+    backend::blocking(move |ws| {
+        let saved = ws.save_parameter_set(&set, replacing.as_deref()).map_err(|e| e.to_string())?;
+        #[cfg(feature = "server")]
+        {
+            let (process, detail) = match replacing.as_deref() {
+                None => ("Add parameter set", None),
+                Some(old) if old != saved.name => ("Edit parameter set", Some(format!("Renamed from {old}"))),
+                Some(_) => ("Edit parameter set", None),
+            };
+            crate::api::history::record("Training", "Parameters", process, saved.name.clone(), detail);
+        }
+        Ok(saved)
+    })
+    .await
 }
 
 #[post("/api/parameters/delete")]
 pub async fn delete_parameters(name: String) -> Result<(), ServerFnError> {
-    backend::blocking(move |ws| ws.delete_parameter_set(&name).map_err(|e| e.to_string())).await
+    backend::blocking(move |ws| {
+        ws.delete_parameter_set(&name).map_err(|e| e.to_string())?;
+        #[cfg(feature = "server")]
+        crate::api::history::record("Training", "Parameters", "Delete parameter set", name.clone(), None);
+        Ok(())
+    })
+    .await
 }
 
 #[cfg(feature = "server")]

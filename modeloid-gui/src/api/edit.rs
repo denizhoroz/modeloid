@@ -62,9 +62,9 @@ mod backend {
     use modeloid::{core::edit, Workspace};
     use tokio::io::AsyncWriteExt;
 
-    use super::{DatasetDetails, LabelStatus, NewDataset};
+    use super::{DatasetDetails, LabelStatus, NewDataset, CREATE_FORMATS, CREATE_TYPES};
     use crate::api::jobs::{self, Job, JobKind};
-    use crate::api::{activity, explore, workspace};
+    use crate::api::{activity, explore, history, workspace};
     use crate::util::plural;
 
     fn open() -> Result<Workspace, String> {
@@ -75,6 +75,9 @@ mod backend {
     pub fn create(new: NewDataset) -> Result<u32, String> {
         let new = NewDataset { name: new.name.trim().to_string(), ..new };
         let (_, dataset) = open()?.create_dataset(&new).map_err(|e| e.to_string())?;
+        let label = |list: &[(&str, &'static str)], key: &str| list.iter().find(|(k, _)| *k == key).map_or(key.to_string(), |(_, l)| l.to_string());
+        let detail = format!("{} · {}", label(CREATE_TYPES, &new.dataset_type), label(CREATE_FORMATS, &new.annotation_format));
+        history::record("Dataset Manager", "Datasets", "Create dataset", dataset.name(), Some(detail));
         Ok(dataset.id())
     }
 
@@ -89,7 +92,10 @@ mod backend {
             return Err("The dataset has changed meanwhile. Check the selection and try again.".into());
         }
         jobs::busy(id)?;
-        ws.edit_dataset(id, &details).map(|_| ()).map_err(|e| format!("Couldn't save: {e}"))
+        ws.edit_dataset(id, &details).map_err(|e| format!("Couldn't save: {e}"))?;
+        let detail = (details.name.trim() != expected).then(|| format!("Renamed to {}", details.name.trim()));
+        history::record("Dataset Manager", "Datasets", "Edit dataset", expected, detail);
+        Ok(())
     }
 
     pub fn start_upload() -> Result<String, String> {

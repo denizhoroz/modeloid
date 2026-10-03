@@ -148,6 +148,7 @@ pub(crate) mod backend {
             let ws = open()?;
             for name in &names {
                 ws.delete_train(name).map_err(|e| format!("Couldn't delete {name}: {e}"))?;
+                crate::api::history::record("Training", "Performance", "Remove model", name.clone(), None);
             }
             Ok(())
         })

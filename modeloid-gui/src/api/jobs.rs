@@ -51,6 +51,30 @@ impl JobKind {
             JobKind::Tune => "Tuning",
         }
     }
+
+    /// Where the job is started and what it does, for the history:
+    /// (sidebar group, page, process), e.g. ("Dataset Manager", "Datasets", "Download").
+    #[cfg_attr(not(feature = "server"), allow(dead_code))]
+    pub fn history_path(self) -> (&'static str, &'static str, &'static str) {
+        const DATASETS: (&str, &str) = ("Dataset Manager", "Datasets");
+        let ((category, section), process) = match self {
+            JobKind::Download => (DATASETS, "Download"),
+            JobKind::Import => (DATASETS, "Import"),
+            JobKind::AddImages => (DATASETS, "Add images"),
+            JobKind::Rescan => (DATASETS, "Rescan"),
+            JobKind::Delete => (DATASETS, "Remove datasets"),
+            JobKind::HealthCheck => (("Dataset Manager", "Health Check"), "Check"),
+            JobKind::HealthFix => (("Dataset Manager", "Health Check"), "Fix problems"),
+            JobKind::ClassesMerge => (("Dataset Manager", "Classes & Merge"), "Merge"),
+            JobKind::Split => (("Dataset Manager", "Split & Balance"), "Split"),
+            JobKind::Balance => (("Dataset Manager", "Split & Balance"), "Balance"),
+            JobKind::Convert => (("Dataset Manager", "Convert"), "Convert"),
+            JobKind::PythonSetup => (("Settings", "Python environment"), "Install libraries"),
+            JobKind::Train => (("Training", "Train Model"), "Train"),
+            JobKind::Tune => (("Training", "Tune Hyperparameters"), "Tune"),
+        };
+        (category, section, process)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -133,13 +157,15 @@ mod backend {
     use std::cell::Cell;
     use std::collections::HashMap;
     use std::future::Future;
-    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
     use std::sync::{Arc, LazyLock, Mutex};
 
     use modeloid::{Progress, Reporter, Unit};
     use tokio::runtime::Handle;
 
     use super::{ItemAction, ItemStatus, Job, JobItem, JobKind, ProgressUnit, Stage};
+    use crate::api::history::{HistoryEntry, HistoryItem, Outcome};
 
     static VERSION: AtomicU64 = AtomicU64::new(0);
     /// Latest job of each kind.
@@ -173,6 +199,10 @@ mod backend {
     struct Shared {
         job: Mutex<Job>,
         touches: Touches,
+        /// The workspace open when it started: its history gets the job.
+        workspace: Option<PathBuf>,
+        /// When the job (or its re-run item) started, Unix seconds.
+        started: AtomicI64,
         /// Checked by the core through `Reporter`/`Progress::is_cancelled`.
         cancelled: AtomicBool,
     }
@@ -310,6 +340,8 @@ mod backend {
         admit(&jobs, kind, &touches)?;
         let shared = Arc::new(Shared {
             touches,
+            workspace: crate::api::workspace::current_dir(),
+            started: AtomicI64::new(modeloid::core::history::now()),
             job: Mutex::new(Job {
                 kind,
                 version: next_version(),
@@ -358,6 +390,7 @@ mod backend {
         let runtime = Handle::try_current().map_err(|e| format!("Couldn't start the job: {e}"))?;
 
         shared.cancelled.store(false, Ordering::Relaxed);
+        shared.started.store(modeloid::core::history::now(), Ordering::Relaxed);
         shared.update(|job| {
             job.finished = false;
             job.cancel_requested = false;
@@ -370,7 +403,7 @@ mod backend {
         runtime.clone().spawn_blocking(move || {
             let mut work = Some(work);
             run_item(&job, &runtime, index, &mut |ctx| work.take().map_or(Err("already ran".into()), |work| work(ctx)));
-            finish(&job);
+            finish(&job, Some(index));
         });
         Ok(shared.snapshot())
     }
@@ -380,18 +413,52 @@ mod backend {
         for index in 0..count {
             run_item(job, runtime, index, work);
         }
-        finish(job);
+        finish(job, None);
     }
 
-    /// Marks `job` finished. When it was the last one running, the datasets
-    /// are renumbered first (a delete or a merge may have left a gap), while
-    /// the job list is held so nothing starts on the old ids meanwhile.
-    fn finish(job: &Arc<Shared>) {
+    /// Marks `job` finished and adds it to its workspace's history (only item
+    /// `only` when that one was run again). When it was the last one running,
+    /// the datasets are renumbered first (a delete or a merge may have left a
+    /// gap), while the job list is held so nothing starts on the old ids meanwhile.
+    fn finish(job: &Arc<Shared>, only: Option<usize>) {
         let jobs = JOBS.lock().unwrap();
         if jobs.values().all(|s| Arc::ptr_eq(s, job) || s.finished()) {
             crate::api::datasets::renumber();
         }
+        if let Some(dir) = &job.workspace {
+            crate::api::history::record_in(dir, &history_entry(&job.snapshot(), job.started.load(Ordering::Relaxed), only));
+        }
         job.update(|j| j.finished = true);
+    }
+
+    /// What the history keeps of a job that just ended.
+    fn history_entry(job: &Job, started: i64, only: Option<usize>) -> HistoryEntry {
+        let (category, section, process) = job.kind.history_path();
+        let items = job
+            .items
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| only.is_none_or(|only| only == *index))
+            .map(|(_, item)| HistoryItem {
+                label: item.label.clone(),
+                outcome: match item.status {
+                    ItemStatus::Done => Outcome::Done,
+                    ItemStatus::Failed => Outcome::Failed,
+                    ItemStatus::Warning => Outcome::Warning,
+                    ItemStatus::Skipped => Outcome::Skipped,
+                    ItemStatus::Cancelled | ItemStatus::Queued | ItemStatus::Running => Outcome::Cancelled,
+                },
+                detail: item.error.clone().or_else(|| item.output.clone()),
+            })
+            .collect();
+        HistoryEntry {
+            started,
+            finished: modeloid::core::history::now(),
+            category: category.into(),
+            section: section.into(),
+            process: process.into(),
+            items,
+        }
     }
 
     /// Renumbers the datasets (`Workspace::renumber_datasets`) unless a job is

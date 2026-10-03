@@ -1,6 +1,6 @@
 use dioxus::prelude::*;
 
-use crate::components::{provide_toasts, Icon, IconName, PanelTable, PanelTableState, PythonAutoSetup, ResizeHandle, SidePanel, Sidebar, StatusBar, ToastHost};
+use crate::components::{provide_toasts, HistoryLayer, HistoryOpen, Icon, IconName, PanelTable, PanelTableState, PythonAutoSetup, ResizeHandle, SidePanel, Sidebar, StatusBar, ToastHost};
 use crate::routes::Route;
 use crate::state::{provide_activity_state, provide_workspace_state};
 
@@ -17,6 +17,8 @@ pub fn AppLayout() -> Element {
     provide_activity_state();
     provide_toasts();
     let mut drawer_open = use_signal(|| false);
+    let history_open = use_signal(|| false);
+    use_context_provider(|| HistoryOpen(history_open));
     // Lives here so the panel keeps its width across dataset pages.
     let panel_width = use_signal(|| 420.0);
     use_context_provider(|| PanelWidth(panel_width));
@@ -102,6 +104,7 @@ pub fn AppLayout() -> Element {
                 }
             }
 
+            HistoryLayer {}
             StatusBar {}
             ToastHost {}
             PythonAutoSetup {}

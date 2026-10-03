@@ -5,6 +5,7 @@ pub mod convert;
 pub mod download;
 pub mod edit;
 pub mod health;
+pub mod history;
 pub mod io;
 pub mod labels;
 pub mod performance;

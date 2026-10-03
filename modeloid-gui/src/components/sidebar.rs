@@ -1,11 +1,11 @@
 use dioxus::prelude::*;
 
-use crate::components::{Icon, IconName, WorkspaceCard};
+use crate::components::{HistoryButton, Icon, IconName, WorkspaceCard};
 use crate::nav::{NavCategory, NAV};
 use crate::routes::Route;
 
 /// Vertical navigation: current workspace box, one collapsible group per `NAV`
-/// category, and Settings pinned to the bottom.
+/// category, then History and Settings pinned to the bottom.
 #[component]
 pub fn Sidebar(open: bool, on_navigate: EventHandler<()>) -> Element {
     let current = use_route::<Route>();
@@ -31,6 +31,8 @@ pub fn Sidebar(open: bool, on_navigate: EventHandler<()>) -> Element {
                     NavGroup { key: "{category.slug}", category, on_navigate }
                 }
             }
+
+            HistoryButton {}
 
             div { class: "sidebar-footer",
                 Link {

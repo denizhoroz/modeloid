@@ -14,6 +14,7 @@ pub mod explore;
 #[cfg(feature = "server")]
 pub mod files;
 pub mod health;
+pub mod history;
 pub mod import;
 pub mod jobs;
 pub mod label;

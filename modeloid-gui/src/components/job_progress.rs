@@ -8,14 +8,30 @@ use crate::util::{format_bytes, plural};
 /// Latest `kind` job, kept fresh from the app-wide activity poll
 /// (`state::provide_activity_state`). Pages may also set it right after
 /// starting a job (`set_if_newer`). Returns the job and a connection error.
+///
+/// A job that had already finished when the page opened is left out: after
+/// switching sections and back the page starts clean, and the sidebar's
+/// History has it. A running job, or one that changes later, shows.
 pub fn use_job(kind: JobKind) -> (Signal<Option<Job>>, Memo<Option<String>>) {
     let job = use_signal(|| None::<Job>);
     let activity = use_activity();
+    // The version of the job that was already finished on opening (`Some(None)`: none was).
+    let mut finished_before = use_signal(|| None::<Option<u64>>);
 
     use_effect(move || {
-        let latest = activity.snapshot.read().as_ref().and_then(|s| s.jobs.iter().find(|j| j.kind == kind).cloned());
+        let snapshot = activity.snapshot.read();
+        let Some(snapshot) = snapshot.as_ref() else { return };
+        let latest = snapshot.jobs.iter().find(|j| j.kind == kind).cloned();
+        let before = *finished_before.peek();
+        let before = before.unwrap_or_else(|| {
+            let seen = latest.as_ref().filter(|j| j.finished).map(|j| j.version);
+            finished_before.set(Some(seen));
+            seen
+        });
         if let Some(latest) = latest {
-            set_if_newer(job, latest);
+            if !before.is_some_and(|version| latest.finished && latest.version <= version) {
+                set_if_newer(job, latest);
+            }
         }
     });
     let error = use_memo(move || activity.error.read().clone());
