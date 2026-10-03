@@ -1680,10 +1680,13 @@ fieldset.section-card:disabled {
     gap: var(--space-2);
 }
 
+/* Two rows shared across the list (card, then buttons) so every card is the
+   same height, with or without buttons under it */
 .device-option {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
+    display: grid;
+    grid-row: span 2;
+    grid-template-rows: subgrid;
+    row-gap: var(--space-2);
 }
 
 /* The clickable part: name, pill and description; Install / Remove sit below it */
@@ -1728,19 +1731,6 @@ fieldset.section-card:disabled {
 
 .device-card.is-disabled {
     opacity: 0.6;
-}
-
-/* A card that only shows a state (hyperparameter tuning): nothing to choose */
-.device-card.is-static {
-    cursor: default;
-}
-
-.device-card.is-static:hover {
-    border-color: var(--color-border-strong);
-}
-
-.tuning-option {
-    margin-top: var(--space-2);
 }
 
 .device-name {

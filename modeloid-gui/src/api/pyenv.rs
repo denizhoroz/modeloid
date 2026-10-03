@@ -1,6 +1,7 @@
 //! The Python environment training runs in (see the core's `core::pyenv`):
-//! its status, creating it, and installing or removing the training
-//! libraries (jobs). The environment itself is never deleted from the app.
+//! its status, setting it up, and switching the PyTorch build (jobs).
+//! Ultralytics, Optuna and the rest are always installed and can't be
+//! removed from the app; only torch and torchvision change between builds.
 
 use dioxus::prelude::*;
 
@@ -14,40 +15,21 @@ pub async fn python_env_overview() -> Result<EnvOverview, ServerFnError> {
     backend::overview().await.map_err(ServerFnError::new)
 }
 
-/// Creates the environment with only Python in it when there's none yet (the
-/// app calls this on launch), as a `PythonSetup` job. `None` when there was
-/// nothing to do. The training libraries are installed later, from Settings.
+/// Sets the environment up when it needs it (the app calls this on launch):
+/// Python and every library, with the CPU build of PyTorch; a half-installed
+/// one is repaired, an outdated one updated with the build it has. A
+/// `PythonSetup` job, or `None` when there was nothing to do.
 #[post("/api/python/prepare")]
 pub async fn prepare_python_env() -> Result<Option<Job>, ServerFnError> {
     backend::prepare().map_err(ServerFnError::new)
 }
 
-/// Installs the training libraries with `variant`'s PyTorch build (replacing
-/// the other build; also repairs or updates them), as a `PythonSetup` job.
-/// Training then runs on that build's device.
+/// Switches to `variant`'s PyTorch build (only torch and torchvision change;
+/// also repairs), as a `PythonSetup` job. Training then runs on that build's
+/// device. The GPU's "Remove" is this with the CPU build.
 #[post("/api/python/setup")]
 pub async fn start_python_setup(variant: TorchVariant) -> Result<Job, ServerFnError> {
     backend::setup(variant).map_err(ServerFnError::new)
-}
-
-/// Uninstalls PyTorch, torchvision and Ultralytics (whichever build), as a
-/// `PythonSetup` job. The environment and its Python stay.
-#[post("/api/python/remove-libraries")]
-pub async fn remove_python_libraries() -> Result<Job, ServerFnError> {
-    backend::remove_libraries().map_err(ServerFnError::new)
-}
-
-/// Installs hyperparameter tuning (Optuna) next to the installed training
-/// libraries, as a `PythonSetup` job.
-#[post("/api/python/tuning/install")]
-pub async fn install_tuning() -> Result<Job, ServerFnError> {
-    backend::install_tuning().map_err(ServerFnError::new)
-}
-
-/// Uninstalls Optuna, as a `PythonSetup` job. Training stays.
-#[post("/api/python/tuning/remove")]
-pub async fn remove_tuning() -> Result<Job, ServerFnError> {
-    backend::remove_tuning().map_err(ServerFnError::new)
 }
 
 /// Chooses what training runs on. No reinstall: the CUDA build runs on the
@@ -64,7 +46,7 @@ mod backend {
     use modeloid::core::pyenv::{detect_gpu, PyEnv};
     use modeloid::Settings;
 
-    use super::{EnvOverview, EnvStatus, TorchVariant};
+    use super::{EnvOverview, TorchVariant};
     use crate::api::jobs::{self, ItemCtx, Job, JobKind};
 
     fn locate() -> Result<PyEnv, String> {
@@ -89,14 +71,11 @@ mod backend {
 
     pub fn prepare() -> Result<Option<Job>, String> {
         let env = locate()?;
-        if setup_running() || !matches!(env.status(), EnvStatus::Missing | EnvStatus::Broken(_)) {
+        if setup_running() {
             return Ok(None);
         }
-        jobs::start(JobKind::PythonSetup, vec!["Python environment".into()], jobs::Touches::Nothing, move |ctx| {
-            let version = env.create(&uv(&env, ctx)?, ctx.reporter().as_ref()).map_err(|e| e.to_string())?;
-            Ok(Some(format!("Python {version}")))
-        })
-        .map(Some)
+        let Some(variant) = env.pending_install() else { return Ok(None) };
+        start_install(env, variant, "Setting up Python".into()).map(Some)
     }
 
     pub fn setup(variant: TorchVariant) -> Result<Job, String> {
@@ -104,42 +83,19 @@ mod backend {
         if variant == TorchVariant::Cuda && !detect_gpu().is_some_and(|g| g.cuda_problem().is_none()) {
             return Err("No CUDA compatible device found.".into());
         }
-        let label = format!("Installing {} libraries", variant.device().label());
+        let label = match variant {
+            TorchVariant::Cuda => "Installing GPU libraries",
+            TorchVariant::Cpu => "Switching to CPU libraries",
+        };
+        start_install(env, variant, label.into())
+    }
+
+    fn start_install(env: PyEnv, variant: TorchVariant, label: String) -> Result<Job, String> {
         jobs::start(JobKind::PythonSetup, vec![label], jobs::Touches::Nothing, move |ctx| {
             let info = env.install(variant, &uv(&env, ctx)?, ctx.reporter().as_ref()).map_err(|e| e.to_string())?;
             update_settings(|s| s.set_train_device(variant.device()))?;
             let device = if info.cuda_available || info.mps_available { info.device_name.clone() } else { "CPU".into() };
             Ok(Some(format!("Python {} · torch {} · {device}", info.python, info.torch)))
-        })
-    }
-
-    pub fn remove_libraries() -> Result<Job, String> {
-        let env = locate()?;
-        if !env.status().has_python() {
-            return Err("There are no training libraries to remove.".into());
-        }
-        jobs::start(JobKind::PythonSetup, vec!["Removing training libraries".into()], jobs::Touches::Nothing, move |ctx| {
-            env.remove_libraries(&uv(&env, ctx)?, ctx.reporter().as_ref()).map_err(|e| e.to_string())?;
-            Ok(Some("PyTorch, torchvision and Ultralytics removed".into()))
-        })
-    }
-
-    pub fn install_tuning() -> Result<Job, String> {
-        let env = locate()?;
-        if !env.status().usable() {
-            return Err("Install the training libraries (CPU or GPU) first.".into());
-        }
-        jobs::start(JobKind::PythonSetup, vec!["Installing hyperparameter tuning".into()], jobs::Touches::Nothing, move |ctx| {
-            let info = env.install_tuning(&uv(&env, ctx)?, ctx.reporter().as_ref()).map_err(|e| e.to_string())?;
-            Ok(Some(format!("Optuna {}", info.optuna)))
-        })
-    }
-
-    pub fn remove_tuning() -> Result<Job, String> {
-        let env = locate()?;
-        jobs::start(JobKind::PythonSetup, vec!["Removing hyperparameter tuning".into()], jobs::Touches::Nothing, move |ctx| {
-            env.remove_tuning(&uv(&env, ctx)?, ctx.reporter().as_ref()).map_err(|e| e.to_string())?;
-            Ok(Some("Optuna removed".into()))
         })
     }
 

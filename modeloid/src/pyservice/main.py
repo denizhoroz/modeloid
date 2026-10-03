@@ -11,7 +11,7 @@ Commands:
                   Ultralytics' own output passes through (the console Modeloid
                   shows); progress events are lines starting with
                   "@modeloid " followed by JSON: start, epoch, done, error.
-  tune <config>   Tunes hyperparameters with Optuna (the optional `tune` extra):
+  tune <config>   Tunes hyperparameters with Optuna:
                   {"model", "task", "rtdetr", "args" (Ultralytics train()
                    arguments shared by every trial), "trials": 20,
                    "seed": 0, "space": [{"key": "lr0", "kind": "range",

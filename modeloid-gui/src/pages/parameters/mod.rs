@@ -52,7 +52,7 @@ pub fn Parameters() -> Element {
             p { class: "page-lead",
                 "A reusable recipe of model and training settings. Train Model picks the dataset; pick a set in the Parameters table to change it."
             }
-            PythonNotice { text: "You can save parameter sets now. Training them needs the training libraries (PyTorch, Ultralytics), which aren't installed yet." }
+            PythonNotice { text: "You can save parameter sets now. Training them needs the training libraries (PyTorch, Ultralytics, Optuna), which aren't installed yet." }
             if workspace.read().is_some() {
                 ParameterEditor {}
             } else if checked() {

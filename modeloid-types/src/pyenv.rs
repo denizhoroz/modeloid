@@ -141,23 +141,17 @@ pub struct EnvInfo {
     /// Hash of the `uv.lock` it was installed from; a different one means the
     /// app's dependencies changed since.
     pub lock_hash: String,
-    /// Optuna's version when hyperparameter tuning is installed, else empty.
+    /// Optuna's version (hyperparameter tuning).
     #[serde(default)]
     pub optuna: String,
 }
 
-impl EnvInfo {
-    pub fn has_tuning(&self) -> bool {
-        !self.optuna.is_empty()
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EnvStatus {
-    /// Not created yet (the app creates it on its first launch).
+    /// Not created yet (the app sets it up on its first launch).
     Missing,
-    /// Python is there (this version), but not the training libraries
-    /// (PyTorch, Ultralytics); the user installs them for the CPU or GPU.
+    /// Python is there (this version), but not the libraries (PyTorch,
+    /// Ultralytics, Optuna): their install didn't finish; setup runs it again.
     NoLibraries(String),
     Ready(EnvInfo),
     /// Works, but was installed from an older `uv.lock`.

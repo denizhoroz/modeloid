@@ -35,8 +35,6 @@ pub const UV_VERSION: &str = "0.11.26";
 /// Overrides where the root folder is.
 pub const HOME_ENV: &str = "MODELOID_HOME";
 const ENV_FILE: &str = "modeloid-env.json";
-/// The pyproject extra with Optuna (hyperparameter tuning), optional.
-const TUNING_EXTRA: &str = "tune";
 const PYTHON_FILE: &str = "modeloid-python.txt";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -238,8 +236,8 @@ impl PyEnv {
         cmd
     }
 
-    /// Creates the environment with only Python in it (about 70 MB): no
-    /// training libraries, those come with `install`. Blocking; stops when cancelled.
+    /// Creates the environment with only Python in it (about 70 MB). Blocking;
+    /// stops when cancelled. `install` calls it when needed.
     pub fn create(&self, uv: &Path, reporter: &dyn Reporter) -> Result<String, crate::Error> {
         let step = reporter.start("Installing Python", Unit::Steps);
         let mut cmd = self.uv(uv);
@@ -259,59 +257,21 @@ impl PyEnv {
         Ok(version)
     }
 
-    /// Installs the training libraries (`variant`'s PyTorch build and
-    /// Ultralytics), creating the environment first if needed, then checks the
-    /// result. Blocking; stops (killing uv) when cancelled. Until it finishes
-    /// the status is `NoLibraries`, and running it again repairs.
+    /// Installs everything from `uv.lock` (Ultralytics, Optuna...) with
+    /// `variant`'s PyTorch build, creating the environment first if needed,
+    /// then checks the result. Switching builds only swaps torch and
+    /// torchvision; nothing else is ever removed. Blocking; stops (killing uv)
+    /// when cancelled. Until it finishes the status is `NoLibraries`, and
+    /// running it again repairs.
     pub fn install(&self, variant: TorchVariant, uv: &Path, reporter: &dyn Reporter) -> Result<EnvInfo, crate::Error> {
-        // `uv sync` removes what the extras don't name: keep tuning if it's there.
-        let tuning = self.installed().is_some_and(|i| i.has_tuning());
-        self.sync(variant, tuning, uv, reporter)
-    }
-
-    /// The libraries recorded as installed (Ready or Outdated).
-    fn installed(&self) -> Option<EnvInfo> {
-        match self.status() {
-            EnvStatus::Ready(info) | EnvStatus::Outdated(info) => Some(info),
-            _ => None,
-        }
-    }
-
-    /// Adds hyperparameter tuning (Optuna, the `tune` extra) next to the
-    /// installed PyTorch build. Needs the training libraries.
-    pub fn install_tuning(&self, uv: &Path, reporter: &dyn Reporter) -> Result<EnvInfo, crate::Error> {
-        let info = self.installed().ok_or("Install the training libraries (CPU or GPU) first.")?;
-        self.sync(info.variant, true, uv, reporter)
-    }
-
-    /// Removes Optuna; training stays as it is.
-    pub fn remove_tuning(&self, uv: &Path, reporter: &dyn Reporter) -> Result<EnvInfo, crate::Error> {
-        let info = self.installed().ok_or("The training libraries aren't installed.")?;
-        let step = reporter.start("Removing Optuna", Unit::Steps);
-        let mut cmd = self.uv(uv);
-        cmd.args(["pip", "uninstall", "--python"]).arg(self.python()).arg("optuna");
-        run(cmd, step.as_ref(), reporter)?;
-        step.finish();
-        let step = reporter.start("Checking", Unit::Steps);
-        let info = self.check(info.variant, step.as_ref(), reporter)?;
-        step.finish();
-        fs::write(self.env_file(), serde_json::to_vec_pretty(&info)?)?;
-        Ok(info)
-    }
-
-    /// `uv sync` with `variant`'s PyTorch (and Optuna when `tuning`), then the check.
-    fn sync(&self, variant: TorchVariant, tuning: bool, uv: &Path, reporter: &dyn Reporter) -> Result<EnvInfo, crate::Error> {
         let _ = fs::remove_file(self.env_file());
         if !self.python().is_file() || !self.python_file().is_file() {
             self.create(uv, reporter)?;
         }
 
-        let step = reporter.start(if tuning { "Installing libraries and Optuna" } else { "Installing libraries" }, Unit::Steps);
+        let step = reporter.start("Installing libraries", Unit::Steps);
         let mut cmd = self.uv(uv);
         cmd.args(["sync", "--locked", "--no-dev", "--extra", variant.extra()]);
-        if tuning {
-            cmd.args(["--extra", TUNING_EXTRA]);
-        }
         run(cmd, step.as_ref(), reporter)?;
         step.finish();
 
@@ -320,6 +280,17 @@ impl PyEnv {
         step.finish();
         fs::write(self.env_file(), serde_json::to_vec_pretty(&info)?)?;
         Ok(info)
+    }
+
+    /// What setup has to do, if anything: the PyTorch build to (re)install.
+    /// A new or half-installed environment gets the CPU build; an outdated
+    /// one is updated with the build it has.
+    pub fn pending_install(&self) -> Option<TorchVariant> {
+        match self.status() {
+            EnvStatus::Ready(_) | EnvStatus::NotWritable(_) => None,
+            EnvStatus::Outdated(info) => Some(info.variant),
+            EnvStatus::Missing | EnvStatus::NoLibraries(_) | EnvStatus::Broken(_) => Some(TorchVariant::Cpu),
+        }
     }
 
     /// Runs `main.py check` in the environment.
@@ -365,24 +336,7 @@ impl PyEnv {
             optuna: checked.optuna,
         })
     }
-
-    /// Uninstalls the training libraries (`LIBRARIES`), whichever PyTorch build
-    /// they are. The environment and its Python stay; the status becomes
-    /// `NoLibraries`. Modeloid never deletes the environment itself.
-    pub fn remove_libraries(&self, uv: &Path, reporter: &dyn Reporter) -> Result<(), crate::Error> {
-        let _ = fs::remove_file(self.env_file());
-        let step = reporter.start("Removing libraries", Unit::Steps);
-        let mut cmd = self.uv(uv);
-        cmd.args(["pip", "uninstall", "--python"]).arg(self.python()).args(LIBRARIES);
-        run(cmd, step.as_ref(), reporter)?;
-        step.finish();
-        Ok(())
-    }
 }
-
-/// What "Remove" uninstalls: PyTorch and Ultralytics. Their smaller
-/// dependencies (numpy, opencv...) stay, so a reinstall is quicker.
-pub const LIBRARIES: [&str; 3] = ["torch", "torchvision", "ultralytics"];
 
 /// The NVIDIA GPU, if `nvidia-smi` finds one.
 pub fn detect_gpu() -> Option<Gpu> {
@@ -649,6 +603,7 @@ mod tests {
         let tmp = TempRoot::new("status");
         let env = PyEnv::at(&tmp.0);
         assert_eq!(env.status(), EnvStatus::Missing);
+        assert_eq!(env.pending_install(), Some(TorchVariant::Cpu), "the CPU build by default");
 
         fs::create_dir_all(env.venv()).unwrap();
         assert!(matches!(env.status(), EnvStatus::Broken(_)), "venv without its Python");
@@ -658,14 +613,16 @@ mod tests {
         fs::write(env.python_file(), "3.12.13\n").unwrap();
         assert_eq!(env.status(), EnvStatus::NoLibraries("3.12.13".into()));
 
-        let info = EnvInfo { torch: "2.14.1+cu130".into(), lock_hash: env.lock_hash(), ..Default::default() };
+        let info = EnvInfo { variant: TorchVariant::Cuda, torch: "2.14.1+cu130".into(), lock_hash: env.lock_hash(), ..Default::default() };
         fs::write(env.env_file(), serde_json::to_vec(&info).unwrap()).unwrap();
         assert_eq!(env.status(), EnvStatus::Ready(info.clone()));
+        assert_eq!(env.pending_install(), None);
 
         fs::write(env.pyservice().join("uv.lock"), "lock v2").unwrap();
-        assert_eq!(env.status(), EnvStatus::Outdated(info));
+        assert_eq!(env.status(), EnvStatus::Outdated(info.clone()));
+        assert_eq!(env.pending_install(), Some(TorchVariant::Cuda), "updated with the build it has");
 
-        // Libraries removed (their record gone): Python stays.
+        // An install that didn't finish (its record gone): Python stays.
         fs::remove_file(env.env_file()).unwrap();
         assert_eq!(env.status(), EnvStatus::NoLibraries("3.12.13".into()));
     }

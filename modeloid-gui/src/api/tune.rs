@@ -50,11 +50,6 @@ mod backend {
     use crate::api::train::backend::{device_choice, open};
 
     const LOG_CHUNK: usize = 256 * 1024;
-    const NOT_INSTALLED: &str = "Hyperparameter tuning (Optuna) isn't installed. Install it in Settings → Python environment.";
-
-    fn tuning_installed(env: &PyEnv) -> bool {
-        env.status().info().is_some_and(|i| i.has_tuning())
-    }
 
     pub async fn preview(plan: TunePlan) -> Result<TrainPreview, String> {
         tokio::task::spawn_blocking(move || {
@@ -62,9 +57,7 @@ mod backend {
             let env = PyEnv::locate().map_err(|e| e.to_string())?;
             let mut preview = ws.tune_preview(&plan, device_choice(&env)).map_err(|e| e.to_string())?;
             if !env.status().usable() {
-                preview.problems.insert(0, "The training libraries (PyTorch, Ultralytics) aren't installed.".into());
-            } else if !tuning_installed(&env) {
-                preview.problems.insert(0, "Hyperparameter tuning (Optuna) isn't installed.".into());
+                preview.problems.insert(0, "The training libraries (PyTorch, Ultralytics, Optuna) aren't installed yet.".into());
             }
             Ok(preview)
         })
@@ -76,10 +69,7 @@ mod backend {
         let ws = open()?;
         let env = PyEnv::locate().map_err(|e| e.to_string())?;
         if !env.status().usable() {
-            return Err("The training libraries (PyTorch, Ultralytics) aren't installed. Install them in Settings → Python environment.".into());
-        }
-        if !tuning_installed(&env) {
-            return Err(NOT_INSTALLED.into());
+            return Err("The training libraries (PyTorch, Ultralytics, Optuna) aren't installed yet. See Settings → Python environment.".into());
         }
         let choice = device_choice(&env);
         // Checked now, so a mistake shows at once instead of as a failed job.

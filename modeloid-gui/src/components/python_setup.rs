@@ -1,10 +1,11 @@
 //! The Python environment training runs in.
 //!
-//! - On launch, `PythonAutoSetup` (in `AppLayout`) creates the environment
-//!   with only Python in it; nothing big is downloaded.
-//! - The training libraries (PyTorch for the CPU or GPU, Ultralytics) are
-//!   installed and removed from Settings → Python environment
-//!   (`PythonSetupCard`). The environment itself is never deleted there.
+//! - On launch, `PythonAutoSetup` (in `AppLayout`) sets the environment up
+//!   when it needs it: Python, Ultralytics, Optuna and the CPU build of
+//!   PyTorch. These are defaults that can't be removed.
+//! - Settings → Python environment (`PythonSetupCard`) chooses the CPU or GPU,
+//!   and installs or removes the GPU build of PyTorch (only torch and
+//!   torchvision change).
 //! - Before training, `LibrariesMissing` reminds the user and links there.
 
 use dioxus::prelude::*;
@@ -12,25 +13,18 @@ use dioxus::prelude::*;
 use crate::api::error_message;
 use crate::api::jobs::JobKind;
 use crate::api::pyenv::{
-    install_tuning, prepare_python_env, python_env_overview, remove_python_libraries, remove_tuning, set_train_device, start_python_setup,
-    EnvOverview, EnvStatus, TorchVariant, TrainDevice,
+    prepare_python_env, python_env_overview, set_train_device, start_python_setup, EnvOverview, EnvStatus, TorchVariant, TrainDevice,
 };
 use crate::components::{set_if_newer, use_job, JobProgress};
 use crate::routes::Route;
 
-/// Sizes on Windows with Python 3.12: downloads from uv.lock, CPU disk use
-/// measured after setup, CUDA disk use estimated from its 2 GB torch wheel.
-fn download_note(device: TrainDevice) -> &'static str {
-    match device {
-        TrainDevice::Gpu => "Much faster training. About 2.2 GB to download, around 5 GB on disk.",
-        TrainDevice::Cpu => "About 0.3 GB to download, 1 GB on disk. Training runs much slower.",
-    }
-}
+/// Sizes on Windows with Python 3.12, estimated from the 2 GB CUDA torch wheel.
+const GPU_DOWNLOAD_NOTE: &str = "Much faster training. About 2.2 GB to download, around 5 GB on disk.";
 
 fn status_text(status: &EnvStatus) -> (&'static str, &'static str) {
     match status {
         EnvStatus::Missing => ("Not set up", "is-missing"),
-        EnvStatus::NoLibraries(_) => ("Libraries not installed", "is-error"),
+        EnvStatus::NoLibraries(_) => ("Not finished", "is-error"),
         EnvStatus::Ready(_) => ("Ready", "is-ready"),
         EnvStatus::Outdated(_) => ("Update available", "is-warning"),
         EnvStatus::Broken(_) => ("Needs repair", "is-error"),
@@ -48,9 +42,10 @@ pub fn open_python_settings() {
     );
 }
 
-/// Status, and a card each for the GPU and the CPU: install or remove its
-/// libraries, and choose which one training runs on. The CUDA build runs on
-/// the CPU too, so with it installed both cards are installed.
+/// Status, and a card each for the GPU and the CPU to choose which one
+/// training runs on. The CPU's libraries are always there; the GPU's build of
+/// PyTorch is installed or removed here (removing switches back to the CPU
+/// build). The CUDA build runs on the CPU too.
 #[component]
 pub fn PythonSetupCard() -> Element {
     let (job, _) = use_job(JobKind::PythonSetup);
@@ -77,9 +72,8 @@ pub fn PythonSetupCard() -> Element {
     };
 
     let (status_label, status_class) = status_text(&ov.status);
-    let has_python = ov.status.has_python();
+    let usable = ov.status.usable();
     let device = ov.device();
-    let both_installed = ov.installed(TrainDevice::Gpu);
 
     let run = move |task: Task| async move {
         error.set(None);
@@ -87,9 +81,6 @@ pub fn PythonSetupCard() -> Element {
         let started = match task {
             Task::Prepare => prepare_python_env().await.map(|job| job.into_iter().collect::<Vec<_>>()),
             Task::Install(variant) => start_python_setup(variant).await.map(|job| vec![job]),
-            Task::Remove => remove_python_libraries().await.map(|job| vec![job]),
-            Task::InstallTuning => install_tuning().await.map(|job| vec![job]),
-            Task::RemoveTuning => remove_tuning().await.map(|job| vec![job]),
         };
         match started {
             Ok(jobs) => jobs.into_iter().for_each(|started| set_if_newer(job, started)),
@@ -111,19 +102,18 @@ pub fn PythonSetupCard() -> Element {
                 match &ov.status {
                     EnvStatus::Ready(info) | EnvStatus::Outdated(info) => rsx! {
                         span { class: "python-status-detail",
-                            "Python {info.python} · torch {info.torch} · Ultralytics {info.ultralytics} · trains on {device.label()}"
+                            "Python {info.python} · torch {info.torch} · Ultralytics {info.ultralytics} · Optuna {info.optuna} · trains on {device.label()}"
                         }
                     },
-                    EnvStatus::NoLibraries(python) => rsx! {
+                    EnvStatus::NoLibraries(_) => rsx! {
                         span { class: "python-status-detail",
-                            if python.is_empty() { "Python is ready. " } else { "Python {python} is ready. " }
-                            "Install the training libraries (PyTorch, Ultralytics) for the GPU or the CPU to train."
+                            if running { "Installing the training libraries (PyTorch, Ultralytics, Optuna)…" } else { "The training libraries (PyTorch, Ultralytics, Optuna) didn't finish installing." }
                         }
                     },
                     EnvStatus::Broken(reason) => rsx! { span { class: "python-status-detail", "{reason}" } },
                     EnvStatus::Missing => rsx! {
                         span { class: "python-status-detail",
-                            if running { "Setting up Python…" } else { "Modeloid keeps its own Python; nothing else on this computer changes." }
+                            if running { "Setting up Python and the training libraries…" } else { "Modeloid keeps its own Python; nothing else on this computer changes." }
                         }
                     },
                     EnvStatus::NotWritable(root) => rsx! {
@@ -138,24 +128,21 @@ pub fn PythonSetupCard() -> Element {
                         button { class: "button", r#type: "button", disabled: running, onclick: move |_| run(Task::Prepare), "Set up Python" }
                     }
                 },
-                EnvStatus::Broken(_) => rsx! {
+                EnvStatus::Broken(_) | EnvStatus::NoLibraries(_) => rsx! {
                     div { class: "form-actions",
                         button { class: "button", r#type: "button", disabled: running, onclick: move |_| run(Task::Prepare), "Repair" }
                     }
                 },
-                EnvStatus::Outdated(info) => {
-                    let build = info.variant;
-                    rsx! {
-                        div { class: "notice notice-warning python-notice",
-                            span { "This version of Modeloid needs newer packages." }
-                            button { class: "button button-sm", r#type: "button", disabled: running, onclick: move |_| run(Task::Install(build)), "Update" }
-                        }
+                EnvStatus::Outdated(_) => rsx! {
+                    div { class: "notice notice-warning python-notice",
+                        span { "This version of Modeloid needs newer packages." }
+                        button { class: "button button-sm", r#type: "button", disabled: running, onclick: move |_| run(Task::Prepare), "Update" }
                     }
                 },
                 _ => rsx! {},
             }
 
-            if has_python {
+            if usable {
                 div { class: "device-list", role: "radiogroup", aria_label: "Train on",
                     for option in [TrainDevice::Gpu, TrainDevice::Cpu] {
                         {
@@ -168,9 +155,8 @@ pub fn PythonSetupCard() -> Element {
                                     None => "No CUDA compatible device found.".to_string(),
                                 },
                                 TrainDevice::Gpu if installed => format!("{}. Much faster training.", ov.gpu.as_ref().map(|g| g.name.as_str()).unwrap_or("NVIDIA GPU")),
-                                TrainDevice::Cpu if both_installed => "Runs on the GPU libraries too; nothing extra installed. Training is much slower.".to_string(),
-                                TrainDevice::Cpu if installed => "Training runs much slower than on a GPU.".to_string(),
-                                _ => download_note(option).to_string(),
+                                TrainDevice::Gpu => GPU_DOWNLOAD_NOTE.to_string(),
+                                TrainDevice::Cpu => "Always installed. Training runs much slower than on a GPU.".to_string(),
                             };
                             let class = match (selected, available, installed) {
                                 (_, false, _) => "device-card is-disabled",
@@ -202,67 +188,25 @@ pub fn PythonSetupCard() -> Element {
                                         }
                                         span { id: "device-detail-{option.variant().extra()}", class: "device-detail", "{detail}" }
                                     }
-                                    div { class: "device-actions",
-                                        button {
-                                            class: if installed { "button button-secondary button-sm" } else { "button button-sm" },
-                                            r#type: "button",
-                                            disabled: installed || !available || running,
-                                            onclick: move |_| run(Task::Install(option.variant())),
-                                            if installed { "Installed" } else { "Install" }
-                                        }
-                                        button {
-                                            class: "button button-ghost button-sm",
-                                            r#type: "button",
-                                            disabled: !installed || running,
-                                            onclick: move |_| confirm_remove.set(true),
-                                            "Remove"
+                                    // The CPU's libraries are defaults: nothing to install or remove.
+                                    if option == TrainDevice::Gpu {
+                                        div { class: "device-actions",
+                                            button {
+                                                class: if installed { "button button-secondary button-sm" } else { "button button-sm" },
+                                                r#type: "button",
+                                                disabled: installed || !available || running,
+                                                onclick: move |_| run(Task::Install(TorchVariant::Cuda)),
+                                                if installed { "Installed" } else { "Install" }
+                                            }
+                                            button {
+                                                class: "button button-ghost button-sm",
+                                                r#type: "button",
+                                                disabled: !installed || running,
+                                                onclick: move |_| confirm_remove.set(true),
+                                                "Remove"
+                                            }
                                         }
                                     }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Optional, under the GPU and CPU: Optuna for Tune Hyperparameters.
-            if has_python {
-                {
-                    let info = ov.status.info().cloned();
-                    let libraries = ov.status.usable();
-                    let tuning = info.as_ref().filter(|i| i.has_tuning()).map(|i| i.optuna.clone());
-                    let detail = match (&tuning, libraries) {
-                        (Some(version), _) => format!("Optuna {version}. Tune Hyperparameters searches training settings with it."),
-                        (None, true) => "Optional. Tune Hyperparameters needs it: Optuna searches training settings for the best ones. About 15 MB.".to_string(),
-                        (None, false) => "Optional, for Tune Hyperparameters. Install the GPU or CPU libraries first.".to_string(),
-                    };
-                    rsx! {
-                        div { id: "settings-tuning", class: "device-option tuning-option",
-                            div { class: if tuning.is_some() { "device-card is-static is-selected" } else { "device-card is-static" },
-                                span { class: "device-name",
-                                    "Hyperparameter tuning"
-                                    if tuning.is_some() {
-                                        span { class: "tag tag-ok", "installed" }
-                                    } else {
-                                        span { class: "tag tag-missing", "not installed" }
-                                    }
-                                }
-                                span { class: "device-detail", "{detail}" }
-                            }
-                            div { class: "device-actions",
-                                button {
-                                    class: if tuning.is_some() { "button button-secondary button-sm" } else { "button button-sm" },
-                                    r#type: "button",
-                                    disabled: tuning.is_some() || !libraries || running,
-                                    onclick: move |_| run(Task::InstallTuning),
-                                    if tuning.is_some() { "Installed" } else { "Install" }
-                                }
-                                button {
-                                    class: "button button-ghost button-sm",
-                                    r#type: "button",
-                                    disabled: tuning.is_none() || running,
-                                    onclick: move |_| run(Task::RemoveTuning),
-                                    "Remove"
                                 }
                             }
                         }
@@ -272,12 +216,8 @@ pub fn PythonSetupCard() -> Element {
 
             if confirm_remove() {
                 div { class: "notice notice-warning param-confirm", role: "alert",
-                    span {
-                        "Remove PyTorch, torchvision and Ultralytics? "
-                        if both_installed { "This removes them for both the GPU and the CPU. " }
-                        "Python stays; training works again once you install them."
-                    }
-                    button { class: "button button-danger button-sm", r#type: "button", onclick: move |_| run(Task::Remove), "Remove" }
+                    span { "Remove the GPU build of PyTorch? Modeloid switches back to the CPU build (about 0.3 GB to download); everything else stays." }
+                    button { class: "button button-danger button-sm", r#type: "button", onclick: move |_| run(Task::Install(TorchVariant::Cpu)), "Remove" }
                     button { class: "button button-secondary button-sm", r#type: "button", onclick: move |_| confirm_remove.set(false), "Cancel" }
                 }
             }
@@ -296,18 +236,13 @@ pub fn PythonSetupCard() -> Element {
 /// What a button in the card starts.
 #[derive(Clone, Copy, PartialEq)]
 enum Task {
-    /// Create (or repair) the environment with Python only.
+    /// Set up, repair or update the environment (the default libraries).
     Prepare,
-    /// Install the training libraries with this build (replacing the other).
+    /// Switch to this PyTorch build (only torch and torchvision change).
     Install(TorchVariant),
-    /// Uninstall the training libraries.
-    Remove,
-    /// Add Optuna (hyperparameter tuning) next to the training libraries.
-    InstallTuning,
-    RemoveTuning,
 }
 
-/// Creates the environment (Python only) on launch when there's none yet.
+/// Sets the environment up on launch when it needs it (Python and the default libraries).
 /// Renders nothing; progress shows in the status bar.
 #[component]
 pub fn PythonAutoSetup() -> Element {
@@ -333,17 +268,16 @@ pub fn PythonNotice(#[props(into)] text: String) -> Element {
     }
 }
 
-/// The reminder shown when a training is about to start without the
-/// libraries: what's missing and a way to Settings, where the user picks the
-/// CPU or GPU to install. Render it instead of starting the training when
+/// The reminder shown when a training is about to start before the libraries
+/// are installed: what's missing and a way to Settings, where setup shows. Render it instead of starting the training when
 /// `python_env_overview()` says `!status.usable()`.
 #[component]
 pub fn LibrariesMissing(on_close: EventHandler<()>) -> Element {
     rsx! {
         div { class: "notice notice-warning python-notice", role: "alert",
             span {
-                strong { "The training libraries aren't installed. " }
-                "Training needs PyTorch and Ultralytics. Install them for the GPU or the CPU in Settings → Python environment, then start the training again."
+                strong { "The training libraries aren't installed yet. " }
+                "Modeloid installs PyTorch, Ultralytics and Optuna when it sets up Python. Check Settings → Python environment, then start the training again."
             }
             button {
                 class: "button button-sm",

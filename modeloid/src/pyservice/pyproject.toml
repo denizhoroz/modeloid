@@ -4,8 +4,9 @@
 # Python environment) runs uv with this project, putting the venv in
 # modeloid/.venv and a uv-managed Python in modeloid/python.
 #
-# PyTorch comes in two builds, chosen by extra: `cpu` or `cu130` (NVIDIA GPU,
-# CUDA 13.0). Exactly one is installed. `tune` (Optuna) is optional, next to either.
+# Ultralytics and Optuna are always installed. PyTorch comes in two builds,
+# chosen by extra: `cpu` (the default) or `cu130` (NVIDIA GPU, CUDA 13.0).
+# Exactly one is installed; switching builds only swaps torch and torchvision.
 #
 # Development:
 #   UV_PROJECT_ENVIRONMENT=../../.venv uv sync --extra cu130   (or --extra cpu)
@@ -17,6 +18,7 @@ description = "Training and inference service for Modeloid"
 requires-python = "==3.12.*"
 dependencies = [
     "ultralytics>=8.3",
+    "optuna>=4.2",
 ]
 
 [project.optional-dependencies]
@@ -27,11 +29,6 @@ cpu = [
 cu130 = [
     "torch>=2.7",
     "torchvision>=0.22",
-]
-# Optional: hyperparameter tuning (Training → Tune Hyperparameters).
-# Installed with either PyTorch build from Settings → Python environment.
-tune = [
-    "optuna>=4.2",
 ]
 
 [tool.uv]

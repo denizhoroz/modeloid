@@ -137,14 +137,14 @@ fn TuneForm() -> Element {
             None => None,
         }
     }));
-    let tuning_ready = use_resource(move || async move {
+    let libraries_ready = use_resource(move || async move {
         let _ = finished_version();
-        python_env_overview().await.ok().and_then(|ov| ov.status.info().map(|i| i.has_tuning()))
+        python_env_overview().await.ok().map(|ov| ov.status.usable())
     });
-    let tuning_missing = matches!(&*tuning_ready.read(), Some(Some(false)) | Some(None));
+    let libraries_missing = matches!(&*libraries_ready.read(), Some(Some(false)) | Some(None));
 
     let mut start_error = use_signal(|| None::<String>);
-    let can_run = !running && !tuning_missing && matches!(&*preview.read(), Some(Some(Ok(p))) if p.problems.is_empty() && (!p.name_taken || own_run) && !own_run);
+    let can_run = !running && !libraries_missing && matches!(&*preview.read(), Some(Some(Ok(p))) if p.problems.is_empty() && (!p.name_taken || own_run) && !own_run);
     let start = move |_| {
         let plan = plan_for_start.clone();
         async move {
@@ -264,10 +264,10 @@ fn TuneForm() -> Element {
 
             section { class: "section-card", aria_labelledby: "tune-start-title",
                 h2 { id: "tune-start-title", class: "section-card-title", "Run" }
-                if tuning_missing {
+                if libraries_missing {
                     div { class: "notice notice-warning python-notice", role: "status",
-                        span { "Tuning needs Optuna, an optional part of the Python environment." }
-                        button { class: "button button-sm", r#type: "button", onclick: move |_| open_python_settings(), "Install it in Settings" }
+                        span { "The training libraries aren't installed yet." }
+                        button { class: "button button-sm", r#type: "button", onclick: move |_| open_python_settings(), "Open Python settings" }
                     }
                 }
                 match &*preview.read() {
