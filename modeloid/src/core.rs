@@ -15,3 +15,4 @@ pub mod scan;
 pub mod stats;
 pub mod thumbs;
 pub mod train;
+pub mod tune;

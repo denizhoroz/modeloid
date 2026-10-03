@@ -11,6 +11,7 @@ use crate::pages::health::HealthCheck;
 use crate::pages::parameters::Parameters;
 use crate::pages::performance::Performance;
 use crate::pages::train::TrainModel;
+use crate::pages::tune::TuneHyperparameters;
 
 /// Placeholder page for every sidebar tool until each one is implemented.
 #[component]
@@ -35,6 +36,7 @@ pub fn Tool(section: String, tool: String) -> Element {
         ("training", "parameters") => return rsx! { Parameters {} },
         ("training", "train") => return rsx! { TrainModel {} },
         ("training", "performance") => return rsx! { Performance {} },
+        ("training", "tune") => return rsx! { TuneHyperparameters {} },
         _ => {}
     }
 

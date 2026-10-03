@@ -28,6 +28,7 @@ pub enum JobKind {
     Delete,
     PythonSetup,
     Train,
+    Tune,
 }
 
 impl JobKind {
@@ -47,6 +48,7 @@ impl JobKind {
             JobKind::Delete => "Delete",
             JobKind::PythonSetup => "Python setup",
             JobKind::Train => "Training",
+            JobKind::Tune => "Tuning",
         }
     }
 }

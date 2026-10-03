@@ -12,8 +12,8 @@ use dioxus::prelude::*;
 use crate::api::error_message;
 use crate::api::jobs::JobKind;
 use crate::api::pyenv::{
-    prepare_python_env, python_env_overview, remove_python_libraries, set_train_device, start_python_setup, EnvOverview, EnvStatus,
-    TorchVariant, TrainDevice,
+    install_tuning, prepare_python_env, python_env_overview, remove_python_libraries, remove_tuning, set_train_device, start_python_setup,
+    EnvOverview, EnvStatus, TorchVariant, TrainDevice,
 };
 use crate::components::{set_if_newer, use_job, JobProgress};
 use crate::routes::Route;
@@ -88,6 +88,8 @@ pub fn PythonSetupCard() -> Element {
             Task::Prepare => prepare_python_env().await.map(|job| job.into_iter().collect::<Vec<_>>()),
             Task::Install(variant) => start_python_setup(variant).await.map(|job| vec![job]),
             Task::Remove => remove_python_libraries().await.map(|job| vec![job]),
+            Task::InstallTuning => install_tuning().await.map(|job| vec![job]),
+            Task::RemoveTuning => remove_tuning().await.map(|job| vec![job]),
         };
         match started {
             Ok(jobs) => jobs.into_iter().for_each(|started| set_if_newer(job, started)),
@@ -223,6 +225,51 @@ pub fn PythonSetupCard() -> Element {
                 }
             }
 
+            // Optional, under the GPU and CPU: Optuna for Tune Hyperparameters.
+            if has_python {
+                {
+                    let info = ov.status.info().cloned();
+                    let libraries = ov.status.usable();
+                    let tuning = info.as_ref().filter(|i| i.has_tuning()).map(|i| i.optuna.clone());
+                    let detail = match (&tuning, libraries) {
+                        (Some(version), _) => format!("Optuna {version}. Tune Hyperparameters searches training settings with it."),
+                        (None, true) => "Optional. Tune Hyperparameters needs it: Optuna searches training settings for the best ones. About 15 MB.".to_string(),
+                        (None, false) => "Optional, for Tune Hyperparameters. Install the GPU or CPU libraries first.".to_string(),
+                    };
+                    rsx! {
+                        div { id: "settings-tuning", class: "device-option tuning-option",
+                            div { class: if tuning.is_some() { "device-card is-static is-selected" } else { "device-card is-static" },
+                                span { class: "device-name",
+                                    "Hyperparameter tuning"
+                                    if tuning.is_some() {
+                                        span { class: "tag tag-ok", "installed" }
+                                    } else {
+                                        span { class: "tag tag-missing", "not installed" }
+                                    }
+                                }
+                                span { class: "device-detail", "{detail}" }
+                            }
+                            div { class: "device-actions",
+                                button {
+                                    class: if tuning.is_some() { "button button-secondary button-sm" } else { "button button-sm" },
+                                    r#type: "button",
+                                    disabled: tuning.is_some() || !libraries || running,
+                                    onclick: move |_| run(Task::InstallTuning),
+                                    if tuning.is_some() { "Installed" } else { "Install" }
+                                }
+                                button {
+                                    class: "button button-ghost button-sm",
+                                    r#type: "button",
+                                    disabled: tuning.is_none() || running,
+                                    onclick: move |_| run(Task::RemoveTuning),
+                                    "Remove"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             if confirm_remove() {
                 div { class: "notice notice-warning param-confirm", role: "alert",
                     span {
@@ -255,6 +302,9 @@ enum Task {
     Install(TorchVariant),
     /// Uninstall the training libraries.
     Remove,
+    /// Add Optuna (hyperparameter tuning) next to the training libraries.
+    InstallTuning,
+    RemoveTuning,
 }
 
 /// Creates the environment (Python only) on launch when there's none yet.

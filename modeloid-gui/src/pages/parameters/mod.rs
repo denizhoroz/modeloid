@@ -2,7 +2,7 @@
 //! settings, saved in the workspace as `training/parameters/<name>.toml`.
 //! Choosing a set in the side panel's Parameters table opens it here.
 
-mod fields;
+pub(crate) mod fields;
 
 use dioxus::prelude::*;
 
@@ -22,13 +22,13 @@ use crate::util::format_count;
 use fields::{options, BoolField, ChoiceField, FloatField, IntField, OptionalFloatField, OptionalIntField};
 
 /// The form's Ultralytics settings.
-fn ultra(set: &ParameterSet) -> &UltralyticsParams {
+pub(crate) fn ultra(set: &ParameterSet) -> &UltralyticsParams {
     let FrameworkParams::Ultralytics(p) = &set.params;
     p
 }
 
 /// Changes the form's Ultralytics settings.
-fn edit(mut form: Signal<ParameterSet>, f: impl FnOnce(&mut UltralyticsParams)) {
+pub(crate) fn edit(mut form: Signal<ParameterSet>, f: impl FnOnce(&mut UltralyticsParams)) {
     let mut set = form.write();
     let FrameworkParams::Ultralytics(p) = &mut set.params;
     f(p);
@@ -404,7 +404,7 @@ fn PrepareSection(form: Signal<ParameterSet>) -> Element {
 }
 
 #[component]
-fn ModelSection(form: Signal<ParameterSet>, p: UltralyticsParams) -> Element {
+pub(crate) fn ModelSection(form: Signal<ParameterSet>, p: UltralyticsParams) -> Element {
     let m = p.model.clone();
     let weights_kind = match &m.weights {
         Weights::Pretrained => "pretrained",

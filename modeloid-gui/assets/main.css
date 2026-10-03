@@ -1730,6 +1730,19 @@ fieldset.section-card:disabled {
     opacity: 0.6;
 }
 
+/* A card that only shows a state (hyperparameter tuning): nothing to choose */
+.device-card.is-static {
+    cursor: default;
+}
+
+.device-card.is-static:hover {
+    border-color: var(--color-border-strong);
+}
+
+.tuning-option {
+    margin-top: var(--space-2);
+}
+
 .device-name {
     font-size: var(--text-sm);
     font-weight: 600;
@@ -2607,6 +2620,98 @@ button.bar-row:hover,
 
 .line-chart-swatch.is-dashed {
     border-top-style: dashed;
+}
+
+/* Tune Hyperparameters page */
+.tune-space-bar {
+    padding: 0;
+    border: 0;
+}
+
+.tune-space-bar .icon-button {
+    margin-left: auto;
+}
+
+.tune-space-table td {
+    height: auto;
+    padding-block: var(--space-1);
+    vertical-align: middle;
+}
+
+.tune-param-name {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+}
+
+.tune-search {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+}
+
+.tune-search .input,
+.tune-search .button {
+    min-height: 26px;
+    font-size: var(--text-xs);
+}
+
+.tune-mode {
+    width: 118px;
+}
+
+.tune-range,
+.tune-candidates {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+}
+
+.tune-range .check {
+    align-items: center;
+    white-space: nowrap;
+}
+
+.tune-range .check input {
+    margin: 0;
+}
+
+.tune-candidate {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+}
+
+.tune-candidate-remove {
+    padding: 0 2px;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.tune-candidate-remove:disabled {
+    cursor: not-allowed;
+}
+
+.tune-row-problem {
+    display: block;
+    margin-top: var(--space-1);
+    white-space: normal;
+}
+
+.tune-best {
+    margin-left: var(--space-2);
+}
+
+.tune-values {
+    max-width: 520px;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 /* Performance page */
@@ -3912,6 +4017,14 @@ button.bar-row:hover,
 .info-tip:hover .info-tip-popup,
 .info-tip.is-open .info-tip-popup {
     display: block;
+}
+
+/* Measured: placed against the window (style sets left and top or bottom),
+   so scrolling containers (tables) can't clip it and later content can't cover it. */
+.info-tip-popup.is-placed {
+    position: fixed;
+    top: auto;
+    z-index: 70;
 }
 
 /* Warning icon whose list of problems shows on hover (WarningTip) */

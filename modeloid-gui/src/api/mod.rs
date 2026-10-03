@@ -22,6 +22,7 @@ pub mod pyenv;
 pub mod settings;
 pub mod system;
 pub mod train;
+pub mod tune;
 pub mod watch;
 pub mod workspace;
 

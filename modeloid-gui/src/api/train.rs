@@ -60,7 +60,7 @@ pub fn run_image_file(name: &str, path: &str) -> Result<std::path::PathBuf, Stri
 }
 
 #[cfg(feature = "server")]
-mod backend {
+pub(crate) mod backend {
     use modeloid::core::pyenv::{PyEnv, TrainDevice};
     use modeloid::core::train;
     use modeloid::{ParameterSet, Settings, Workspace};
@@ -77,13 +77,13 @@ mod backend {
         Workspace::load_from_dir(&dir).map_err(|e| format!("Couldn't open the workspace: {e}"))
     }
 
-    fn parameter_set(ws: &Workspace, name: &str) -> Result<ParameterSet, String> {
+    pub fn parameter_set(ws: &Workspace, name: &str) -> Result<ParameterSet, String> {
         let (sets, _) = ws.parameter_sets().map_err(|e| e.to_string())?;
         sets.into_iter().find(|s| s.name == name).ok_or_else(|| format!("There's no parameter set named '{name}' any more."))
     }
 
     /// The device "auto" means: the one chosen in Settings, if its libraries are there.
-    fn device_choice(env: &PyEnv) -> TrainDevice {
+    pub fn device_choice(env: &PyEnv) -> TrainDevice {
         let overview = env.overview(&Settings::load_default());
         let device = overview.device();
         if overview.installed(device) { device } else { TrainDevice::Cpu }

@@ -18,14 +18,17 @@ use crate::core::{
 use crate::models::dataset::{DATASET_FILE, Dataset, Lineage, ParentRef};
 use crate::models::parameters::ParameterSet;
 
-/// Workspace folder for training: `training/parameters`, `training/trains`.
+/// Workspace folder for training: `training/parameters`, `training/trains`,
+/// `training/tuning`.
 pub const TRAINING_DIR: &str = "training";
 pub const PARAMETERS_DIR: &str = "parameters";
 pub const TRAINS_DIR: &str = "trains";
+pub const TUNING_DIR: &str = "tuning";
 
 fn create_training_dirs(root: &Path) -> std::io::Result<()> {
     fs::create_dir_all(root.join(TRAINING_DIR).join(PARAMETERS_DIR))?;
-    fs::create_dir_all(root.join(TRAINING_DIR).join(TRAINS_DIR))
+    fs::create_dir_all(root.join(TRAINING_DIR).join(TRAINS_DIR))?;
+    fs::create_dir_all(root.join(TRAINING_DIR).join(TUNING_DIR))
 }
 
 /// Brings an older workspace to the current layout: `models/` (which only
@@ -487,6 +490,11 @@ impl Workspace {
     /// `training/trains`: training runs.
     pub fn trains_dir(&self) -> PathBuf {
         self.training_dir().join(TRAINS_DIR)
+    }
+
+    /// `training/tuning`: hyperparameter tuning runs.
+    pub fn tunings_dir(&self) -> PathBuf {
+        self.training_dir().join(TUNING_DIR)
     }
 
     fn parameter_file(&self, name: &str) -> PathBuf {

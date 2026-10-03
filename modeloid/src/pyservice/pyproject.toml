@@ -5,7 +5,7 @@
 # modeloid/.venv and a uv-managed Python in modeloid/python.
 #
 # PyTorch comes in two builds, chosen by extra: `cpu` or `cu130` (NVIDIA GPU,
-# CUDA 13.0). Exactly one is installed.
+# CUDA 13.0). Exactly one is installed. `tune` (Optuna) is optional, next to either.
 #
 # Development:
 #   UV_PROJECT_ENVIRONMENT=../../.venv uv sync --extra cu130   (or --extra cpu)
@@ -27,6 +27,11 @@ cpu = [
 cu130 = [
     "torch>=2.7",
     "torchvision>=0.22",
+]
+# Optional: hyperparameter tuning (Training → Tune Hyperparameters).
+# Installed with either PyTorch build from Settings → Python environment.
+tune = [
+    "optuna>=4.2",
 ]
 
 [tool.uv]

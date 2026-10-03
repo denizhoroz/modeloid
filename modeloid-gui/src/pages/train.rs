@@ -11,6 +11,7 @@ use crate::api::jobs::{ItemStatus, JobKind};
 use crate::api::parameters::{list_parameters, Batch, FrameworkParams, ParameterSet};
 use crate::api::pyenv::python_env_overview;
 use crate::api::train::{list_models, name_taken_message, start_training, train_log, train_preview};
+use crate::api::tune::tune_log;
 use crate::components::{set_if_newer, use_job, use_panel_table, InfoTip, JobProgress, LibrariesMissing, NoWorkspace, PanelTable};
 use crate::state::{
     use_datasets_version, use_models_version, use_parameters_version, use_primary_dataset, use_primary_parameters, use_workspace, use_workspace_checked,
@@ -53,7 +54,7 @@ fn describe(set: &ParameterSet) -> String {
 }
 
 /// The model without its file extension or folder, e.g. "yolo11n-seg".
-fn model_stem(set: &ParameterSet) -> String {
+pub(crate) fn model_stem(set: &ParameterSet) -> String {
     let FrameworkParams::Ultralytics(p) = &set.params;
     let file = p.model_name();
     let file = file.rsplit(['/', '\\']).next().unwrap_or_default().to_string();
@@ -64,7 +65,7 @@ fn model_stem(set: &ParameterSet) -> String {
 }
 
 /// `<dataset>-<model>`, numbered ("-2", "-3", …) past names in `taken`.
-fn suggest_name(dataset: &str, model: &str, taken: &[String]) -> String {
+pub(crate) fn suggest_name(dataset: &str, model: &str, taken: &[String]) -> String {
     let base = format!("{dataset}-{model}");
     let mut name = base.clone();
     let mut n = 2;
@@ -270,9 +271,10 @@ fn TrainForm() -> Element {
 }
 
 /// Ultralytics' output for run `run`, fetched as the job moves (`version`);
-/// `live` is the progress bar being redrawn right now.
+/// `live` is the progress bar being redrawn right now. `tuning`: a tuning
+/// run's console (`training/tuning/<run>/console.log`).
 #[component]
-fn TrainConsole(run: String, version: u64, live: Option<String>) -> Element {
+pub(crate) fn TrainConsole(run: String, version: u64, live: Option<String>, #[props(default)] tuning: bool) -> Element {
     let mut text = use_signal(String::new);
     let mut offset = use_signal(|| 0u64);
     let mut fetching = use_signal(|| false);
@@ -289,7 +291,8 @@ fn TrainConsole(run: String, version: u64, live: Option<String>) -> Element {
             // Catch up in chunks (a long log after a reload).
             loop {
                 let from = *offset.peek();
-                match train_log(run.clone(), from).await {
+                let read = if tuning { tune_log(run.clone(), from).await } else { train_log(run.clone(), from).await };
+                match read {
                     Ok(log) => {
                         let got = !log.text.is_empty();
                         if got {
@@ -328,7 +331,7 @@ fn TrainConsole(run: String, version: u64, live: Option<String>) -> Element {
         details { class: "section-card param-group", aria_labelledby: "train-console-title",
             summary { class: "param-group-summary",
                 h2 { id: "train-console-title", class: "section-card-title", "Console" }
-                span { class: "section-card-meta", "training/trains/{run}/console.log" }
+                span { class: "section-card-meta", if tuning { "training/tuning/{run}/console.log" } else { "training/trains/{run}/console.log" } }
             }
             pre { id: "train-console", class: "train-console", tabindex: "0", aria_label: "Training output",
                 if text.read().is_empty() && live.is_none() { "Waiting for output…" }

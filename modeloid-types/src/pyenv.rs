@@ -141,6 +141,15 @@ pub struct EnvInfo {
     /// Hash of the `uv.lock` it was installed from; a different one means the
     /// app's dependencies changed since.
     pub lock_hash: String,
+    /// Optuna's version when hyperparameter tuning is installed, else empty.
+    #[serde(default)]
+    pub optuna: String,
+}
+
+impl EnvInfo {
+    pub fn has_tuning(&self) -> bool {
+        !self.optuna.is_empty()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

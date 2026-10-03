@@ -37,6 +37,19 @@ pub async fn remove_python_libraries() -> Result<Job, ServerFnError> {
     backend::remove_libraries().map_err(ServerFnError::new)
 }
 
+/// Installs hyperparameter tuning (Optuna) next to the installed training
+/// libraries, as a `PythonSetup` job.
+#[post("/api/python/tuning/install")]
+pub async fn install_tuning() -> Result<Job, ServerFnError> {
+    backend::install_tuning().map_err(ServerFnError::new)
+}
+
+/// Uninstalls Optuna, as a `PythonSetup` job. Training stays.
+#[post("/api/python/tuning/remove")]
+pub async fn remove_tuning() -> Result<Job, ServerFnError> {
+    backend::remove_tuning().map_err(ServerFnError::new)
+}
+
 /// Chooses what training runs on. No reinstall: the CUDA build runs on the
 /// CPU too (choosing the GPU without the CUDA build needs an install first).
 #[post("/api/python/device")]
@@ -108,6 +121,25 @@ mod backend {
         jobs::start(JobKind::PythonSetup, vec!["Removing training libraries".into()], jobs::Touches::Nothing, move |ctx| {
             env.remove_libraries(&uv(&env, ctx)?, ctx.reporter().as_ref()).map_err(|e| e.to_string())?;
             Ok(Some("PyTorch, torchvision and Ultralytics removed".into()))
+        })
+    }
+
+    pub fn install_tuning() -> Result<Job, String> {
+        let env = locate()?;
+        if !env.status().usable() {
+            return Err("Install the training libraries (CPU or GPU) first.".into());
+        }
+        jobs::start(JobKind::PythonSetup, vec!["Installing hyperparameter tuning".into()], jobs::Touches::Nothing, move |ctx| {
+            let info = env.install_tuning(&uv(&env, ctx)?, ctx.reporter().as_ref()).map_err(|e| e.to_string())?;
+            Ok(Some(format!("Optuna {}", info.optuna)))
+        })
+    }
+
+    pub fn remove_tuning() -> Result<Job, String> {
+        let env = locate()?;
+        jobs::start(JobKind::PythonSetup, vec!["Removing hyperparameter tuning".into()], jobs::Touches::Nothing, move |ctx| {
+            env.remove_tuning(&uv(&env, ctx)?, ctx.reporter().as_ref()).map_err(|e| e.to_string())?;
+            Ok(Some("Optuna removed".into()))
         })
     }
 

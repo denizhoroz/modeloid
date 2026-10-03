@@ -12,6 +12,7 @@ pub mod split;
 pub mod stats;
 pub mod system;
 pub mod train;
+pub mod tune;
 pub mod validate;
 
 pub use split::Split;

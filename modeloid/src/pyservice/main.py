@@ -11,12 +11,23 @@ Commands:
                   Ultralytics' own output passes through (the console Modeloid
                   shows); progress events are lines starting with
                   "@modeloid " followed by JSON: start, epoch, done, error.
+  tune <config>   Tunes hyperparameters with Optuna (the optional `tune` extra):
+                  {"model", "task", "rtdetr", "args" (Ultralytics train()
+                   arguments shared by every trial), "trials": 20,
+                   "seed": 0, "space": [{"key": "lr0", "kind": "range",
+                   "low": 1e-5, "high": 0.1, "log": true, "int": false} |
+                   {"key": "optimizer", "kind": "candidates", "values": [...]}]}.
+                  Each trial trains in args["project"]/trial-<n> and is scored
+                  by Ultralytics' fitness (higher is better). Events: start
+                  (trials), trial-start, epoch, trial (number, value, params,
+                  state), done (best trial, value, params), error.
 
 Errors exit non-zero; `check` prints {"error": "..."}, `train` an error event.
 """
 
 import json
 import platform
+import shutil
 import sys
 
 
@@ -42,7 +53,14 @@ def check():
         device_name = "Apple GPU (MPS)"
     else:
         device_name = "CPU"
+    try:
+        import optuna
+
+        optuna_version = optuna.__version__
+    except ImportError:
+        optuna_version = ""
     emit({
+        "optuna": optuna_version,
         "python": platform.python_version(),
         "torch": torch.__version__,
         "torchvision": torchvision.__version__,
@@ -81,6 +99,72 @@ def train(config_path):
     event("done", save_dir=str(trainer.save_dir), best=str(best) if best else "")
 
 
+def tune(config_path):
+    with open(config_path, encoding="utf-8") as f:
+        config = json.load(f)
+
+    import optuna
+    from ultralytics import RTDETR, YOLO
+
+    space = config["space"]
+    trials = int(config["trials"])
+    base = dict(config["args"])
+
+    def sample(trial):
+        params = {}
+        for p in space:
+            key = p["key"]
+            if p["kind"] == "candidates":
+                params[key] = trial.suggest_categorical(key, p["values"])
+            elif p.get("int"):
+                params[key] = trial.suggest_int(key, int(p["low"]), int(p["high"]), log=bool(p.get("log")))
+            else:
+                params[key] = trial.suggest_float(key, float(p["low"]), float(p["high"]), log=bool(p.get("log")))
+        return params
+
+    def objective(trial):
+        params = sample(trial)
+        event("trial-start", number=trial.number + 1, trials=trials, params=params)
+        if config.get("rtdetr"):
+            model = RTDETR(config["model"])
+        else:
+            model = YOLO(config["model"], task=config.get("task"))
+
+        def on_fit_epoch_end(trainer):
+            metrics = {k: float(v) for k, v in (trainer.metrics or {}).items() if isinstance(v, (int, float))}
+            event("epoch", trial=trial.number + 1, epoch=trainer.epoch + 1, epochs=trainer.epochs, metrics=metrics)
+
+        model.add_callback("on_fit_epoch_end", on_fit_epoch_end)
+        args = {**base, **params, "name": f"trial-{trial.number + 1}"}
+        try:
+            model.train(**args)
+        except Exception as e:
+            event("trial", number=trial.number + 1, value=None, params=params, state="failed", error=f"{type(e).__name__}: {e}")
+            raise
+        trainer = model.trainer
+        # Trials are compared, not kept: Ultralytics saves weights on the last epoch even with save=False.
+        shutil.rmtree(trainer.save_dir / "weights", ignore_errors=True)
+        value = trainer.best_fitness if trainer.best_fitness is not None else trainer.fitness
+        value = float(value) if value is not None else float("nan")
+        metrics = {k: float(v) for k, v in (trainer.metrics or {}).items() if isinstance(v, (int, float))}
+        event("trial", number=trial.number + 1, value=value, params=params, state="done", metrics=metrics)
+        return value
+
+    # Modeloid reports trials itself (numbered from 1); Optuna's own lines count from 0.
+    optuna.logging.set_verbosity(optuna.logging.WARNING)
+    sampler = optuna.samplers.TPESampler(seed=config.get("seed"))
+    study = optuna.create_study(direction="maximize", sampler=sampler)
+    event("start", trials=trials)
+    # A failing trial (e.g. out of memory with a big batch) is recorded and the study goes on.
+    study.optimize(objective, n_trials=trials, catch=(Exception,))
+
+    done = [t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE]
+    if not done:
+        raise RuntimeError("no trial finished")
+    best = study.best_trial
+    event("done", trial=best.number + 1, value=best.value, params=best.params)
+
+
 def main(argv):
     command = argv[1] if len(argv) > 1 else ""
     if command == "check":
@@ -90,9 +174,9 @@ def main(argv):
             emit({"error": f"{type(e).__name__}: {e}"})
             return 1
         return 0
-    if command == "train" and len(argv) > 2:
+    if command in ("train", "tune") and len(argv) > 2:
         try:
-            train(argv[2])
+            (train if command == "train" else tune)(argv[2])
         except KeyboardInterrupt:
             return 130
         except Exception as e:
@@ -102,7 +186,7 @@ def main(argv):
             event("error", error=f"{type(e).__name__}: {e}")
             return 1
         return 0
-    emit({"error": "usage: main.py check | train <config.json>"})
+    emit({"error": "usage: main.py check | train <config.json> | tune <config.json>"})
     return 2
 
 

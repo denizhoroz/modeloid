@@ -8,10 +8,11 @@ mod health;
 mod home;
 pub(crate) mod label;
 mod not_found;
-mod parameters;
+pub(crate) mod parameters;
 mod performance;
 mod settings;
-mod train;
+pub(crate) mod train;
+mod tune;
 mod tool;
 
 pub use create_workspace::CreateWorkspace;

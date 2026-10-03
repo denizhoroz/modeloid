@@ -35,6 +35,8 @@ pub const UV_VERSION: &str = "0.11.26";
 /// Overrides where the root folder is.
 pub const HOME_ENV: &str = "MODELOID_HOME";
 const ENV_FILE: &str = "modeloid-env.json";
+/// The pyproject extra with Optuna (hyperparameter tuning), optional.
+const TUNING_EXTRA: &str = "tune";
 const PYTHON_FILE: &str = "modeloid-python.txt";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -262,14 +264,54 @@ impl PyEnv {
     /// result. Blocking; stops (killing uv) when cancelled. Until it finishes
     /// the status is `NoLibraries`, and running it again repairs.
     pub fn install(&self, variant: TorchVariant, uv: &Path, reporter: &dyn Reporter) -> Result<EnvInfo, crate::Error> {
+        // `uv sync` removes what the extras don't name: keep tuning if it's there.
+        let tuning = self.installed().is_some_and(|i| i.has_tuning());
+        self.sync(variant, tuning, uv, reporter)
+    }
+
+    /// The libraries recorded as installed (Ready or Outdated).
+    fn installed(&self) -> Option<EnvInfo> {
+        match self.status() {
+            EnvStatus::Ready(info) | EnvStatus::Outdated(info) => Some(info),
+            _ => None,
+        }
+    }
+
+    /// Adds hyperparameter tuning (Optuna, the `tune` extra) next to the
+    /// installed PyTorch build. Needs the training libraries.
+    pub fn install_tuning(&self, uv: &Path, reporter: &dyn Reporter) -> Result<EnvInfo, crate::Error> {
+        let info = self.installed().ok_or("Install the training libraries (CPU or GPU) first.")?;
+        self.sync(info.variant, true, uv, reporter)
+    }
+
+    /// Removes Optuna; training stays as it is.
+    pub fn remove_tuning(&self, uv: &Path, reporter: &dyn Reporter) -> Result<EnvInfo, crate::Error> {
+        let info = self.installed().ok_or("The training libraries aren't installed.")?;
+        let step = reporter.start("Removing Optuna", Unit::Steps);
+        let mut cmd = self.uv(uv);
+        cmd.args(["pip", "uninstall", "--python"]).arg(self.python()).arg("optuna");
+        run(cmd, step.as_ref(), reporter)?;
+        step.finish();
+        let step = reporter.start("Checking", Unit::Steps);
+        let info = self.check(info.variant, step.as_ref(), reporter)?;
+        step.finish();
+        fs::write(self.env_file(), serde_json::to_vec_pretty(&info)?)?;
+        Ok(info)
+    }
+
+    /// `uv sync` with `variant`'s PyTorch (and Optuna when `tuning`), then the check.
+    fn sync(&self, variant: TorchVariant, tuning: bool, uv: &Path, reporter: &dyn Reporter) -> Result<EnvInfo, crate::Error> {
         let _ = fs::remove_file(self.env_file());
         if !self.python().is_file() || !self.python_file().is_file() {
             self.create(uv, reporter)?;
         }
 
-        let step = reporter.start("Installing libraries", Unit::Steps);
+        let step = reporter.start(if tuning { "Installing libraries and Optuna" } else { "Installing libraries" }, Unit::Steps);
         let mut cmd = self.uv(uv);
         cmd.args(["sync", "--locked", "--no-dev", "--extra", variant.extra()]);
+        if tuning {
+            cmd.args(["--extra", TUNING_EXTRA]);
+        }
         run(cmd, step.as_ref(), reporter)?;
         step.finish();
 
@@ -299,6 +341,8 @@ impl PyEnv {
             mps_available: bool,
             #[serde(default)]
             device_name: String,
+            #[serde(default)]
+            optuna: String,
         }
         let mut cmd = Command::new(self.python());
         cmd.arg("main.py").arg("check").current_dir(self.pyservice()).env("PYTHONIOENCODING", "utf-8");
@@ -318,6 +362,7 @@ impl PyEnv {
             mps_available: checked.mps_available,
             device_name: checked.device_name,
             lock_hash: self.lock_hash(),
+            optuna: checked.optuna,
         })
     }
 

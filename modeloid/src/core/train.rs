@@ -27,13 +27,13 @@ use crate::models::workspace::Workspace;
 pub use modeloid_types::train::*;
 
 const RECORD_FILE: &str = "train.toml";
-const CONSOLE_FILE: &str = "console.log";
+pub(crate) const CONSOLE_FILE: &str = "console.log";
 /// Ultralytics' run folder name inside a run (`project` = the run folder).
 pub(crate) const RUNS_NAME: &str = "runs";
 
 /// Where a dataset's images are for Ultralytics.
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum DataSource {
+pub(crate) enum DataSource {
     /// A YOLO dataset used where it is: `data.yaml` points at its folders.
     YoloInPlace { yaml: String, val_is_train: bool },
     /// COCO / VOC (or YOLO in an odd layout): written as YOLO into `dataset/`.
@@ -43,11 +43,11 @@ enum DataSource {
 }
 
 /// Everything checked before a run.
-struct Plan {
-    preview: TrainPreview,
-    dataset_dir: PathBuf,
-    dataset_name: String,
-    data: Option<DataSource>,
+pub(crate) struct Plan {
+    pub(crate) preview: TrainPreview,
+    pub(crate) dataset_dir: PathBuf,
+    pub(crate) dataset_name: String,
+    pub(crate) data: Option<DataSource>,
 }
 
 /// A run ready to start (folder written).
@@ -58,7 +58,7 @@ pub struct PreparedTrain {
     pub record: TrainRecord,
 }
 
-fn ultra(set: &ParameterSet) -> &UltralyticsParams {
+pub(crate) fn ultra(set: &ParameterSet) -> &UltralyticsParams {
     let FrameworkParams::Ultralytics(p) = &set.params;
     p
 }
@@ -71,7 +71,7 @@ pub fn resolve_device(set: &ParameterSet, choice: TrainDevice) -> String {
     }
 }
 
-fn device_label(device: &str) -> String {
+pub(crate) fn device_label(device: &str) -> String {
     match device {
         "cpu" => "CPU".into(),
         "mps" => "Apple GPU (MPS)".into(),
@@ -91,7 +91,7 @@ fn yolo_layout(dir: &Path) -> Option<(String, Option<String>, Option<String>)> {
 
 /// `path` made absolute against the current folder (paths handed to Python
 /// must not depend on its working folder).
-fn absolute(path: &Path) -> PathBuf {
+pub(crate) fn absolute(path: &Path) -> PathBuf {
     std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
@@ -106,12 +106,19 @@ impl Workspace {
     }
 
     fn train_plan(&self, id: u32, set: &ParameterSet, name: &str, choice: TrainDevice) -> Result<Plan, crate::Error> {
+        self.run_plan(id, set, name, &self.train_dir(name), choice)
+    }
+
+    /// Checks running `set` on dataset `id` in folder `run_dir` (a training or
+    /// a tuning run named `name`): the name, the parameters, the task against
+    /// the dataset, and how the data reaches Ultralytics.
+    pub(crate) fn run_plan(&self, id: u32, set: &ParameterSet, name: &str, run_dir: &Path, choice: TrainDevice) -> Result<Plan, crate::Error> {
         let (dataset_dir, dataset) = self.find_dataset(id)?;
         let dataset_dir = absolute(&dataset_dir);
         let p = ultra(set);
         let device = resolve_device(set, choice);
         let mut preview = TrainPreview {
-            run_dir: self.train_dir(name).display().to_string(),
+            run_dir: run_dir.display().to_string(),
             model: p.model_name(),
             device: device_label(&device),
             ..Default::default()
@@ -119,7 +126,7 @@ impl Workspace {
         let problems = &mut preview.problems;
         if let Err(e) = crate::validate_dataset_name(name) {
             problems.push(format!("Model name: {e}"));
-        } else if self.train_dir(name).exists() {
+        } else if run_dir.exists() {
             preview.name_taken = true;
         }
         problems.extend(set.problems().into_iter().map(|p| format!("Parameters: {p}")));
@@ -201,22 +208,7 @@ impl Workspace {
         let dir = self.train_dir(name);
         fs::create_dir_all(&dir)?;
 
-        let data_path = match plan.data.expect("no problems means data") {
-            DataSource::YoloInPlace { yaml, .. } => {
-                let path = dir.join("data.yaml");
-                fs::write(&path, yaml)?;
-                path
-            }
-            DataSource::Convert(_) => {
-                let progress = reporter.start("Converting labels to YOLO", Unit::Files);
-                let (_, _, set) = self.read_labels(id, progress.as_ref())?;
-                let out = dir.join("dataset");
-                labels::write(&set, &out, LabelFormat::Yolo, progress.as_ref())?;
-                progress.finish();
-                out.join("data.yaml")
-            }
-            DataSource::Folders(folder) => folder,
-        };
+        let data_path = self.write_data(id, plan.data.expect("no problems means data"), &dir, reporter)?;
 
         let device = resolve_device(set, choice);
         let args = ultralytics_args(p, &device, &data_path, &dir);
@@ -243,6 +235,27 @@ impl Workspace {
         save_record(&dir, &record)?;
         let _ = plan.dataset_dir;
         Ok(PreparedTrain { dir, config, record })
+    }
+
+    /// Puts dataset `id` where Ultralytics reads it for a run in `dir`; returns
+    /// the `data` argument (a data.yaml, or the class-folder dataset).
+    pub(crate) fn write_data(&self, id: u32, data: DataSource, dir: &Path, reporter: &dyn Reporter) -> Result<PathBuf, crate::Error> {
+        Ok(match data {
+            DataSource::YoloInPlace { yaml, .. } => {
+                let path = dir.join("data.yaml");
+                fs::write(&path, yaml)?;
+                path
+            }
+            DataSource::Convert(_) => {
+                let progress = reporter.start("Converting labels to YOLO", Unit::Files);
+                let (_, _, set) = self.read_labels(id, progress.as_ref())?;
+                let out = dir.join("dataset");
+                labels::write(&set, &out, LabelFormat::Yolo, progress.as_ref())?;
+                progress.finish();
+                out.join("data.yaml")
+            }
+            DataSource::Folders(folder) => folder,
+        })
     }
 
     /// Every training run's record, by start time, and a warning for each
@@ -286,22 +299,26 @@ impl Workspace {
 
     /// Console output of run `name` from byte `offset` (at most `max` bytes, cut at a line end).
     pub fn train_log(&self, name: &str, offset: u64, max: usize) -> Result<TrainLog, crate::Error> {
-        use std::io::{Read, Seek, SeekFrom};
-        let path = self.train_dir(name).join(CONSOLE_FILE);
-        let Ok(mut file) = File::open(&path) else { return Ok(TrainLog { text: String::new(), offset: 0 }) };
-        let len = file.metadata()?.len();
-        let offset = offset.min(len);
-        file.seek(SeekFrom::Start(offset))?;
-        let mut bytes = Vec::new();
-        file.take(max as u64).read_to_end(&mut bytes)?;
-        if offset + (bytes.len() as u64) < len {
-            // Stop at the last full line; the rest comes next time.
-            if let Some(end) = bytes.iter().rposition(|&b| b == b'\n') {
-                bytes.truncate(end + 1);
-            }
-        }
-        Ok(TrainLog { text: String::from_utf8_lossy(&bytes).into_owned(), offset: offset + bytes.len() as u64 })
+        read_log(&self.train_dir(name).join(CONSOLE_FILE), offset, max)
     }
+}
+
+/// A console log from byte `offset` (at most `max` bytes, cut at a line end).
+pub(crate) fn read_log(path: &Path, offset: u64, max: usize) -> Result<TrainLog, crate::Error> {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut file) = File::open(path) else { return Ok(TrainLog { text: String::new(), offset: 0 }) };
+    let len = file.metadata()?.len();
+    let offset = offset.min(len);
+    file.seek(SeekFrom::Start(offset))?;
+    let mut bytes = Vec::new();
+    file.take(max as u64).read_to_end(&mut bytes)?;
+    if offset + (bytes.len() as u64) < len {
+        // Stop at the last full line; the rest comes next time.
+        if let Some(end) = bytes.iter().rposition(|&b| b == b'\n') {
+            bytes.truncate(end + 1);
+        }
+    }
+    Ok(TrainLog { text: String::from_utf8_lossy(&bytes).into_owned(), offset: offset + bytes.len() as u64 })
 }
 
 fn save_record(dir: &Path, record: &TrainRecord) -> Result<(), crate::Error> {
