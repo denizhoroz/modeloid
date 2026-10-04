@@ -15,6 +15,8 @@ pub fn Slider(
     /// Shown instead of the number, e.g. "Automatic" for 0.
     #[props(default)]
     text: Option<String>,
+    #[props(default)]
+    disabled: bool,
     onchange: EventHandler<u32>,
 ) -> Element {
     let shown = text.unwrap_or_else(|| format!("{value}{unit}"));
@@ -29,6 +31,7 @@ pub fn Slider(
                 value: "{value}",
                 aria_label: "{label}",
                 aria_valuetext: "{shown}",
+                disabled,
                 oninput: move |e| {
                     if let Ok(n) = e.value().trim().parse() {
                         onchange.call(n);

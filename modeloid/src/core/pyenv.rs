@@ -314,6 +314,8 @@ impl PyEnv {
             device_name: String,
             #[serde(default)]
             optuna: String,
+            #[serde(default)]
+            albumentations: String,
         }
         let mut cmd = Command::new(self.python());
         cmd.arg("main.py").arg("check").current_dir(self.pyservice()).env("PYTHONIOENCODING", "utf-8");
@@ -334,6 +336,7 @@ impl PyEnv {
             device_name: checked.device_name,
             lock_hash: self.lock_hash(),
             optuna: checked.optuna,
+            albumentations: checked.albumentations,
         })
     }
 }

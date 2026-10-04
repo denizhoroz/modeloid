@@ -13,6 +13,7 @@ pub mod split;
 pub mod stats;
 pub mod system;
 pub mod train;
+pub mod transform;
 pub mod tune;
 pub mod validate;
 

@@ -4,7 +4,7 @@
 # Python environment) runs uv with this project, putting the venv in
 # modeloid/.venv and a uv-managed Python in modeloid/python.
 #
-# Ultralytics and Optuna are always installed. PyTorch comes in two builds,
+# Ultralytics, Optuna and Albumentations are always installed. PyTorch comes in two builds,
 # chosen by extra: `cpu` (the default) or `cu130` (NVIDIA GPU, CUDA 13.0).
 # Exactly one is installed; switching builds only swaps torch and torchvision.
 #
@@ -19,6 +19,7 @@ requires-python = "==3.12.*"
 dependencies = [
     "ultralytics>=8.3",
     "optuna>=4.2",
+    "albumentations>=2.0",
 ]
 
 [project.optional-dependencies]
@@ -33,6 +34,9 @@ cu130 = [
 
 [tool.uv]
 package = false
+# Albumentations asks for opencv-python-headless; Ultralytics brings
+# opencv-python. Both install the same cv2 module, so only one is kept.
+override-dependencies = ["opencv-python-headless; sys_platform == 'never'"]
 conflicts = [
     [
         { extra = "cpu" },

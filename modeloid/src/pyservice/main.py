@@ -21,8 +21,17 @@ Commands:
                   by Ultralytics' fitness (higher is better). Events: start
                   (trials), trial-start, epoch, trial (number, value, params,
                   state), done (best trial, value, params), error.
+  augment <config> Augmented copies of images with Albumentations:
+                  {"seed": 0, "out_dir": "...", "transforms": [{"name":
+                   "HorizontalFlip", "p": 0.5, "params": {...}}],
+                   "images": [{"index": 0, "file": "...", "width", "height",
+                   "copies": 2, "objects": [{"class": 0, "bbox": [x, y, w, h],
+                   "polygon": [[x, y], ...] | null}]}]} (pixels).
+                  Writes the copies to out_dir. Events: start (images),
+                  image (index, outputs: [{file, width, height, objects}],
+                  or error), done.
 
-Errors exit non-zero; `check` prints {"error": "..."}, `train` an error event.
+Errors exit non-zero; `check` prints {"error": "..."}, the others an error event.
 """
 
 import json
@@ -59,8 +68,15 @@ def check():
         optuna_version = optuna.__version__
     except ImportError:
         optuna_version = ""
+    try:
+        import albumentations
+
+        albumentations_version = albumentations.__version__
+    except ImportError:
+        albumentations_version = ""
     emit({
         "optuna": optuna_version,
+        "albumentations": albumentations_version,
         "python": platform.python_version(),
         "torch": torch.__version__,
         "torchvision": torchvision.__version__,
@@ -165,6 +181,151 @@ def tune(config_path):
     event("done", trial=best.number + 1, value=best.value, params=best.params)
 
 
+# Extensions OpenCV writes; other images are saved as JPEG.
+WRITABLE = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}
+
+# Albumentations takes OpenCV's numbers for how empty corners are filled.
+BORDERS = {"constant": 0, "replicate": 1, "reflect": 4}
+
+
+def build_transform(A, spec):
+    """An Albumentations transform from {"name", "p", "params"}."""
+    params = {k: tuple(v) if isinstance(v, list) else v for k, v in (spec.get("params") or {}).items()}
+    if "border_mode" in params:
+        params["border_mode"] = BORDERS[params["border_mode"]]
+    for key in ("height", "width", "max_size"):
+        if key in params:
+            params[key] = int(params[key])
+    name = spec["name"]
+    if name == "RandomResizedCrop":
+        params["size"] = (params.pop("height"), params.pop("width"))
+    if name == "RandomCrop":
+        params["pad_if_needed"] = True
+    return getattr(A, name)(**params, p=float(spec["p"]))
+
+
+def clip_polygon(points, width, height):
+    """`points` cut to the image (Sutherland-Hodgman against its four edges)."""
+
+    def at_x(a, b, x):
+        return (x, a[1] + (b[1] - a[1]) * (x - a[0]) / (b[0] - a[0]))
+
+    def at_y(a, b, y):
+        return (a[0] + (b[0] - a[0]) * (y - a[1]) / (b[1] - a[1]), y)
+
+    edges = [
+        (lambda p: p[0] >= 0, lambda a, b: at_x(a, b, 0.0)),
+        (lambda p: p[0] <= width, lambda a, b: at_x(a, b, width)),
+        (lambda p: p[1] >= 0, lambda a, b: at_y(a, b, 0.0)),
+        (lambda p: p[1] <= height, lambda a, b: at_y(a, b, height)),
+    ]
+    for inside, cut in edges:
+        result = []
+        for i, current in enumerate(points):
+            previous = points[i - 1]
+            if inside(current):
+                if not inside(previous):
+                    result.append(cut(previous, current))
+                result.append(current)
+            elif inside(previous):
+                result.append(cut(previous, current))
+        points = result
+    return points
+
+
+def augment_image(compose, item, out_dir):
+    """Augmented copies of one image: written to out_dir, with their labels."""
+    import os
+
+    import cv2
+    import numpy as np
+
+    # np.fromfile + imdecode: cv2.imread can't open non-ASCII paths on Windows.
+    image = cv2.imdecode(np.fromfile(item["file"], dtype=np.uint8), cv2.IMREAD_COLOR | cv2.IMREAD_IGNORE_ORIENTATION)
+    if image is None:
+        raise ValueError("not a readable image")
+    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    height, width = image.shape[:2]
+    # Labels are in the size Modeloid read from the header; follow the pixels if they differ.
+    sx = width / item["width"] if item.get("width") else 1.0
+    sy = height / item["height"] if item.get("height") else 1.0
+
+    objects = item["objects"]
+    boxes, box_ids, points, point_ids = [], [], [], []
+    for i, o in enumerate(objects):
+        if o.get("polygon"):
+            for x, y in o["polygon"]:
+                points.append((x * sx, y * sy))
+                point_ids.append(i)
+            continue
+        x, y, w, h = o["bbox"]
+        x0, y0 = max(0.0, x * sx), max(0.0, y * sy)
+        x1, y1 = min(width, (x + w) * sx), min(height, (y + h) * sy)
+        if x1 - x0 >= 1 and y1 - y0 >= 1:
+            boxes.append((x0, y0, x1 - x0, y1 - y0))
+            box_ids.append(i)
+
+    ext = os.path.splitext(item["file"])[1].lower()
+    if ext not in WRITABLE:
+        ext = ".jpg"
+    outputs = []
+    for copy in range(1, int(item["copies"]) + 1):
+        r = compose(image=image, bboxes=boxes, box_ids=box_ids, keypoints=points, point_ids=point_ids)
+        out = r["image"]
+        oh, ow = out.shape[:2]
+        found = []
+        for box, i in zip(r["bboxes"], r["box_ids"]):
+            x, y, w, h = (float(v) for v in box[:4])
+            found.append((int(i), {"class": objects[int(i)]["class"], "bbox": [x, y, w, h], "polygon": None}))
+        outlines = {}
+        for point, i in zip(r["keypoints"], r["point_ids"]):
+            outlines.setdefault(int(i), []).append((float(point[0]), float(point[1])))
+        for i, outline in outlines.items():
+            outline = clip_polygon(outline, float(ow), float(oh))
+            if len(outline) < 3:
+                continue
+            xs, ys = [p[0] for p in outline], [p[1] for p in outline]
+            x, y, w, h = min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)
+            if w >= 1 and h >= 1:
+                found.append((i, {"class": objects[i]["class"], "bbox": [x, y, w, h], "polygon": [list(p) for p in outline]}))
+        found.sort(key=lambda f: f[0])
+
+        path = os.path.join(out_dir, f"{item['index']}_{copy}{ext}")
+        ok, encoded = cv2.imencode(ext, cv2.cvtColor(out, cv2.COLOR_RGB2BGR))
+        if not ok:
+            raise ValueError(f"couldn't encode {ext}")
+        encoded.tofile(path)
+        outputs.append({"file": path, "width": ow, "height": oh, "objects": [f[1] for f in found]})
+    return outputs
+
+
+def augment(config_path):
+    with open(config_path, encoding="utf-8") as f:
+        config = json.load(f)
+
+    import warnings
+
+    import albumentations as A
+
+    # Colour changes alone have nothing to do with the boxes and points; that's fine.
+    warnings.filterwarnings("ignore", message=".*processor for.*")
+    compose = A.Compose(
+        [build_transform(A, t) for t in config["transforms"]],
+        bbox_params=A.BboxParams(format="coco", label_fields=["box_ids"], clip=True, min_visibility=0.1, min_area=1),
+        keypoint_params=A.KeypointParams(format="xy", label_fields=["point_ids"], remove_invisible=False),
+        seed=config.get("seed"),
+    )
+    images = config["images"]
+    event("start", images=len(images))
+    for item in images:
+        # One unreadable image doesn't stop the others.
+        try:
+            event("image", index=item["index"], outputs=augment_image(compose, item, config["out_dir"]))
+        except Exception as e:
+            event("image", index=item["index"], error=f"{type(e).__name__}: {e}")
+    event("done", images=len(images))
+
+
 def main(argv):
     command = argv[1] if len(argv) > 1 else ""
     if command == "check":
@@ -174,9 +335,10 @@ def main(argv):
             emit({"error": f"{type(e).__name__}: {e}"})
             return 1
         return 0
-    if command in ("train", "tune") and len(argv) > 2:
+    commands = {"train": train, "tune": tune, "augment": augment}
+    if command in commands and len(argv) > 2:
         try:
-            (train if command == "train" else tune)(argv[2])
+            commands[command](argv[2])
         except KeyboardInterrupt:
             return 130
         except Exception as e:
@@ -186,7 +348,7 @@ def main(argv):
             event("error", error=f"{type(e).__name__}: {e}")
             return 1
         return 0
-    emit({"error": "usage: main.py check | train <config.json> | tune <config.json>"})
+    emit({"error": "usage: main.py check | train <config.json> | tune <config.json> | augment <config.json>"})
     return 2
 
 

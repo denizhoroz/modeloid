@@ -2774,6 +2774,103 @@ button.bar-row:hover,
     border-top-style: dashed;
 }
 
+/* Transform page */
+.chip-list {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+}
+
+.chip {
+    padding: var(--space-0-5) var(--space-3);
+    border: 1px solid var(--color-border-strong);
+    border-radius: 999px;
+    background: none;
+    color: var(--color-fg-muted);
+    font: inherit;
+    font-size: var(--text-sm);
+    cursor: pointer;
+}
+
+.chip:hover {
+    border-color: var(--color-fg-muted);
+}
+
+.chip[aria-pressed="true"] {
+    border-color: var(--color-accent);
+    background: var(--color-accent-soft);
+    color: var(--color-fg);
+}
+
+.chip:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+}
+
+.transform-table .slider {
+    max-width: 150px;
+    gap: var(--space-2);
+}
+
+.transform-table .slider-input {
+    min-width: 64px;
+}
+
+/* One band per augmentation (its row and settings line share a body): a
+   strong line between bands, none inside one. */
+.transform-table tbody.transform-aug + tbody.transform-aug {
+    border-top: 1px solid var(--color-border-strong);
+}
+
+.transform-table tbody.transform-aug tr th,
+.transform-table tbody.transform-aug tr td {
+    border-bottom: 0;
+}
+
+.transform-table tbody.transform-aug.is-on {
+    background: var(--color-accent-soft);
+}
+
+.transform-table tbody.transform-aug.is-on tr.is-checked {
+    background: none;
+}
+
+.transform-settings-row td {
+    padding-bottom: var(--space-3);
+}
+
+/* Settings: each one a small boxed group (label + its boxes), so the
+   settings of one augmentation are told apart. */
+.transform-settings {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+    white-space: normal;
+}
+
+.transform-param {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-1) var(--space-2);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-surface);
+    white-space: nowrap;
+}
+
+.transform-param-label {
+    color: var(--color-fg-muted);
+    font-size: var(--text-xs);
+    font-weight: 600;
+}
+
+.transform-table .input-narrow {
+    width: 68px;
+}
+
 /* Tune Hyperparameters page */
 .tune-space-bar {
     padding: 0;

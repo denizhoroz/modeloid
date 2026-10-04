@@ -12,6 +12,7 @@ pub(crate) mod parameters;
 mod performance;
 mod settings;
 pub(crate) mod train;
+mod transform;
 mod tune;
 mod tool;
 

@@ -144,6 +144,10 @@ pub struct EnvInfo {
     /// Optuna's version (hyperparameter tuning).
     #[serde(default)]
     pub optuna: String,
+    /// Albumentations' version (Transform); empty in an environment
+    /// installed before it was added.
+    #[serde(default)]
+    pub albumentations: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

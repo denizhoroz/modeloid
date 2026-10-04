@@ -11,6 +11,7 @@ use crate::pages::health::HealthCheck;
 use crate::pages::parameters::Parameters;
 use crate::pages::performance::Performance;
 use crate::pages::train::TrainModel;
+use crate::pages::transform::Transform;
 use crate::pages::tune::TuneHyperparameters;
 
 /// Placeholder page for every sidebar tool until each one is implemented.
@@ -33,6 +34,7 @@ pub fn Tool(section: String, tool: String) -> Element {
         ("dataset", "classes-merge") => return rsx! { ClassesMerge {} },
         ("dataset", "split-balance") => return rsx! { SplitBalance {} },
         ("dataset", "convert") => return rsx! { Convert {} },
+        ("dataset", "transform") => return rsx! { Transform {} },
         ("training", "parameters") => return rsx! { Parameters {} },
         ("training", "train") => return rsx! { TrainModel {} },
         ("training", "performance") => return rsx! { Performance {} },
