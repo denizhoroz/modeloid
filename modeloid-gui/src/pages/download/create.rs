@@ -5,6 +5,7 @@ use dioxus::prelude::*;
 use modeloid_types::formats;
 
 use crate::api::datasets::validate_dataset_name;
+use crate::components::{IconName, TitleIcon};
 use crate::api::edit::{create_dataset, NewDataset, CREATE_TYPES};
 use crate::api::error_message;
 use crate::components::{FormatSelect, FormatUse, InfoTip};
@@ -63,6 +64,7 @@ pub fn CreateForm(datasets_path: String, default_format: String, on_add_images: 
         form { class: "section-stack", novalidate: true, onsubmit: submit,
             section { class: "section-card", aria_labelledby: "create-details-title",
                 h2 { id: "create-details-title", class: "section-card-title",
+                    TitleIcon { name: IconName::FileText }
                     "Details "
                     InfoTip { label: "About new datasets", text: "The dataset starts empty: 0 images, 0 labels. Add images in the Edit tab." }
                 }

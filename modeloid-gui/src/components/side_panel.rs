@@ -7,7 +7,7 @@ use dioxus::prelude::*;
 use crate::api::error_message;
 use crate::api::parameters::{delete_parameters, list_parameters, FrameworkParams, ParameterSet};
 use crate::components::table::{self, CheckHeader, Column, RowCheck, SelectionBar, Sort, SortHeader};
-use crate::components::{DatasetsPanel, Icon, IconName};
+use crate::components::{DatasetsPanel, Icon, IconName, TitleIcon};
 use crate::api::jobs::JobKind;
 use crate::api::train::{delete_models, list_models, TrainRecord, TrainStatus};
 use crate::components::use_job;
@@ -40,6 +40,15 @@ impl PanelTable {
             PanelTable::Datasets => "Datasets",
             PanelTable::Parameters => "Parameters",
             PanelTable::Models => "Models",
+        }
+    }
+
+    /// Icon before the table's title.
+    pub fn icon(self) -> IconName {
+        match self {
+            PanelTable::Datasets => IconName::Database,
+            PanelTable::Parameters => IconName::Sliders,
+            PanelTable::Models => IconName::Package,
         }
     }
 
@@ -96,6 +105,7 @@ pub fn PanelSwitcher(table: Signal<PanelTable>) -> Element {
                 aria_haspopup: "menu",
                 aria_expanded: if open() { "true" } else { "false" },
                 onclick: move |_| open.toggle(),
+                TitleIcon { name: current.icon() }
                 "{current.label()}"
                 Icon { name: IconName::ChevronDown, size: 14, class: if open() { "panel-switch-chevron is-open" } else { "panel-switch-chevron" } }
             }
@@ -114,6 +124,7 @@ pub fn PanelSwitcher(table: Signal<PanelTable>) -> Element {
                                     table.set(option);
                                     open.set(false);
                                 },
+                                TitleIcon { name: option.icon() }
                                 "{option.label()}"
                             }
                         }

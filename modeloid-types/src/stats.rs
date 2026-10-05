@@ -140,5 +140,8 @@ pub struct GalleryPage {
     pub total: usize,
     pub offset: usize,
     pub images: Vec<GalleryImage>,
+    /// Colour of each class (`#rrggbb`), by class index.
+    #[serde(default)]
+    pub colors: Vec<String>,
 }
 

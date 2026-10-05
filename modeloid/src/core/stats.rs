@@ -117,7 +117,7 @@ pub fn gallery_page(set: &LabelSet, filter: &GalleryFilter, offset: usize, limit
         }
         total += 1;
     }
-    GalleryPage { total, offset, images }
+    GalleryPage { total, offset, images, colors: Vec::new() }
 }
 
 #[cfg(test)]

@@ -1,6 +1,7 @@
 mod appearance_settings;
 mod charts;
 mod choose_dataset;
+mod color_picker;
 mod credential_field;
 mod datasets_panel;
 mod decimal_input;
@@ -28,6 +29,7 @@ mod workspace_options;
 
 pub use appearance_settings::AppearanceSettings;
 pub use charts::{format_value, Bar, BarList, Heatmap, HistogramChart, LineChart, LineSeries, StatTile};
+pub use color_picker::ColorPicker;
 pub use choose_dataset::{PrimaryNote, SelectDatasetHint, SelectModelHint};
 pub use credential_field::CredentialField;
 pub use decimal_input::DecimalInput;
@@ -35,7 +37,7 @@ pub use datasets_panel::DatasetsPanel;
 pub use fonts::Fonts;
 pub use format_select::{FormatSelect, FormatUse, OTHER_FORMAT};
 pub use history::{HistoryButton, HistoryLayer, HistoryOpen};
-pub use icon::{Icon, IconName};
+pub use icon::{Icon, IconName, TitleIcon};
 pub use info_tip::InfoTip;
 pub use job_progress::{set_if_newer, use_job, JobProgress};
 pub use layout::{AppLayout, PanelWidth};

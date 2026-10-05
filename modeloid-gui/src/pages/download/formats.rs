@@ -4,6 +4,7 @@
 use dioxus::prelude::*;
 
 use crate::components::{FormatSelect, FormatUse, InfoTip, OTHER_FORMAT};
+use crate::components::{IconName, TitleIcon};
 
 pub use modeloid_types::formats::DEFAULT_DOWNLOAD_FORMAT as DEFAULT_FORMAT;
 /// Select value that reveals the free-text format input.
@@ -18,7 +19,7 @@ pub fn FormatSection(selected: Signal<String>, custom: Signal<String>, error: Op
 
     rsx! {
         section { class: "section-card", aria_labelledby: "download-options-title",
-            h2 { id: "download-options-title", class: "section-card-title", "Download options" }
+            h2 { id: "download-options-title", class: "section-card-title", TitleIcon { name: IconName::Download } "Download options" }
 
             div { class: "field",
                 label { class: "field-label", r#for: "download-format",

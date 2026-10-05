@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use modeloid_types::colors::{self, ClassColors};
 use std::{fs, path::Path};
 
 use crate::core::scan::DatasetStats;
@@ -27,6 +28,10 @@ pub struct Dataset {
     image_count: u32,
     label_count: u32, // annotation instances (boxes, masks)
     class_names: Vec<String>,
+    /// Colour of each class (`#rrggbb`) by name; filled in for every class
+    /// (`sync_class_colors`).
+    #[serde(default, skip_serializing_if = "ClassColors::is_empty")]
+    class_colors: ClassColors,
     size_bytes: u64,
     train_count: u32, // training images quantity
     test_count: u32, // test images quantity
@@ -97,6 +102,7 @@ impl Dataset {
             image_count: stats.image_count,
             label_count: stats.label_count,
             class_names: stats.class_names,
+            class_colors: ClassColors::new(),
             size_bytes: stats.size_bytes,
             train_count: stats.train_count,
             test_count: stats.test_count,
@@ -108,6 +114,57 @@ impl Dataset {
             license: String::new(),
             tags: Vec::new(),
             lineage: None,
+        }
+        .with_class_colors()
+    }
+
+    fn with_class_colors(mut self) -> Self {
+        self.sync_class_colors();
+        self
+    }
+
+    /// Gives every class a colour (keeping the ones it has) and forgets
+    /// those of classes it no longer has.
+    pub fn sync_class_colors(&mut self) {
+        self.class_colors = colors::assign(&self.class_names, &self.class_colors, self.color_seed());
+    }
+
+    /// Seeds the colours of new classes: from the dataset's name, so each
+    /// dataset starts somewhere else on the hue circle.
+    fn color_seed(&self) -> u64 {
+        colors::seed_of(&self.name)
+    }
+
+    /// Colours by class name.
+    pub fn class_colors(&self) -> &ClassColors {
+        &self.class_colors
+    }
+
+    /// Colours for the classes `names` (e.g. a `LabelSet`'s, in its order):
+    /// the dataset's own, the next free ones for classes it doesn't list.
+    pub fn colors_for(&self, names: &[String]) -> Vec<String> {
+        colors::in_order(names, &colors::assign(names, &self.class_colors, self.color_seed()))
+    }
+
+    /// Takes `from`'s colour for each class that has one (e.g. a parent's or
+    /// the user's choice); the rest keep theirs, moved off any colour taken.
+    pub fn take_class_colors(&mut self, from: &ClassColors) {
+        let mut chosen: ClassColors =
+            self.class_names.iter().filter_map(|c| Some((c.clone(), colors::normalize(from.get(c)?)?))).collect();
+        let taken: std::collections::BTreeSet<String> = chosen.values().cloned().collect();
+        for (class, color) in &self.class_colors {
+            if !chosen.contains_key(class) && !taken.contains(color) {
+                chosen.insert(class.clone(), color.clone());
+            }
+        }
+        self.class_colors = chosen;
+        self.sync_class_colors();
+    }
+
+    /// Keeps a class's colour when it is renamed.
+    pub fn rename_class_color(&mut self, from: &str, to: &str) {
+        if let Some(color) = self.class_colors.remove(from) {
+            self.class_colors.insert(to.to_string(), color);
         }
     }
 
@@ -129,6 +186,7 @@ impl Dataset {
         self.image_count = stats.image_count;
         self.label_count = stats.label_count;
         self.class_names = stats.class_names;
+        self.sync_class_colors();
         self.size_bytes = stats.size_bytes;
         self.train_count = stats.train_count;
         self.test_count = stats.test_count;
@@ -140,6 +198,7 @@ impl Dataset {
     pub fn set_labels(&mut self, label_count: u32, class_names: Vec<String>) {
         self.label_count = label_count;
         self.class_names = class_names;
+        self.sync_class_colors();
         self.touch();
     }
 
@@ -150,7 +209,8 @@ impl Dataset {
 
         let file: DatasetFile<Dataset> =
             toml::from_str(&contents).map_err(|e| format!("invalid {}: {e}", path.display()))?;
-        Ok(file.dataset)
+        // Datasets from before class colours get theirs here (saved with the next change).
+        Ok(file.dataset.with_class_colors())
     }
 
     pub fn save_to_dir(&self, dir: &Path) -> Result<(), crate::Error> {
@@ -278,6 +338,39 @@ mod tests {
             test_count: 1,
             val_count: 2,
         }
+    }
+
+    #[test]
+    fn classes_get_lasting_colours() {
+        let mut dataset = Dataset::from_stats(3, "cats".into(), stats());
+        let colors = dataset.class_colors().clone();
+        assert_eq!(colors.len(), 2);
+        assert_ne!(colors["cat"], colors["dog"]);
+
+        // A new class gets a new colour; the others keep theirs.
+        dataset.set_labels(30, vec!["dog".into(), "cat".into(), "bird".into()]);
+        assert_eq!((&dataset.class_colors()["cat"], &dataset.class_colors()["dog"]), (&colors["cat"], &colors["dog"]));
+        assert!(!colors.values().any(|c| *c == dataset.class_colors()["bird"]));
+
+        dataset.rename_class_color("bird", "owl");
+        let owl = dataset.class_colors()["owl"].clone();
+        dataset.set_labels(30, vec!["dog".into(), "cat".into(), "owl".into()]);
+        assert_eq!(dataset.class_colors()["owl"], owl, "renaming keeps the colour");
+        assert_eq!(dataset.colors_for(&["owl".into(), "fox".into()])[0], owl);
+
+        // A child takes the parent's colours; a chosen colour wins and nothing repeats.
+        let mut child = Dataset::from_stats(4, "cats-split".into(), stats());
+        child.take_class_colors(dataset.class_colors());
+        assert_eq!(child.class_colors()["cat"], colors["cat"]);
+        child.take_class_colors(&ClassColors::from([("dog".to_string(), colors["cat"].clone())]));
+        assert_eq!(child.class_colors()["dog"], colors["cat"]);
+        assert_ne!(child.class_colors()["cat"], colors["cat"], "moved off the taken colour");
+
+        let tmp = std::env::temp_dir().join(format!("modeloid-colors-{}", std::process::id()));
+        fs::create_dir_all(&tmp).unwrap();
+        child.save_to_dir(&tmp).unwrap();
+        assert_eq!(Dataset::load_from_dir(&tmp).unwrap().class_colors(), child.class_colors());
+        let _ = fs::remove_dir_all(&tmp);
     }
 
     #[test]

@@ -1,6 +1,7 @@
 use dioxus::prelude::*;
 
 use crate::api::error_message;
+use crate::components::{IconName, TitleIcon};
 use crate::api::jobs::{cancel_job, ItemAction, ItemStatus, Job, JobItem, JobKind, ProgressUnit, Stage};
 use crate::state::use_activity;
 use crate::util::{format_bytes, plural};
@@ -113,7 +114,7 @@ pub fn JobProgress(
     rsx! {
         section { class: "section-card", aria_labelledby: "job-progress-title",
             div { class: "section-card-header",
-                h2 { id: "job-progress-title", class: "section-card-title", "{title}" }
+                h2 { id: "job-progress-title", class: "section-card-title", TitleIcon { name: IconName::Activity } "{title}" }
                 p { class: "section-card-meta", aria_live: "polite", "{summary}" }
                 if cancellable && !job.finished {
                     button {

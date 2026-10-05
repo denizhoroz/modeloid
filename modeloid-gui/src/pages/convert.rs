@@ -10,6 +10,7 @@ use crate::api::convert::{
     convert_batch_preview, convert_preview, start_convert, start_convert_batch, BatchOutput, ConvertPlan, ConvertPreview, TargetTask, DEFAULT_MIN_CROP,
     MAX_PADDING,
 };
+use crate::components::{IconName, TitleIcon};
 use crate::api::datasets::{list_datasets, validate_dataset_name, DatasetRow};
 use crate::api::error_message;
 use crate::api::jobs::JobKind;
@@ -147,7 +148,7 @@ fn TargetCard(plan: Signal<ConvertPlan>, preview: ConvertPreview) -> Element {
 
     rsx! {
         section { class: "section-card", aria_labelledby: "convert-target-title",
-            h2 { id: "convert-target-title", class: "section-card-title", "Convert to" }
+            h2 { id: "convert-target-title", class: "section-card-title", TitleIcon { name: IconName::Swap } "Convert to" }
             div { class: "choice-list",
                 for (task, label, detail) in tasks {
                     label { key: "{label}", class: if current.task == task { "choice is-selected" } else { "choice" },
@@ -214,7 +215,7 @@ fn ResultCard(plan: ConvertPlan, preview: ConvertPreview) -> Element {
     rsx! {
         section { class: "section-card", aria_labelledby: "convert-result-title",
             div { class: "section-card-header",
-                h2 { id: "convert-result-title", class: "section-card-title", "Result" }
+                h2 { id: "convert-result-title", class: "section-card-title", TitleIcon { name: IconName::Chart } "Result" }
                 WarningTip { errors: preview.problems.clone(), warnings: preview.notes.clone() }
             }
             div { class: "stat-tiles",
@@ -394,7 +395,7 @@ fn BatchResultCard(names: Vec<String>, previews: Vec<ConvertPreview>) -> Element
     rsx! {
         section { class: "section-card", aria_labelledby: "convert-batch-title",
             div { class: "section-card-header",
-                h2 { id: "convert-batch-title", class: "section-card-title", "Result" }
+                h2 { id: "convert-batch-title", class: "section-card-title", TitleIcon { name: IconName::Chart } "Result" }
                 span { class: "section-card-aside",
                     span { class: "section-card-meta",
                         "{plural(converted, \"dataset\")} to convert"
@@ -491,7 +492,7 @@ fn BatchRunCard(plan: ConvertPlan, ids: Vec<u32>, names: Vec<String>, previews: 
     rsx! {
         form { class: "section-stack", novalidate: true, onsubmit: submit,
             fieldset { class: "section-card", disabled: running,
-                legend { class: "section-card-title", "Output" }
+                legend { class: "section-card-title", TitleIcon { name: IconName::Save } "Output" }
                 div { class: "choice-list",
                     label { class: if !overwrite() { "choice is-selected" } else { "choice" },
                         input { r#type: "radio", name: "convert-batch-output", checked: !overwrite(), onchange: move |_| overwrite.set(false) }

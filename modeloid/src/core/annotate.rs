@@ -127,6 +127,8 @@ impl Workspace {
                 }
             }
         }
+        let mut dataset = dataset;
+        dataset.rename_class_color(&old, &name);
         save_counts(&dir, dataset, set)
     }
 

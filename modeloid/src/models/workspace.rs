@@ -15,6 +15,7 @@ use crate::core::{
     scan::{DatasetStats, scan_dataset},
     stats::{self, ExploreStats, STATS_VERSION},
 };
+use modeloid_types::colors::ClassColors;
 use crate::models::dataset::{DATASET_FILE, Dataset, Lineage, ParentRef};
 use crate::models::parameters::ParameterSet;
 
@@ -598,7 +599,18 @@ impl Workspace {
         };
         let stats: Vec<classes::InputStats> =
             inputs.iter().map(|(id, name, stats)| classes::InputStats { id: *id, name, stats }).collect();
-        Ok(classes::suggest(&stats, format))
+        let mut plan = classes::suggest(&stats, format);
+        // Targets start with the colour their class has in the inputs.
+        for &id in ids {
+            let (_, dataset) = self.find_dataset(id)?;
+            for target in &plan.targets {
+                if let Some(color) = dataset.class_colors().get(target) {
+                    plan.colors.entry(target.clone()).or_insert_with(|| color.clone());
+                }
+            }
+        }
+        plan.fill_colors();
+        Ok(plan)
     }
 
     /// What `plan` would produce, from cached statistics.
@@ -654,7 +666,13 @@ impl Workspace {
             .with_param("removed_images", summary.removed_images as i64)
             .with_param("dropped_objects", summary.dropped_objects as i64);
         match self.save_described(&staging, output, lineage, described, reporter) {
-            Ok(dir) => Ok((dir, summary)),
+            Ok(dir) => {
+                // The colours chosen for the target classes.
+                let mut dataset = Dataset::load_from_dir(&dir)?;
+                dataset.take_class_colors(&plan.colors);
+                dataset.save_to_dir(&dir)?;
+                Ok((dir, summary))
+            }
             Err(e) => {
                 let _ = fs::remove_dir_all(&staging);
                 Err(e)
@@ -1007,6 +1025,14 @@ impl Workspace {
         let Some((dir, mut dataset)) = replaced else {
             let Output::New { name } = output else { unreachable!() };
             let mut dataset = Dataset::from_stats(self.next_dataset_id()?, name.clone(), stats);
+            // Classes keep the colours they had in the inputs (the first input wins).
+            let mut inherited = ClassColors::new();
+            for parent in lineage.parents.iter().filter_map(|p| self.find_dataset(p.id).ok().map(|(_, d)| d)) {
+                for (class, color) in parent.class_colors() {
+                    inherited.entry(class.clone()).or_insert_with(|| color.clone());
+                }
+            }
+            dataset.take_class_colors(&inherited);
             dataset.set_lineage(Some(lineage));
             dataset.save_to_dir(staging)?;
             let dir = self.datasets_dir().join(name);

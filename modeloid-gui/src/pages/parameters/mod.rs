@@ -7,6 +7,7 @@ pub(crate) mod fields;
 use dioxus::prelude::*;
 
 use crate::api::datasets::{list_datasets, DatasetRow};
+use crate::components::{IconName, TitleIcon};
 use crate::api::error_message;
 use crate::api::parameters::{
     list_parameters, save_parameters, AugmentationConfig, AutoAugment, Batch, Cache, Family, FrameworkParams,
@@ -201,7 +202,7 @@ fn ParameterEditor() -> Element {
             RunSection { form, p: p.clone() }
 
             section { class: "section-card", aria_labelledby: "param-output-title",
-                h2 { id: "param-output-title", class: "section-card-title", "Output" }
+                h2 { id: "param-output-title", class: "section-card-title", TitleIcon { name: IconName::Save } "Output" }
                 div { class: "field",
                     label { class: "field-label", r#for: "param-name", "Parameter name" }
                     input {
@@ -350,6 +351,7 @@ fn PrepareSection(form: Signal<ParameterSet>) -> Element {
         details { class: "section-card param-group", open: true, aria_labelledby: "param-prepare-title",
             summary { class: "param-group-summary",
                 h2 { id: "param-prepare-title", class: "section-card-title",
+                    TitleIcon { name: IconName::Wand }
                     "Prepare from dataset "
                     InfoTip { label: "About preparing from a dataset", text: "Sets the task and a model that fits it from a dataset's labels. Everything stays editable." }
                 }
@@ -417,7 +419,7 @@ pub(crate) fn ModelSection(form: Signal<ParameterSet>, p: UltralyticsParams) -> 
     rsx! {
         section { class: "section-card", aria_labelledby: "param-model-title",
             div { class: "section-card-header",
-                h2 { id: "param-model-title", class: "section-card-title", "Model" }
+                h2 { id: "param-model-title", class: "section-card-title", TitleIcon { name: IconName::Cpu } "Model" }
                 span { class: "section-card-meta", "Ultralytics · {p.model_name()}" }
             }
             div { class: "param-grid",
@@ -491,7 +493,7 @@ fn TrainingSection(form: Signal<ParameterSet>, p: UltralyticsParams) -> Element 
 
     rsx! {
         section { class: "section-card", aria_labelledby: "param-training-title",
-            h2 { id: "param-training-title", class: "section-card-title", "Training" }
+            h2 { id: "param-training-title", class: "section-card-title", TitleIcon { name: IconName::Sliders } "Training" }
             div { class: "param-grid",
                 IntField { label: "Epochs", tip: "Passes over the training images.", value: t.epochs, max: 10_000,
                     onchange: move |v| edit(form, |p| p.training.epochs = v) }
@@ -554,7 +556,7 @@ fn Group(#[props(into)] id: String, #[props(into)] title: String, #[props(into)]
     rsx! {
         details { class: "section-card param-group", aria_labelledby: "{id}",
             summary { class: "param-group-summary",
-                h2 { id: "{id}", class: "section-card-title", "{title}" }
+                h2 { id: "{id}", class: "section-card-title", TitleIcon { name: IconName::Sliders } "{title}" }
                 span { class: "section-card-meta", "{meta}" }
             }
             {children}

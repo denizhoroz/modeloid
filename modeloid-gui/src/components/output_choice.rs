@@ -1,6 +1,7 @@
 use dioxus::prelude::*;
 
 use crate::api::datasets::{validate_dataset_name, OutputTarget};
+use crate::components::{IconName, TitleIcon};
 use crate::components::InfoTip;
 
 /// What the user chose in an `OutputSelect`.
@@ -63,7 +64,7 @@ pub fn OutputSelect(
 
     rsx! {
         fieldset { class: "section-card", disabled,
-            legend { class: "section-card-title", "Output" }
+            legend { class: "section-card-title", TitleIcon { name: IconName::Save } "Output" }
 
             div { class: "choice-list",
                 label { class: if !overwrite { "choice is-selected" } else { "choice" },

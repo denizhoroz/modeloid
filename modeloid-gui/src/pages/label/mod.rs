@@ -13,6 +13,7 @@ mod tools;
 use dioxus::core::spawn_forever;
 use dioxus::prelude::*;
 use dioxus::router::Navigator;
+use modeloid_types::colors;
 use modeloid_types::Split;
 
 use crate::api::error_message;
@@ -26,15 +27,6 @@ use canvas::Canvas;
 use classes::ClassesPanel;
 use geometry::{Point, View};
 use tools::ToolsPanel;
-
-/// Box colours by class: bright, so they show on photos in every theme.
-const CLASS_COLORS: [&str; 12] = [
-    "#ff6b6b", "#4dabf7", "#51cf66", "#fcc419", "#cc5de8", "#ff922b", "#22b8cf", "#f06595", "#94d82d", "#845ef7", "#20c997", "#ffd43b",
-];
-
-pub fn class_color(class: usize) -> &'static str {
-    CLASS_COLORS[class % CLASS_COLORS.len()]
-}
 
 /// Set before going back to Datasets, so it opens on the Edit tab.
 pub static RETURN_TO_EDIT: GlobalSignal<bool> = Signal::global(|| false);
@@ -131,6 +123,11 @@ impl Editor {
 
     pub fn classes(&self) -> Vec<String> {
         self.session.read().as_ref().map(|s| s.classes.clone()).unwrap_or_default()
+    }
+
+    /// Colour of class `class` (the dataset's own, set in Classes & Merge).
+    pub fn color(&self, class: usize) -> String {
+        self.session.read().as_ref().and_then(|s| s.colors.get(class).cloned()).unwrap_or_else(|| colors::FALLBACK.to_string())
     }
 
     /// Changes the labels with `change`, undoably.

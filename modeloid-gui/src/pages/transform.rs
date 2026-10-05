@@ -7,6 +7,7 @@
 use dioxus::prelude::*;
 
 use crate::api::datasets::list_datasets;
+use crate::components::TitleIcon;
 use crate::api::error_message;
 use crate::api::jobs::JobKind;
 use crate::api::pyenv::python_env_overview;
@@ -114,7 +115,7 @@ fn ImagesCard(plan: Signal<TransformPlan>, preview: TransformPreview) -> Element
 
     rsx! {
         section { class: "section-card", aria_labelledby: "transform-images-title",
-            h2 { id: "transform-images-title", class: "section-card-title", "Images" }
+            h2 { id: "transform-images-title", class: "section-card-title", TitleIcon { name: IconName::Image } "Images" }
             div { class: "field",
                 span { class: "field-label",
                     "Splits "
@@ -266,6 +267,7 @@ fn AugmentationTable(plan: Signal<TransformPlan>) -> Element {
         details { class: "section-card param-group tune-space", open: true,
             summary { class: "param-group-summary",
                 h2 { class: "section-card-title",
+                    TitleIcon { name: IconName::Wand }
                     "Augmentations "
                     InfoTip {
                         label: "About the augmentations",
@@ -483,7 +485,7 @@ fn ResultCard(preview: TransformPreview, copies: u32) -> Element {
     rsx! {
         section { class: "section-card", aria_labelledby: "transform-result-title",
             div { class: "section-card-header",
-                h2 { id: "transform-result-title", class: "section-card-title", "Result" }
+                h2 { id: "transform-result-title", class: "section-card-title", TitleIcon { name: IconName::Chart } "Result" }
                 span { class: "section-card-aside",
                     span { class: "section-card-meta", "{format_count(p.total_before())} → {format_count(p.total_after())} images" }
                     WarningTip { errors: p.problems.clone() }

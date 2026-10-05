@@ -92,12 +92,23 @@ pub struct LabelSession {
     /// Label format, e.g. "yolo".
     pub format: String,
     pub classes: Vec<String>,
+    /// Colour of each class (`#rrggbb`), by index.
+    #[serde(default)]
+    pub colors: Vec<String>,
     /// Labels of each class over the whole dataset.
     pub totals: Vec<u32>,
     /// Whether each image has at least one label, by index.
     pub labelled: Vec<bool>,
     /// Why the dataset can't be changed right now (a job works on it).
     pub busy: Option<String>,
+}
+
+/// A dataset's classes and their colours, by index, after adding or
+/// renaming one.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LabelClasses {
+    pub classes: Vec<String>,
+    pub colors: Vec<String>,
 }
 
 /// What saving one image's labels changed.

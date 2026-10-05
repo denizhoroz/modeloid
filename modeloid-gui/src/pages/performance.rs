@@ -5,6 +5,7 @@
 use dioxus::prelude::*;
 
 use crate::api::error_message;
+use crate::components::{IconName, TitleIcon};
 use crate::api::jobs::JobKind;
 use crate::api::train::{column_title, run_results, ImageGroup, RunImage, RunResults, TrainStatus};
 use crate::components::{format_value, status_label, use_job, LineChart, LineSeries, NoWorkspace, SelectModelHint, StatTile};
@@ -152,7 +153,7 @@ fn Report(results: RunResults) -> Element {
 
             section { class: "section-card", aria_labelledby: "perf-curves-title",
                 div { class: "section-card-header",
-                    h2 { id: "perf-curves-title", class: "section-card-title", "Per epoch" }
+                    h2 { id: "perf-curves-title", class: "section-card-title", TitleIcon { name: IconName::TrendingUp } "Per epoch" }
                     span { class: "section-card-meta",
                         "from runs/results.csv"
                         if best_epoch.is_some() { " · the line marks the best epoch" }
@@ -185,7 +186,7 @@ fn Report(results: RunResults) -> Element {
         // Like Explore's gallery: tiles, and a viewer that steps through all of them.
         for group in groups {
             section { key: "{group:?}", class: "section-card", aria_label: "{group.label()}",
-                h2 { class: "section-card-title", "{group.label()}" }
+                h2 { class: "section-card-title", TitleIcon { name: IconName::TrendingUp } "{group.label()}" }
                 ul { class: "gallery-grid perf-gallery",
                     for (i, image) in results.images.iter().enumerate().filter(|(_, i)| i.group == group) {
                         li { key: "{image.path}",
@@ -229,7 +230,7 @@ fn Report(results: RunResults) -> Element {
 
         if !results.weights.is_empty() {
             section { class: "section-card", aria_labelledby: "perf-weights-title",
-                h2 { id: "perf-weights-title", class: "section-card-title", "Weights" }
+                h2 { id: "perf-weights-title", class: "section-card-title", TitleIcon { name: IconName::Package } "Weights" }
                 ul { class: "perf-weights",
                     for w in results.weights.iter() {
                         li { key: "{w.path}",

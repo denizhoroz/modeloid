@@ -113,8 +113,10 @@ mod backend {
 
     pub async fn gallery(id: u32, filter: GalleryFilter, offset: usize, limit: usize) -> Result<GalleryPage, String> {
         activity::track("explore-gallery", "Loading gallery", move |ctx| {
-            let (_, set) = labels(&open_for(ctx, "Loading gallery", id)?, id, &ctx.progress())?;
-            Ok(stats::gallery_page(&set, &filter, offset, limit))
+            let ws = open_for(ctx, "Loading gallery", id)?;
+            let (_, set) = labels(&ws, id, &ctx.progress())?;
+            let colors = ws.find_dataset(id).map_err(|e| e.to_string())?.1.colors_for(&set.classes);
+            Ok(GalleryPage { colors, ..stats::gallery_page(&set, &filter, offset, limit) })
         })
         .await
     }

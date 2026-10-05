@@ -9,6 +9,7 @@ mod split;
 use dioxus::prelude::*;
 
 use crate::api::balance::{balance_preview, start_balance, BalancePlan, BalancePreview};
+use crate::components::{IconName, TitleIcon};
 use crate::api::datasets::list_datasets;
 use crate::api::error_message;
 use crate::api::jobs::JobKind;
@@ -179,7 +180,7 @@ fn ResultCard(preview: BalancePreview, #[props(into)] id: String) -> Element {
     rsx! {
         section { class: "section-card", aria_labelledby: "{id}",
             div { class: "section-card-header",
-                h2 { id: "{id}", class: "section-card-title", "Result" }
+                h2 { id: "{id}", class: "section-card-title", TitleIcon { name: IconName::Chart } "Result" }
                 span { class: "section-card-aside",
                     span { class: "section-card-meta",
                         "{format_count(preview.total_before())} → {format_count(preview.total_after())} images"

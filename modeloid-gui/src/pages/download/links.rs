@@ -1,6 +1,7 @@
 use dioxus::prelude::*;
 
 use crate::api::download::{invalid_links, parse_links};
+use crate::components::{IconName, TitleIcon};
 use crate::util::plural;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -63,7 +64,7 @@ pub fn LinksSection(
     rsx! {
         section { class: "section-card", aria_labelledby: "download-links-title",
             div { class: "section-card-header",
-                h2 { id: "download-links-title", class: "section-card-title", "Links" }
+                h2 { id: "download-links-title", class: "section-card-title", TitleIcon { name: IconName::Link } "Links" }
                 div { class: "segmented", role: "radiogroup", aria_label: "Link input mode",
                     for (value, label) in [(LinkMode::Single, "Single"), (LinkMode::Batch, "Batch")] {
                         button {

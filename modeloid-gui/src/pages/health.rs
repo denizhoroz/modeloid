@@ -8,6 +8,7 @@ use modeloid_types::health::{BoxIssue, DuplicateGroup, HealthCounts, ImageIssue,
 use modeloid_types::Split;
 
 use crate::api::datasets::{validate_dataset_name, OutputTarget};
+use crate::components::{IconName, TitleIcon};
 use crate::api::error_message;
 use crate::api::explore::thumb_url;
 use crate::api::health::{health_report, health_summaries, start_health_check, start_health_fix, HealthFixes, HealthSummary, HealthView};
@@ -179,7 +180,7 @@ fn SummaryTable(rows: Vec<HealthSummary>, ids: Vec<u32>, focus: Signal<u32>) -> 
     rsx! {
         section { class: "section-card", aria_labelledby: "health-datasets-title",
             div { class: "section-card-header",
-                h2 { id: "health-datasets-title", class: "section-card-title", "Datasets" }
+                h2 { id: "health-datasets-title", class: "section-card-title", TitleIcon { name: IconName::Database } "Datasets" }
                 span { class: "section-card-meta",
                     if checked.is_empty() {
                         "none checked yet"
@@ -588,7 +589,7 @@ fn FixForm(datasets: Vec<HealthSummary>, total: HealthCounts, disabled: bool, st
         form { class: "section-stack health-fix", novalidate: true, onsubmit: submit,
             section { class: "section-card", aria_labelledby: "fix-title",
                 div { class: "section-card-header",
-                    h2 { id: "fix-title", class: "section-card-title", "Fix" }
+                    h2 { id: "fix-title", class: "section-card-title", TitleIcon { name: IconName::Wrench } "Fix" }
                     if many {
                         span { class: "section-card-meta", "{plural(datasets.len(), \"checked dataset\")} · counts are for all of them" }
                     }
@@ -628,7 +629,7 @@ fn FixForm(datasets: Vec<HealthSummary>, total: HealthCounts, disabled: bool, st
 
             if many {
                 fieldset { class: "section-card", disabled,
-                    legend { class: "section-card-title", "Output" }
+                    legend { class: "section-card-title", TitleIcon { name: IconName::Save } "Output" }
                     div { class: "choice-list",
                         label { class: if !overwrite_all() { "choice is-selected" } else { "choice" },
                             input { r#type: "radio", name: "health-output", checked: !overwrite_all(), onchange: move |_| overwrite_all.set(false) }

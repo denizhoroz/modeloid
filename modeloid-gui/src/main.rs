@@ -62,6 +62,7 @@ fn App() -> Element {
             "data-theme": "{a.theme}",
             "data-font": "{a.font}",
             "data-scale": "{a.scale}",
+            "data-icons": if a.hide_icons { "off" } else { "on" },
             Router::<Route> {}
         }
     }

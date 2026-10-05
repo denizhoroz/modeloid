@@ -5,6 +5,7 @@ use modeloid_types::stats::{ExploreStats, Histogram, HEATMAP_SIZE, SPLITS};
 use modeloid_types::Split;
 
 use crate::components::{Bar, BarList, Heatmap, HistogramChart, StatTile};
+use crate::components::{IconName, TitleIcon};
 use crate::util::format_count;
 
 /// Classes shown before "Show all".
@@ -91,7 +92,7 @@ pub fn Statistics(stats: ExploreStats, on_class: EventHandler<usize>) -> Element
         div { class: "chart-grid",
             section { class: class_card, aria_labelledby: "chart-classes",
                 div { class: "section-card-header",
-                    h3 { id: "chart-classes", class: "section-card-title", "Labels per class" }
+                    h3 { id: "chart-classes", class: "section-card-title", TitleIcon { name: IconName::Tag } "Labels per class" }
                     span { class: "section-card-meta", "Click a class to see its images" }
                 }
                 if class_bars.is_empty() {
@@ -117,12 +118,12 @@ pub fn Statistics(stats: ExploreStats, on_class: EventHandler<usize>) -> Element
             }
 
             section { class: "section-card chart-card", aria_labelledby: "chart-splits",
-                h3 { id: "chart-splits", class: "section-card-title", "Images per split" }
+                h3 { id: "chart-splits", class: "section-card-title", TitleIcon { name: IconName::Split } "Images per split" }
                 BarList { bars: split_bars, label: "Images per split" }
             }
 
             section { class: "section-card chart-card", aria_labelledby: "chart-per-image",
-                h3 { id: "chart-per-image", class: "section-card-title", "Objects per image" }
+                h3 { id: "chart-per-image", class: "section-card-title", TitleIcon { name: IconName::Image } "Objects per image" }
                 HistogramChart {
                     counts: stats.labels_per_image.counts.clone(),
                     bin_labels: count_bins(&stats.labels_per_image),
@@ -134,7 +135,7 @@ pub fn Statistics(stats: ExploreStats, on_class: EventHandler<usize>) -> Element
             }
 
             section { class: "section-card chart-card", aria_labelledby: "chart-sizes",
-                h3 { id: "chart-sizes", class: "section-card-title", "Object size" }
+                h3 { id: "chart-sizes", class: "section-card-title", TitleIcon { name: IconName::Fit } "Object size" }
                 BarList { bars: size_bars, label: "Objects by size (COCO small, medium, large)" }
                 div { class: "chart-pair",
                     div {
@@ -161,7 +162,7 @@ pub fn Statistics(stats: ExploreStats, on_class: EventHandler<usize>) -> Element
             }
 
             section { class: "section-card chart-card", aria_labelledby: "chart-aspect",
-                h3 { id: "chart-aspect", class: "section-card-title", "Box shape" }
+                h3 { id: "chart-aspect", class: "section-card-title", TitleIcon { name: IconName::Square } "Box shape" }
                 HistogramChart {
                     counts: stats.aspect_ratio.counts.clone(),
                     bin_labels: aspect_bins(&stats.aspect_ratio),
@@ -172,13 +173,13 @@ pub fn Statistics(stats: ExploreStats, on_class: EventHandler<usize>) -> Element
             }
 
             section { class: "section-card chart-card", aria_labelledby: "chart-heatmap",
-                h3 { id: "chart-heatmap", class: "section-card-title", "Where objects are" }
+                h3 { id: "chart-heatmap", class: "section-card-title", TitleIcon { name: IconName::Target } "Where objects are" }
                 p { class: "chart-caption", "Box centres across all images, top left to bottom right." }
                 Heatmap { cells: stats.heatmap.clone(), size: HEATMAP_SIZE, label: "Heatmap of box centre positions" }
             }
 
             section { class: "section-card chart-card", aria_labelledby: "chart-image-sizes",
-                h3 { id: "chart-image-sizes", class: "section-card-title", "Image sizes" }
+                h3 { id: "chart-image-sizes", class: "section-card-title", TitleIcon { name: IconName::Fit } "Image sizes" }
                 BarList { bars: image_size_bars, label: "Most common image sizes" }
             }
         }

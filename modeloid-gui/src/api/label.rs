@@ -4,7 +4,7 @@
 
 use dioxus::prelude::*;
 
-pub use modeloid_types::edit::{validate_class_name, LabelImage, LabelObject, LabelSession, SavedLabels};
+pub use modeloid_types::edit::{validate_class_name, LabelClasses, LabelImage, LabelObject, LabelSession, SavedLabels};
 
 /// Opens dataset `id` for labelling: its classes, label counts and which images have labels.
 #[post("/api/label/session")]
@@ -26,13 +26,13 @@ pub async fn save_labels(id: u32, dataset: String, index: usize, image: String, 
 
 /// Adds a class; returns the new class list.
 #[post("/api/label/add-class")]
-pub async fn add_label_class(id: u32, dataset: String, name: String) -> Result<Vec<String>, ServerFnError> {
+pub async fn add_label_class(id: u32, dataset: String, name: String) -> Result<LabelClasses, ServerFnError> {
     backend::add_class(id, dataset, name).await.map_err(ServerFnError::new)
 }
 
 /// Renames class `class`; returns the new class list.
 #[post("/api/label/rename-class")]
-pub async fn rename_label_class(id: u32, dataset: String, class: usize, name: String) -> Result<Vec<String>, ServerFnError> {
+pub async fn rename_label_class(id: u32, dataset: String, class: usize, name: String) -> Result<LabelClasses, ServerFnError> {
     backend::rename_class(id, dataset, class, name).await.map_err(ServerFnError::new)
 }
 
@@ -44,9 +44,9 @@ pub async fn remove_label_classes(id: u32, dataset: String, classes: Vec<usize>)
 
 #[cfg(feature = "server")]
 mod backend {
-    use modeloid::{core::annotate::class_totals, BBox, LabelSet, Object, Workspace};
+    use modeloid::{core::annotate::class_totals, BBox, Dataset, LabelSet, Object, Workspace};
 
-    use super::{LabelImage, LabelObject, LabelSession, SavedLabels};
+    use super::{LabelClasses, LabelImage, LabelObject, LabelSession, SavedLabels};
     use crate::api::explore::{cached_labels, edit_labels};
     use crate::api::{activity, history, jobs, workspace};
 
@@ -55,11 +55,12 @@ mod backend {
         Workspace::load_from_dir(&dir).map_err(|e| format!("Couldn't open the workspace: {e}"))
     }
 
-    fn session_of(name: String, format: String, set: &LabelSet, id: u32) -> LabelSession {
+    fn session_of(dataset: &Dataset, set: &LabelSet, id: u32) -> LabelSession {
         LabelSession {
-            dataset: name,
-            format,
+            dataset: dataset.name().to_string(),
+            format: dataset.annotation_format().to_string(),
             classes: set.classes.clone(),
+            colors: dataset.colors_for(&set.classes),
             totals: class_totals(set),
             labelled: set.images.iter().map(|i| !i.objects.is_empty()).collect(),
             busy: jobs::busy(id).err(),
@@ -72,7 +73,7 @@ mod backend {
             let (_, dataset) = ws.find_dataset(id).map_err(|e| e.to_string())?;
             ctx.set_label(format!("Reading labels · {}", dataset.name()));
             let (_, set) = cached_labels(&ws, id, &ctx.progress())?;
-            Ok(session_of(dataset.name().to_string(), dataset.annotation_format().to_string(), &set, id))
+            Ok(session_of(&dataset, &set, id))
         })
         .await
     }
@@ -142,23 +143,29 @@ mod backend {
         .await
     }
 
-    pub async fn add_class(id: u32, dataset: String, name: String) -> Result<Vec<String>, String> {
+    /// The classes of `set` with dataset `id`'s colours for them.
+    fn classes_of(ws: &Workspace, id: u32, set: &LabelSet) -> Result<LabelClasses, String> {
+        let (_, dataset) = ws.find_dataset(id).map_err(|e| e.to_string())?;
+        Ok(LabelClasses { classes: set.classes.clone(), colors: dataset.colors_for(&set.classes) })
+    }
+
+    pub async fn add_class(id: u32, dataset: String, name: String) -> Result<LabelClasses, String> {
         let note = format!("In {dataset}");
         change(id, dataset, move |ws, set| {
             ws.add_label_class(id, set, &name).map_err(|e| e.to_string())?;
             history::record("Dataset Manager", "Labelling", "Add class", name.clone(), Some(note));
-            Ok(set.classes.clone())
+            classes_of(ws, id, set)
         })
         .await
     }
 
-    pub async fn rename_class(id: u32, dataset: String, class: usize, name: String) -> Result<Vec<String>, String> {
+    pub async fn rename_class(id: u32, dataset: String, class: usize, name: String) -> Result<LabelClasses, String> {
         let note = format!("In {dataset}");
         change(id, dataset, move |ws, set| {
             let old = set.classes.get(class).cloned().unwrap_or_default();
             ws.rename_label_class(id, set, class, &name).map_err(|e| e.to_string())?;
             history::record("Dataset Manager", "Labelling", "Rename class", format!("{old} → {name}"), Some(note));
-            Ok(set.classes.clone())
+            classes_of(ws, id, set)
         })
         .await
     }
@@ -169,8 +176,8 @@ mod backend {
             let names: Vec<String> = classes.iter().filter_map(|&c| set.classes.get(c).cloned()).collect();
             ws.remove_label_classes(id, set, &classes).map_err(|e| e.to_string())?;
             history::record("Dataset Manager", "Labelling", "Remove classes", names.join(", "), Some(note));
-            let format = ws.find_dataset(id).map_err(|e| e.to_string())?.1.annotation_format().to_string();
-            Ok(session_of(dataset, format, set, id))
+            let (_, found) = ws.find_dataset(id).map_err(|e| e.to_string())?;
+            Ok(session_of(&found, set, id))
         })
         .await
     }

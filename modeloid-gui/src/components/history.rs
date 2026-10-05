@@ -6,6 +6,7 @@
 use dioxus::prelude::*;
 
 use crate::api::error_message;
+use crate::components::TitleIcon;
 use crate::api::history::{format_duration, workspace_history, HistoryEntry, Outcome};
 use crate::components::{Icon, IconName};
 use crate::state::{use_activity, use_workspace};
@@ -96,7 +97,7 @@ fn HistoryOverlay(on_close: EventHandler<()>) -> Element {
                 }
             },
             div { class: "history-header",
-                h2 { id: "history-title", class: "section-card-title", "History" }
+                h2 { id: "history-title", class: "section-card-title", TitleIcon { name: IconName::History } "History" }
                 if let Some(Ok(rows)) = &*history.read() {
                     span { class: "section-card-meta", "{count_processes(rows.len())}" }
                 }

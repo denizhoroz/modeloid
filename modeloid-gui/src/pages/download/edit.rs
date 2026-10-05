@@ -6,6 +6,7 @@ use dioxus::html::{FileData, HasFileData};
 use dioxus::prelude::*;
 
 use crate::api::datasets::validate_dataset_name;
+use crate::components::TitleIcon;
 use crate::api::edit::{
     dataset_details, is_image_name, label_status, parse_tags, save_dataset_details, start_add_images, start_upload,
     upload_image, DatasetDetails,
@@ -132,7 +133,7 @@ fn DetailsSection(id: u32, details: DatasetDetails, datasets_path: String) -> El
 
     rsx! {
         form { class: "section-card", novalidate: true, aria_labelledby: "edit-details-title", onsubmit: save,
-            h2 { id: "edit-details-title", class: "section-card-title", "Details" }
+            h2 { id: "edit-details-title", class: "section-card-title", TitleIcon { name: IconName::FileText } "Details" }
             div { class: "field",
                 label { class: "field-label", r#for: "edit-name", "Name" }
                 input {
@@ -309,6 +310,7 @@ fn ImagesSection(id: u32) -> Element {
     rsx! {
         section { class: "section-card", aria_labelledby: "edit-images-title",
             h2 { id: "edit-images-title", class: "section-card-title",
+                TitleIcon { name: IconName::Image }
                 "Add images "
                 InfoTip { label: "About adding images", text: "Images are copied into the dataset's images folder. Names already taken get a number added." }
             }
@@ -370,7 +372,7 @@ fn LabellingSection(id: u32) -> Element {
     let can_label = matches!(current, Some(Ok(_)));
     rsx! {
         section { class: "section-card", aria_labelledby: "edit-labelling-title",
-            h2 { id: "edit-labelling-title", class: "section-card-title", "Labelling" }
+            h2 { id: "edit-labelling-title", class: "section-card-title", TitleIcon { name: IconName::Pencil } "Labelling" }
             match current {
                 Some(Ok(status)) => {
                     let labelled = status.images - status.unlabelled;

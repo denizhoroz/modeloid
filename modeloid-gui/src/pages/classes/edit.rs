@@ -2,6 +2,7 @@
 //! be tested.
 
 use modeloid_types::classes::{normalize_class, ClassAction, ClassList, DropMode, MergePlan};
+use modeloid_types::colors;
 
 /// What a mapping `select` shows for a class.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,6 +102,13 @@ pub fn add_target(plan: &mut MergePlan, name: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Sets target `name`'s colour; `Err` if `color` isn't `#rrggbb`.
+pub fn set_color(plan: &mut MergePlan, name: &str, color: &str) -> Result<(), String> {
+    let color = colors::normalize(color).ok_or_else(|| format!("\"{color}\" isn't a colour."))?;
+    plan.colors.insert(name.to_string(), color);
+    Ok(())
+}
+
 pub fn move_target(plan: &mut MergePlan, index: usize, up: bool) {
     let other = if up { index.checked_sub(1) } else { Some(index + 1) };
     if let Some(other) = other.filter(|&o| o < plan.targets.len()) {
@@ -153,6 +161,9 @@ pub fn carry_over(old: &MergePlan, mut new: MergePlan) -> MergePlan {
     if !old.format.is_empty() && !old.inputs.is_empty() {
         new.format = old.format.clone();
     }
+    // Colours the user had keep winning over the inputs'.
+    new.colors.extend(old.colors.iter().map(|(k, v)| (k.clone(), v.clone())));
+    new.fill_colors();
     new
 }
 
@@ -243,5 +254,23 @@ mod tests {
         assert_eq!(merged.targets, ["kitty", "dog"]);
         assert_eq!(merged.resolve(1, "kitty"), Some(&ClassAction::To("kitty".into())));
         assert!(merged.rules.iter().all(|r| r.source != "cat"));
+    }
+
+    #[test]
+    fn targets_keep_their_colours() {
+        let mut plan = plan();
+        plan.fill_colors();
+        assert_eq!(plan.colors.len(), 2);
+        set_color(&mut plan, "car", "#FF0000").unwrap();
+        assert!(set_color(&mut plan, "car", "red").is_err());
+        rename_target(&mut plan, "car", "auto").unwrap();
+        assert_eq!(plan.colors.get("auto").map(String::as_str), Some("#ff0000"), "renaming keeps the colour");
+        add_target(&mut plan, "bus").unwrap();
+        plan.fill_colors();
+        assert!(plan.colors.contains_key("bus"));
+
+        // A fresh suggestion keeps the colours the user chose.
+        let new = MergePlan { inputs: vec![1], targets: vec!["auto".into()], colors: [("auto".to_string(), "#00ff00".to_string())].into(), format: "yolo".into(), ..Default::default() };
+        assert_eq!(carry_over(&plan, new).colors.get("auto").map(String::as_str), Some("#ff0000"));
     }
 }

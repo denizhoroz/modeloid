@@ -7,6 +7,7 @@
 use dioxus::prelude::*;
 
 use crate::api::datasets::list_datasets;
+use crate::components::{IconName, TitleIcon};
 use crate::api::error_message;
 use crate::api::jobs::{ItemStatus, JobKind};
 use crate::api::parameters::{list_parameters, Batch, Optimizer, ParameterSet, Task, UltralyticsParams};
@@ -173,7 +174,7 @@ fn TuneForm() -> Element {
     rsx! {
         div { class: "section-stack",
             section { class: "section-card", aria_labelledby: "tune-inputs-title",
-                h2 { id: "tune-inputs-title", class: "section-card-title", "Inputs" }
+                h2 { id: "tune-inputs-title", class: "section-card-title", TitleIcon { name: IconName::Database } "Inputs" }
                 div { class: "train-inputs",
                     div { class: "train-input",
                         span { class: "field-label", "Dataset" }
@@ -221,7 +222,7 @@ fn TuneForm() -> Element {
             }
 
             section { class: "section-card", aria_labelledby: "tune-run-title",
-                h2 { id: "tune-run-title", class: "section-card-title", "Tuning" }
+                h2 { id: "tune-run-title", class: "section-card-title", TitleIcon { name: IconName::Target } "Tuning" }
                 div { class: "param-grid tune-run-grid",
                     div { class: "field param-field",
                         span { class: "field-label",
@@ -263,7 +264,7 @@ fn TuneForm() -> Element {
             SearchSpace { space, task, current }
 
             section { class: "section-card", aria_labelledby: "tune-start-title",
-                h2 { id: "tune-start-title", class: "section-card-title", "Run" }
+                h2 { id: "tune-start-title", class: "section-card-title", TitleIcon { name: IconName::Play } "Run" }
                 if libraries_missing {
                     div { class: "notice notice-warning python-notice", role: "status",
                         span { "The training libraries aren't installed yet." }
@@ -332,6 +333,7 @@ fn NewSetCard(form: Signal<ParameterSet>) -> Element {
     rsx! {
         section { class: "section-card", aria_labelledby: "tune-new-title",
             h2 { id: "tune-new-title", class: "section-card-title",
+                TitleIcon { name: IconName::Plus }
                 "New parameter set "
                 InfoTip { label: "About the new set", text: "Like Add Parameter on the Parameters page. Settings not shown here keep their defaults; edit them there later." }
             }
@@ -362,7 +364,7 @@ fn NewSetCard(form: Signal<ParameterSet>) -> Element {
         }
         ModelSection { form, p: p.clone() }
         section { class: "section-card", aria_labelledby: "tune-new-training-title",
-            h2 { id: "tune-new-training-title", class: "section-card-title", "Training" }
+            h2 { id: "tune-new-training-title", class: "section-card-title", TitleIcon { name: IconName::Sliders } "Training" }
             div { class: "param-grid",
                 IntField { label: "Epochs", tip: "Passes over the training images when this set trains a model (trials use Epochs per trial).", value: t.epochs, max: 10_000,
                     onchange: move |v| edit(form, |p| p.training.epochs = v) }
@@ -441,6 +443,7 @@ fn SearchSpace(space: Signal<Vec<TuneParam>>, task: Task, current: Option<Ultral
         details { class: "section-card param-group tune-space", open: true,
             summary { class: "param-group-summary",
                 h2 { class: "section-card-title",
+                    TitleIcon { name: IconName::Sliders }
                     "Search space "
                     InfoTip {
                         label: "About the search space",
@@ -766,6 +769,7 @@ fn TuneResult(run: String, version: u64) -> Element {
         section { class: "section-card", aria_labelledby: "tune-result-title",
             div { class: "section-card-header",
                 h2 { id: "tune-result-title", class: "section-card-title",
+                    TitleIcon { name: IconName::Chart }
                     "Trials "
                     InfoTip { label: "About the score", text: "Ultralytics' fitness on the validation images: mostly mAP50-95 for boxes and masks, accuracy for classification. Higher is better." }
                 }

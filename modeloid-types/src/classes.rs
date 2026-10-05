@@ -4,6 +4,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::colors::{self, ClassColors};
+
 /// A saved target class list. Its order sets the class ids (YOLO).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClassList {
@@ -64,6 +66,9 @@ pub struct MergePlan {
     pub split: SplitMode,
     /// Output label format: "yolo", "coco" or "voc".
     pub format: String,
+    /// Colour of each target class, given to the result.
+    #[serde(default)]
+    pub colors: ClassColors,
 }
 
 impl MergePlan {
@@ -93,8 +98,18 @@ impl MergePlan {
         }
     }
 
+    /// Gives every target a colour (keeping the ones they have, the next
+    /// free ones of the sequence for new targets) and drops the others.
+    pub fn fill_colors(&mut self) {
+        let seed = colors::seed_of(self.targets.first().map_or("", String::as_str));
+        self.colors = colors::assign(&self.targets, &self.colors, seed);
+    }
+
     /// Renames target `from` to `to`, updating every rule that points at it.
     pub fn rename_target(&mut self, from: &str, to: &str) {
+        if let Some(color) = self.colors.remove(from) {
+            self.colors.insert(to.to_string(), color);
+        }
         for t in self.targets.iter_mut().filter(|t| *t == from) {
             *t = to.to_string();
         }

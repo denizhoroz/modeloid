@@ -5,8 +5,9 @@
 
 use dioxus::prelude::*;
 
-use super::{class_color, use_editor};
+use super::use_editor;
 use crate::api::error_message;
+use crate::components::TitleIcon;
 use crate::api::label::{add_label_class, remove_label_classes, rename_label_class, validate_class_name};
 use crate::components::table::{self, CheckHeader, Column, RowCheck, SelectionBar, Sort, SortHeader};
 use crate::components::{Icon, IconName};
@@ -88,12 +89,14 @@ pub fn ClassesPanel() -> Element {
         };
         let Some(dataset) = editor.session.peek().as_ref().map(|s| s.dataset.clone()) else { return };
         match add_label_class(editor.id, dataset, name).await {
-            Ok(classes) => {
+            Ok(changed) => {
+                let count = changed.classes.len();
                 if let Some(s) = editor.session.write().as_mut() {
-                    s.totals.resize(classes.len(), 0);
-                    s.classes = classes.clone();
+                    s.totals.resize(count, 0);
+                    s.classes = changed.classes;
+                    s.colors = changed.colors;
                 }
-                editor.active_class.set(classes.len().saturating_sub(1));
+                editor.active_class.set(count.saturating_sub(1));
                 new_name.set(String::new());
                 error.set(None);
             }
@@ -112,9 +115,10 @@ pub fn ClassesPanel() -> Element {
         }
         let Some(dataset) = editor.session.peek().as_ref().map(|s| s.dataset.clone()) else { return };
         match rename_label_class(editor.id, dataset, class, name).await {
-            Ok(classes) => {
+            Ok(changed) => {
                 if let Some(s) = editor.session.write().as_mut() {
-                    s.classes = classes;
+                    s.classes = changed.classes;
+                    s.colors = changed.colors;
                 }
                 error.set(None);
             }
@@ -125,7 +129,7 @@ pub fn ClassesPanel() -> Element {
     rsx! {
         aside { id: "label-classes", class: "datasets-panel label-classes", aria_label: "Classes",
             div { class: "datasets-panel-header",
-                h2 { class: "section-card-title label-classes-title", "Classes" }
+                h2 { class: "section-card-title label-classes-title", TitleIcon { name: IconName::Tag } "Classes" }
                 span { class: "section-card-meta", "{plural(classes.len(), \"class\")}" }
                 button {
                     class: "icon-button icon-button-sm",
@@ -239,7 +243,7 @@ pub fn ClassesPanel() -> Element {
                                             th { class: "name", scope: "row",
                                                 // The cell stays a table cell (its border runs on); the flex box is inside.
                                                 span { class: "class-name-cell",
-                                                    span { class: "class-swatch", style: "background: {class_color(class)}", "aria-hidden": "true" }
+                                                    span { class: "class-swatch", style: "background: {editor.color(class)}", "aria-hidden": "true" }
                                                     if let Some(typed) = editing {
                                                         input {
                                                             class: "input label-rename",

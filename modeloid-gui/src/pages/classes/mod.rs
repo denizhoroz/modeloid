@@ -5,15 +5,17 @@ mod edit;
 
 use dioxus::prelude::*;
 use modeloid_types::classes::normalize_class;
+use modeloid_types::colors;
 
 use crate::api::classes::{
     class_lists, class_merge_preview, class_merge_suggestion, delete_class_list, save_class_list, start_class_merge,
     ClassList, MergePlan, MergePreview, SplitMode,
 };
+use crate::components::{IconName, TitleIcon};
 use crate::api::datasets::{list_datasets, DatasetRow};
 use crate::api::error_message;
 use crate::api::jobs::JobKind;
-use crate::components::{FormatSelect, FormatUse, InfoTip, NoWorkspace, set_if_newer, use_job, Bar, BarList, JobProgress, OutputChoice, OutputSelect, SelectDatasetHint, WarningTip};
+use crate::components::{ColorPicker, FormatSelect, FormatUse, InfoTip, NoWorkspace, set_if_newer, use_job, Bar, BarList, JobProgress, OutputChoice, OutputSelect, SelectDatasetHint, WarningTip};
 use crate::state::{use_batch_selected, use_datasets_version, use_selected_datasets, use_workspace, use_workspace_checked};
 use crate::util::{format_count, plural};
 
@@ -153,12 +155,14 @@ fn TargetsCard(plan: Signal<Option<MergePlan>>, sources: Vec<String>) -> Element
     let mut list_name = use_signal(String::new);
 
     let targets = plan.read().as_ref().map(|p| p.targets.clone()).unwrap_or_default();
+    let target_colors = plan.read().as_ref().map(|p| p.colors.clone()).unwrap_or_default();
     let count = targets.len();
     let saved: Vec<ClassList> = lists.read().as_ref().and_then(|r| r.as_ref().ok()).cloned().unwrap_or_default();
     let saved_for_load = saved.clone();
 
     let mut edit = move |f: &mut dyn FnMut(&mut MergePlan) -> Result<(), String>| {
-        let result = plan.write().as_mut().map_or(Ok(()), |p| f(p));
+        // Every target keeps a colour: new ones get the next free one.
+        let result = plan.write().as_mut().map_or(Ok(()), |p| f(p).map(|()| p.fill_colors()));
         match result {
             Ok(()) => error.set(None),
             Err(message) => {
@@ -195,13 +199,24 @@ fn TargetsCard(plan: Signal<Option<MergePlan>>, sources: Vec<String>) -> Element
     rsx! {
         section { class: "section-card", aria_labelledby: "targets-title",
             div { class: "section-card-header",
-                h2 { id: "targets-title", class: "section-card-title", "Target classes" }
+                h2 { id: "targets-title", class: "section-card-title", TitleIcon { name: IconName::Target } "Target classes" }
                 span { class: "section-card-meta", "{count} classes · order sets the class ids" }
             }
             ol { class: "target-list",
                 for (i, target) in targets.iter().enumerate() {
                     li { key: "{i}-{target}-{nonce}", class: "target-row",
                         span { class: "target-id", "{i}" }
+                        ColorPicker {
+                            value: target_colors.get(target).cloned().unwrap_or_else(|| colors::FALLBACK.to_string()),
+                            label: "Colour of {target}",
+                            onchange: {
+                                let name = target.clone();
+                                move |color: String| {
+                                    let name = name.clone();
+                                    edit(&mut |p| edit::set_color(p, &name, &color));
+                                }
+                            },
+                        }
                         input {
                             class: "input",
                             r#type: "text",
@@ -312,6 +327,24 @@ fn TargetsCard(plan: Signal<Option<MergePlan>>, sources: Vec<String>) -> Element
 }
 
 /// Options for a mapping `select`.
+/// Colour of the target class `choice` maps to; `None` when it drops or is unmapped.
+fn choice_color(plan: &MergePlan, choice: &Choice) -> Option<String> {
+    match choice {
+        Choice::Target(t) => plan.colors.get(t).cloned(),
+        _ => None,
+    }
+}
+
+/// Small rectangle in the target class's colour, before a "Becomes" choice;
+/// an empty outline when the class is dropped or unmapped.
+#[component]
+fn ChoiceSwatch(color: Option<String>) -> Element {
+    match color {
+        Some(color) => rsx! { span { class: "class-swatch becomes-swatch", style: "background: {color}", "aria-hidden": "true" } },
+        None => rsx! { span { class: "class-swatch becomes-swatch is-empty", "aria-hidden": "true" } },
+    }
+}
+
 #[component]
 fn ChoiceOptions(targets: Vec<String>, current: Choice, allow_unmapped: bool, #[props(default)] same_label: Option<String>) -> Element {
     rsx! {
@@ -366,7 +399,7 @@ fn MappingCard(plan: Signal<Option<MergePlan>>, preview: MergePreview) -> Elemen
     rsx! {
         section { class: "section-card", aria_labelledby: "mapping-title",
             div { class: "section-card-header",
-                h2 { id: "mapping-title", class: "section-card-title", "Mapping" }
+                h2 { id: "mapping-title", class: "section-card-title", TitleIcon { name: IconName::Swap } "Mapping" }
                 span { class: "section-card-meta", "{preview.sources.len()} source classes" }
                 if multiple {
                     button {
@@ -452,6 +485,8 @@ fn MappingCard(plan: Signal<Option<MergePlan>>, preview: MergePreview) -> Elemen
                                             td { class: "num muted", "{format_count(source.labels.iter().map(|&n| u64::from(n)).sum::<u64>())}" }
                                         }
                                         td {
+                                            div { class: "becomes-cell",
+                                            ChoiceSwatch { color: choice_color(&current, &choice) }
                                             select {
                                                 class: "input select",
                                                 aria_label: "What {name} becomes",
@@ -466,6 +501,7 @@ fn MappingCard(plan: Signal<Option<MergePlan>>, preview: MergePreview) -> Elemen
                                                     }
                                                 },
                                                 ChoiceOptions { targets: targets.clone(), current: choice.clone(), allow_unmapped: choice == Choice::Unmapped }
+                                            }
                                             }
                                         }
                                         if multiple {
@@ -497,6 +533,9 @@ fn MappingCard(plan: Signal<Option<MergePlan>>, preview: MergePreview) -> Elemen
                                                         th { scope: "row", class: "muted", "in {label}" }
                                                         td { colspan: if per_input() { preview.input_names.len().to_string() } else { "1".to_string() } }
                                                         td {
+                                                            div { class: "becomes-cell",
+                                                            // "Same as all datasets" shows the rule's colour.
+                                                            ChoiceSwatch { color: choice_color(&current, own_choice.as_ref().unwrap_or(&choice)) }
                                                             select {
                                                                 class: "input select",
                                                                 aria_label: "What {name} becomes in {label}",
@@ -517,6 +556,7 @@ fn MappingCard(plan: Signal<Option<MergePlan>>, preview: MergePreview) -> Elemen
                                                                     allow_unmapped: false,
                                                                     same_label: "Same as all datasets".to_string(),
                                                                 }
+                                                            }
                                                             }
                                                         }
                                                         td {}
@@ -543,7 +583,7 @@ fn OptionsCard(plan: Signal<Option<MergePlan>>, multiple: bool) -> Element {
 
     rsx! {
         section { class: "section-card", aria_labelledby: "options-title",
-            h2 { id: "options-title", class: "section-card-title", "Options" }
+            h2 { id: "options-title", class: "section-card-title", TitleIcon { name: IconName::Sliders } "Options" }
             div { class: "field field-inline",
                 label { class: "field-label", r#for: "classes-format", "Output format" }
                 FormatSelect {
@@ -623,7 +663,7 @@ fn PreviewCard(plan: MergePlan, preview: MergePreview) -> Element {
     rsx! {
         section { class: "section-card", aria_labelledby: "preview-title",
             div { class: "section-card-header",
-                h2 { id: "preview-title", class: "section-card-title", "Result" }
+                h2 { id: "preview-title", class: "section-card-title", TitleIcon { name: IconName::Chart } "Result" }
                 span { class: "section-card-aside",
                     span { class: "section-card-meta", "labels per target class" }
                     WarningTip { errors, warnings }

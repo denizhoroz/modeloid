@@ -1,6 +1,7 @@
 use dioxus::prelude::*;
 
 use crate::api::settings::ServiceId;
+use crate::components::{IconName, TitleIcon};
 use crate::components::{AppearanceSettings, CredentialField, PythonSetupCard, SystemSettings, WorkspaceSettings};
 use crate::state::use_workspace;
 
@@ -14,13 +15,13 @@ pub fn Settings() -> Element {
             h1 { "Settings" }
 
             section { class: "settings-section", aria_labelledby: "settings-appearance",
-                h2 { id: "settings-appearance", class: "settings-section-title", "Appearance" }
+                h2 { id: "settings-appearance", class: "settings-section-title", TitleIcon { name: IconName::Palette } "Appearance" }
                 p { class: "settings-section-lead", "How Modeloid looks on this computer." }
                 AppearanceSettings {}
             }
 
             section { class: "settings-section", aria_labelledby: "settings-workspace",
-                h2 { id: "settings-workspace", class: "settings-section-title", "Workspace" }
+                h2 { id: "settings-workspace", class: "settings-section-title", TitleIcon { name: IconName::FolderOpen } "Workspace" }
                 if let Some(info) = workspace() {
                     p { class: "settings-section-lead",
                         "Options of the open workspace, "
@@ -38,7 +39,7 @@ pub fn Settings() -> Element {
             }
 
             section { class: "settings-section", aria_labelledby: "settings-system",
-                h2 { id: "settings-system", class: "settings-section-title", "System" }
+                h2 { id: "settings-system", class: "settings-section-title", TitleIcon { name: IconName::Cpu } "System" }
                 p { class: "settings-section-lead",
                     "How much of this computer Modeloid uses. Stored on this computer, for every workspace."
                 }
@@ -46,7 +47,7 @@ pub fn Settings() -> Element {
             }
 
             section { class: "settings-section", aria_labelledby: "settings-python",
-                h2 { id: "settings-python", class: "settings-section-title", "Python environment" }
+                h2 { id: "settings-python", class: "settings-section-title", TitleIcon { name: IconName::Code } "Python environment" }
                 p { class: "settings-section-lead",
                     "The Python, PyTorch and Ultralytics that training runs on. Modeloid keeps its own copy next to the app."
                 }
@@ -54,7 +55,7 @@ pub fn Settings() -> Element {
             }
 
             section { class: "settings-section", aria_labelledby: "settings-api-keys",
-                h2 { id: "settings-api-keys", class: "settings-section-title", "API Keys" }
+                h2 { id: "settings-api-keys", class: "settings-section-title", TitleIcon { name: IconName::Key } "API Keys" }
                 p { class: "settings-section-lead",
                     "Keys for the services Modeloid downloads from. Stored on this computer in your user config folder."
                 }

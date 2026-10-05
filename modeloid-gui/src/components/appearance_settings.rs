@@ -4,15 +4,14 @@ use crate::api::appearance::{save_appearance, Appearance, FONTS, SCALES, THEMES}
 use crate::api::error_message;
 use crate::state::use_appearance;
 
-/// Theme, font and text size pickers. A choice applies at once and is saved
+/// Theme, font and text size pickers and the title icons switch. A choice applies at once and is saved
 /// on the server; if saving fails it still holds until the app reloads.
 #[component]
 pub fn AppearanceSettings() -> Element {
     let mut appearance = use_appearance();
     let mut error = use_signal(|| None::<String>);
 
-    let mut choose = move |change: fn(&mut Appearance, &'static str), value: &'static str| {
-        change(&mut appearance.write(), value);
+    let save = move || {
         let chosen = appearance();
         spawn(async move {
             match save_appearance(chosen).await {
@@ -20,6 +19,10 @@ pub fn AppearanceSettings() -> Element {
                 Err(e) => error.set(Some(format!("Couldn't save your choice: {}", error_message(&e)))),
             }
         });
+    };
+    let mut choose = move |change: fn(&mut Appearance, &'static str), value: &'static str| {
+        change(&mut appearance.write(), value);
+        save();
     };
 
     let current = appearance();
@@ -94,6 +97,21 @@ pub fn AppearanceSettings() -> Element {
                             span { class: "scale-sample", "data-scale": id, "The quick brown fox jumps over the lazy dog" }
                         }
                     }
+                }
+            }
+
+            fieldset { class: "field appearance-field",
+                legend { class: "field-label", "Icons" }
+                label { class: "check",
+                    input {
+                        r#type: "checkbox",
+                        checked: current.hide_icons,
+                        onchange: move |e| {
+                            appearance.write().hide_icons = e.checked();
+                            save();
+                        },
+                    }
+                    "Hide icons in section and table titles"
                 }
             }
 

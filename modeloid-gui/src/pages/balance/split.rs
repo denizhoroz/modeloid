@@ -7,6 +7,7 @@ use dioxus::prelude::*;
 
 use super::{use_preview, ResultCard, RunCard, SeedField};
 use crate::api::balance::{BalancePlan, Resplit};
+use crate::components::{IconName, TitleIcon};
 use crate::api::jobs::JobKind;
 use crate::components::InfoTip;
 use crate::util::format_count;
@@ -32,7 +33,7 @@ pub fn SplitTab(id: u32, name: String) -> Element {
                 div { class: "section-stack",
                     section { class: "section-card", aria_labelledby: "split-title",
                         div { class: "section-card-header",
-                            h2 { id: "split-title", class: "section-card-title", "Split" }
+                            h2 { id: "split-title", class: "section-card-title", TitleIcon { name: IconName::Split } "Split" }
                             span { class: "section-card-meta", "drag the two boundaries" }
                         }
                         SplitBar {

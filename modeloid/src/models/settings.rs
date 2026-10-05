@@ -117,7 +117,8 @@ pub struct Settings {
     system: Option<SystemPrefs>,
 }
 
-/// GUI look: theme, font family and text size, as ids.
+/// GUI look: theme, font family and text size, as ids, and whether title
+/// icons are hidden.
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AppearancePrefs {
     #[serde(default)]
@@ -126,6 +127,8 @@ pub struct AppearancePrefs {
     pub font: String,
     #[serde(default)]
     pub scale: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hide_icons: bool,
 }
 
 impl Settings {
@@ -329,7 +332,7 @@ mod tests {
         assert_eq!(old.appearance(), None);
 
         let mut settings = old.clone();
-        let prefs = AppearancePrefs { theme: "dracula".into(), font: "inter".into(), scale: "large".into() };
+        let prefs = AppearancePrefs { theme: "dracula".into(), font: "inter".into(), scale: "large".into(), hide_icons: true };
         settings.set_appearance(prefs.clone());
         let text = toml::to_string(&settings).unwrap();
         assert!(text.contains("[appearance]"));

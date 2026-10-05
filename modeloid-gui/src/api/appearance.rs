@@ -1,4 +1,4 @@
-//! How the app looks: theme, font and text size. Stored by the core in
+//! How the app looks: theme, font, text size and whether titles show icons. Stored by the core in
 //! `settings.toml` (`[appearance]`) so it survives browser changes, and read
 //! during server rendering so the first paint already uses it.
 //!
@@ -58,11 +58,14 @@ pub struct Appearance {
     pub theme: String,
     pub font: String,
     pub scale: String,
+    /// Section and table titles without their icons (`data-icons="off"`).
+    #[serde(default)]
+    pub hide_icons: bool,
 }
 
 impl Default for Appearance {
     fn default() -> Self {
-        Appearance { theme: THEMES[0].id.into(), font: FONTS[0].id.into(), scale: "default".into() }
+        Appearance { theme: THEMES[0].id.into(), font: FONTS[0].id.into(), scale: "default".into(), hide_icons: false }
     }
 }
 
@@ -75,6 +78,7 @@ impl Appearance {
             theme: if THEMES.iter().any(|t| t.id == self.theme) { self.theme } else { default.theme },
             font: if FONTS.iter().any(|f| f.id == self.font) { self.font } else { default.font },
             scale: if SCALES.iter().any(|(id, _)| *id == self.scale) { self.scale } else { default.scale },
+            hide_icons: self.hide_icons,
         }
     }
 }
@@ -106,14 +110,14 @@ mod backend {
         let settings = Settings::load(path).map_err(|e| format!("Couldn't read the settings: {e}"))?;
         Ok(settings
             .appearance()
-            .map(|p| Appearance { theme: p.theme.clone(), font: p.font.clone(), scale: p.scale.clone() }.normalized())
+            .map(|p| Appearance { theme: p.theme.clone(), font: p.font.clone(), scale: p.scale.clone(), hide_icons: p.hide_icons }.normalized())
             .unwrap_or_default())
     }
 
     pub fn save(path: &Path, appearance: Appearance) -> Result<(), String> {
-        let Appearance { theme, font, scale } = appearance.normalized();
+        let Appearance { theme, font, scale, hide_icons } = appearance.normalized();
         let mut settings = Settings::load(path).map_err(|e| format!("Couldn't read the settings: {e}"))?;
-        settings.set_appearance(AppearancePrefs { theme, font, scale });
+        settings.set_appearance(AppearancePrefs { theme, font, scale, hide_icons });
         settings.save(path).map_err(|e| format!("Couldn't save the settings: {e}"))
     }
 }
@@ -124,7 +128,7 @@ mod tests {
 
     #[test]
     fn unknown_ids_fall_back_to_defaults() {
-        let odd = Appearance { theme: "gone".into(), font: "inter".into(), scale: "huge".into() };
+        let odd = Appearance { theme: "gone".into(), font: "inter".into(), scale: "huge".into(), hide_icons: false };
         let fixed = odd.normalized();
         assert_eq!(fixed.theme, "lime");
         assert_eq!(fixed.font, "inter");
@@ -143,7 +147,7 @@ mod server_tests {
         let path = dir.join("settings.toml");
 
         assert_eq!(backend::get(&path).unwrap(), Appearance::default());
-        let chosen = Appearance { theme: "dracula".into(), font: "inter".into(), scale: "large".into() };
+        let chosen = Appearance { theme: "dracula".into(), font: "inter".into(), scale: "large".into(), hide_icons: true };
         backend::save(&path, chosen.clone()).unwrap();
         assert_eq!(backend::get(&path).unwrap(), chosen);
 

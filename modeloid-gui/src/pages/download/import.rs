@@ -3,6 +3,7 @@
 use dioxus::prelude::*;
 
 use crate::api::datasets::validate_dataset_name;
+use crate::components::TitleIcon;
 use crate::api::error_message;
 use crate::api::import::{name_from_path, start_import, ImportKind};
 use crate::api::jobs::JobKind;
@@ -105,7 +106,7 @@ pub fn ImportForm(datasets_path: String) -> Element {
         form { class: "section-stack", novalidate: true, onsubmit: submit,
             section { class: "section-card", aria_labelledby: "import-source-title",
                 div { class: "section-card-header",
-                    h2 { id: "import-source-title", class: "section-card-title", "Source" }
+                    h2 { id: "import-source-title", class: "section-card-title", TitleIcon { name: IconName::Upload } "Source" }
                     div { class: "segmented", role: "radiogroup", aria_label: "Import from",
                         for (value, label) in [(SourceKind::Folder, "Folder"), (SourceKind::Zip, "Zip file")] {
                             button {
@@ -192,7 +193,7 @@ pub fn ImportForm(datasets_path: String) -> Element {
             }
 
             section { class: "section-card", aria_labelledby: "import-name-title",
-                h2 { id: "import-name-title", class: "section-card-title", "Dataset" }
+                h2 { id: "import-name-title", class: "section-card-title", TitleIcon { name: IconName::Database } "Dataset" }
                 div { class: "field",
                     label { class: "field-label", r#for: "import-name", "Name" }
                     input {

@@ -118,7 +118,7 @@ pub fn Gallery(id: u32, classes: Vec<String>, stats: ExploreStats, filter: Signa
                                     div { class: "gallery-thumb", style: "aspect-ratio: {image.width.max(1)} / {image.height.max(1)}",
                                         img { src: thumb_url(id, image.index), alt: "{image.name}", loading: "lazy", decoding: "async" }
                                         if show_labels() {
-                                            Overlay { objects: image.objects.clone(), highlight: current.class }
+                                            Overlay { objects: image.objects.clone(), colors: page.colors.clone(), highlight: current.class }
                                         }
                                     }
                                     span { class: "gallery-caption",
@@ -142,6 +142,7 @@ pub fn Gallery(id: u32, classes: Vec<String>, stats: ExploreStats, filter: Signa
                                 id,
                                 image,
                                 classes: classes.clone(),
+                                colors: page.colors.clone(),
                                 position: format!("{} of {}", format_count((page.offset + i + 1) as u32), format_count(total as u32)),
                                 on_close: move |_| open.set(None),
                                 on_step: move |step: isize| {
@@ -182,20 +183,22 @@ fn split_from_key(key: &str) -> Option<Option<Split>> {
 /// Boxes and outlines over a thumbnail, in the image's 0..1 coordinates.
 /// With a class filter, other classes' labels are dimmed.
 #[component]
-fn Overlay(objects: Vec<GalleryObject>, highlight: Option<usize>) -> Element {
+fn Overlay(objects: Vec<GalleryObject>, colors: Vec<String>, highlight: Option<usize>) -> Element {
     rsx! {
         svg { class: "gallery-overlay", view_box: "0 0 1 1", preserve_aspect_ratio: "none", "aria-hidden": "true",
             for (i, o) in objects.iter().enumerate() {
                 {
                     let dim = highlight.is_some_and(|h| h != o.class);
                     let class = if dim { "overlay-shape is-dim" } else { "overlay-shape" };
+                    // Each class in its own colour (`--shape-color`); the theme's when unknown.
+                    let style = colors.get(o.class).map(|c| format!("--shape-color: {c}")).unwrap_or_default();
                     match &o.polygon {
                         Some(points) => {
                             let points: String = points.iter().map(|[x, y]| format!("{x},{y} ")).collect();
-                            rsx! { polygon { key: "{i}", class, points } }
+                            rsx! { polygon { key: "{i}", class, style, points } }
                         }
                         None => rsx! {
-                            rect { key: "{i}", class, x: "{o.bbox[0]}", y: "{o.bbox[1]}", width: "{o.bbox[2]}", height: "{o.bbox[3]}" }
+                            rect { key: "{i}", class, style, x: "{o.bbox[0]}", y: "{o.bbox[1]}", width: "{o.bbox[2]}", height: "{o.bbox[3]}" }
                         },
                     }
                 }
@@ -210,6 +213,7 @@ fn ImageDetail(
     id: u32,
     image: GalleryImage,
     classes: Vec<String>,
+    colors: Vec<String>,
     position: String,
     on_close: EventHandler<()>,
     on_step: EventHandler<isize>,
@@ -256,12 +260,12 @@ fn ImageDetail(
                     class: "image-detail-frame",
                     style: "width: min(100cqw, calc(100cqh * {image.width.max(1)} / {image.height.max(1)})); aspect-ratio: {image.width.max(1)} / {image.height.max(1)}",
                     img { src: image_url(id, image.index), alt: "{image.name}" }
-                    Overlay { objects: image.objects.clone(), highlight: None }
+                    Overlay { objects: image.objects.clone(), colors: colors.clone(), highlight: None }
                     for (i, o) in image.objects.iter().enumerate() {
                         span {
                             key: "{i}",
-                            class: "box-tag",
-                            style: "left: {o.bbox[0] * 100.0:.2}%; top: {o.bbox[1] * 100.0:.2}%",
+                            class: if colors.get(o.class).is_some() { "box-tag is-class-colored" } else { "box-tag" },
+                            style: "left: {o.bbox[0] * 100.0:.2}%; top: {o.bbox[1] * 100.0:.2}%; --shape-color: {colors.get(o.class).map_or(\"\", String::as_str)}",
                             "{name_of(o.class)}"
                         }
                     }

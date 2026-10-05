@@ -6,7 +6,7 @@ use dioxus::html::input_data::MouseButton;
 use dioxus::prelude::*;
 
 use super::geometry::{self, Handle, Point, View};
-use super::{class_color, use_editor, Tool};
+use super::{use_editor, Tool};
 use crate::api::explore::image_url;
 use crate::api::label::LabelObject;
 use crate::components::use_toasts;
@@ -216,7 +216,7 @@ pub fn Canvas() -> Element {
                         for (i, o) in objects.iter().enumerate() {
                             {
                                 let class = if selected.contains(&i) { "label-shape is-selected" } else { "label-shape" };
-                                let style = format!("--label-color: {}", class_color(o.class));
+                                let style = format!("--label-color: {}", editor.color(o.class));
                                 match &o.polygon {
                                     Some(points) => {
                                         let points: String = points.iter().map(|[x, y]| format!("{x},{y} ")).collect();
@@ -249,7 +249,7 @@ pub fn Canvas() -> Element {
                     if let Some(b) = draft {
                         rect {
                             class: "label-draft",
-                            style: "--label-color: {class_color(*editor.active_class.read())}",
+                            style: "--label-color: {editor.color(*editor.active_class.read())}",
                             x: "{b[0]}",
                             y: "{b[1]}",
                             width: "{b[2]}",
@@ -263,7 +263,7 @@ pub fn Canvas() -> Element {
                             span {
                                 key: "{i}",
                                 class: "box-tag label-tag",
-                                style: "left: {o.bbox[0] / size[0] * 100.0:.3}%; top: {o.bbox[1] / size[1] * 100.0:.3}%; background: {class_color(o.class)}",
+                                style: "left: {o.bbox[0] / size[0] * 100.0:.3}%; top: {o.bbox[1] / size[1] * 100.0:.3}%; background: {editor.color(o.class)}",
                                 "{name_of(o.class)}"
                             }
                         }

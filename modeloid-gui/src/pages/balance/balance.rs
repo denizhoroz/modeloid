@@ -7,6 +7,7 @@ use dioxus::prelude::*;
 
 use super::{use_preview, ResultCard, RunCard, SeedField};
 use crate::api::balance::{BalancePlan, BalancePreview};
+use crate::components::{IconName, TitleIcon};
 use crate::api::jobs::JobKind;
 use crate::components::{InfoTip, Slider};
 use crate::util::format_count;
@@ -26,13 +27,13 @@ pub fn BalanceTab(id: u32, name: String) -> Element {
                 div { class: "section-stack",
                     section { class: "section-card", aria_labelledby: "distribution-title",
                         div { class: "section-card-header",
-                            h2 { id: "distribution-title", class: "section-card-title", "Class Distribution" }
+                            h2 { id: "distribution-title", class: "section-card-title", TitleIcon { name: IconName::Scale } "Class Distribution" }
                             span { class: "section-card-meta", "labels per class, fewest first" }
                         }
                         ClassChart { plan, columns: columns(&p) }
                     }
                     section { class: "section-card", aria_labelledby: "sample-title",
-                        h2 { id: "sample-title", class: "section-card-title", "Sample" }
+                        h2 { id: "sample-title", class: "section-card-title", TitleIcon { name: IconName::Filter } "Sample" }
                         div { class: "option-row",
                             label { class: "check",
                                 input {

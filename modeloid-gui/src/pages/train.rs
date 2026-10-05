@@ -6,6 +6,7 @@
 use dioxus::prelude::*;
 
 use crate::api::datasets::list_datasets;
+use crate::components::{IconName, TitleIcon};
 use crate::api::error_message;
 use crate::api::jobs::{ItemStatus, JobKind};
 use crate::api::parameters::{list_parameters, Batch, FrameworkParams, ParameterSet};
@@ -167,7 +168,7 @@ fn TrainForm() -> Element {
     rsx! {
         div { class: "section-stack",
             section { class: "section-card", aria_labelledby: "train-inputs-title",
-                h2 { id: "train-inputs-title", class: "section-card-title", "Inputs" }
+                h2 { id: "train-inputs-title", class: "section-card-title", TitleIcon { name: IconName::Database } "Inputs" }
                 div { class: "train-inputs",
                     div { class: "train-input",
                         span { class: "field-label", "Dataset" }
@@ -209,7 +210,7 @@ fn TrainForm() -> Element {
             }
 
             section { class: "section-card", aria_labelledby: "train-output-title",
-                h2 { id: "train-output-title", class: "section-card-title", "Output" }
+                h2 { id: "train-output-title", class: "section-card-title", TitleIcon { name: IconName::Save } "Output" }
                 div { class: "field",
                     label { class: "field-label", r#for: "train-name",
                         "Model name "
@@ -330,7 +331,7 @@ pub(crate) fn TrainConsole(run: String, version: u64, live: Option<String>, #[pr
         // Collapsed by default; the progress panel above says how it goes.
         details { class: "section-card param-group", aria_labelledby: "train-console-title",
             summary { class: "param-group-summary",
-                h2 { id: "train-console-title", class: "section-card-title", "Console" }
+                h2 { id: "train-console-title", class: "section-card-title", TitleIcon { name: IconName::Terminal } "Console" }
                 span { class: "section-card-meta", if tuning { "training/tuning/{run}/console.log" } else { "training/trains/{run}/console.log" } }
             }
             pre { id: "train-console", class: "train-console", tabindex: "0", aria_label: "Training output",

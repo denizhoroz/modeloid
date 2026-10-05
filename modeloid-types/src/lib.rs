@@ -3,6 +3,7 @@
 
 pub mod balance;
 pub mod classes;
+pub mod colors;
 pub mod convert;
 pub mod edit;
 pub mod formats;
