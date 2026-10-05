@@ -2,11 +2,8 @@ use dioxus::prelude::*;
 
 use crate::api::error_message;
 use crate::api::workspace::{parse_seed, update_workspace, WorkspaceInfo};
-use crate::components::InfoTip;
+use crate::components::{FormatSelect, FormatUse, InfoTip};
 use crate::state::use_workspace;
-
-/// Default label format choices: stored value and name. Empty = no default.
-const FORMATS: [(&str, &str); 4] = [("", "No default (follow each dataset)"), ("yolo", "YOLO"), ("coco", "COCO JSON"), ("voc", "Pascal VOC")];
 
 /// The workspace options shared by the create form and Settings: seed and
 /// default label format. `seed` holds the typed text (checked with `parse_seed`).
@@ -47,14 +44,12 @@ pub fn WorkspaceOptions(
                 "Default label format "
                 InfoTip { label: "About the default format", text: "The format Convert and Classes & Merge start on. You can still choose another one each time." }
             }
-            select {
+            FormatSelect {
                 id: "ws-format",
-                class: "input select",
-                value: "{format}",
-                onchange: move |e| format.set(e.value()),
-                for (value, label) in FORMATS {
-                    option { key: "{value}", value, selected: format() == value, "{label}" }
-                }
+                value: format(),
+                use_for: FormatUse::Write,
+                none_label: "No default (follow each dataset)",
+                onchange: move |v| format.set(v),
             }
         }
     }

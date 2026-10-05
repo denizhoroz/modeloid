@@ -4,6 +4,7 @@
 //! datasets are converted with one plan, each to its own result.
 
 use dioxus::prelude::*;
+use modeloid_types::formats;
 
 use crate::api::convert::{
     convert_batch_preview, convert_preview, start_convert, start_convert_batch, BatchOutput, ConvertPlan, ConvertPreview, TargetTask, DEFAULT_MIN_CROP,
@@ -13,16 +14,16 @@ use crate::api::datasets::{list_datasets, validate_dataset_name, DatasetRow};
 use crate::api::error_message;
 use crate::api::jobs::JobKind;
 use crate::components::{
-    set_if_newer, use_job, Bar, BarList, InfoTip, JobProgress, NoWorkspace, NumberInput, OutputChoice, OutputSelect, SelectDatasetHint, Slider, StatTile, WarningTip,
+    set_if_newer, FormatSelect, FormatUse, use_job, Bar, BarList, InfoTip, JobProgress, NoWorkspace, NumberInput, OutputChoice, OutputSelect, SelectDatasetHint, Slider, StatTile, WarningTip,
 };
 use crate::state::{use_datasets_version, use_primary_dataset, use_selected_datasets, use_workspace, use_workspace_checked};
 use crate::util::{format_count, plural};
 
-/// Label formats that can be written: plan value, name, and what lands on disk.
-const FORMATS: [(&str, &str, &str); 3] = [
-    ("yolo", "YOLO", "Each split gets an images and a labels folder; data.yaml at the top is ready for training."),
-    ("coco", "COCO JSON", "Each split folder gets its images and one _annotations.coco.json."),
-    ("voc", "Pascal VOC", "Each split folder gets its images with one .xml beside each."),
+/// What lands on disk for each label family Modeloid writes.
+const LAYOUTS: [(&str, &str); 3] = [
+    (formats::YOLO, "Each split gets an images and a labels folder; data.yaml at the top is ready for training."),
+    (formats::COCO, "Each split folder gets its images and one _annotations.coco.json."),
+    (formats::VOC, "Each split folder gets its images with one .xml beside each."),
 ];
 
 #[component]
@@ -184,16 +185,12 @@ fn TargetCard(plan: Signal<ConvertPlan>, preview: ConvertPreview) -> Element {
             } else {
                 div { class: "field field-inline",
                     label { class: "field-label", r#for: "convert-format", "Label format" }
-                    select {
+                    FormatSelect {
                         id: "convert-format",
-                        class: "input select",
-                        value: "{current.format}",
-                        onchange: move |e| plan.write().format = e.value(),
-                        for (value, label, _) in FORMATS {
-                            option { key: "{value}", value, selected: current.format == value,
-                                if preview.source_format == value { "{label} (current)" } else { "{label}" }
-                            }
-                        }
+                        value: current.format.clone(),
+                        use_for: FormatUse::Write,
+                        current: (!preview.source_format.is_empty()).then(|| preview.source_format.clone()),
+                        onchange: move |v| plan.write().format = v,
                     }
                 }
             }
@@ -208,7 +205,7 @@ fn ResultCard(plan: ConvertPlan, preview: ConvertPreview) -> Element {
     let layout = if crops {
         "Each split gets one folder per class, holding that class's crops."
     } else {
-        FORMATS.iter().find(|f| f.0 == plan.format).map_or("", |f| f.2)
+        formats::family(&plan.format).and_then(|family| LAYOUTS.iter().find(|l| l.0 == family)).map_or("", |l| l.1)
     };
     let kept = preview.outlines - preview.outlines_lost;
     let bars: Vec<Bar> =
@@ -297,15 +294,15 @@ fn RunCard(plan: ConvertPlan, preview: ConvertPreview, name: String) -> Element 
 /// Format a conversion starts on: the workspace's default, or, when the
 /// dataset is in it already or there is none, another one.
 fn start_format(default: &str, source: &str) -> String {
-    let other = if source == "yolo" { "coco" } else { "yolo" };
-    if default.is_empty() || default == source { other.to_string() } else { default.to_string() }
+    let other = if source == formats::YOLO { formats::COCO } else { formats::YOLO };
+    if default.is_empty() || formats::family(default) == Some(source) { other.to_string() } else { default.to_string() }
 }
 
 /// Name suffix of a conversion's results, e.g. "-yolo".
 fn result_suffix(plan: &ConvertPlan, source_format: &str) -> String {
     match plan.task {
         TargetTask::Classification => "-cls".into(),
-        _ if plan.format != source_format => format!("-{}", plan.format),
+        _ if formats::family(&plan.format) != Some(source_format) => format!("-{}", formats::family(&plan.format).unwrap_or(&plan.format)),
         _ => "-det".into(),
     }
 }

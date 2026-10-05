@@ -9,9 +9,6 @@ pub const CREATE_TYPES: &[(&str, &str)] = &[
     ("instance-segmentation", "Instance segmentation"),
 ];
 
-/// Label formats an empty dataset can be created in: (`annotation_format`, label).
-pub const CREATE_FORMATS: &[(&str, &str)] = &[("yolo", "YOLO"), ("coco", "COCO"), ("voc", "Pascal VOC")];
-
 /// What Create asks for.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NewDataset {
@@ -19,7 +16,7 @@ pub struct NewDataset {
     pub description: String,
     /// One of `CREATE_TYPES`.
     pub dataset_type: String,
-    /// One of `CREATE_FORMATS`.
+    /// A format id Modeloid can write (`formats::writable`).
     pub annotation_format: String,
 }
 

@@ -1,38 +1,13 @@
-//! Export formats offered on the Download page. Values are Roboflow export
-//! format names; "Other" lets the user type any name Roboflow accepts.
+//! Export format of the Download page: the Roboflow formats of the shared
+//! format list (`FormatSelect`); "Other" lets the user type any name Roboflow accepts.
 
 use dioxus::prelude::*;
 
-use crate::components::InfoTip;
+use crate::components::{FormatSelect, FormatUse, InfoTip, OTHER_FORMAT};
 
-pub const DEFAULT_FORMAT: &str = "coco";
+pub use modeloid_types::formats::DEFAULT_DOWNLOAD_FORMAT as DEFAULT_FORMAT;
 /// Select value that reveals the free-text format input.
-pub const OTHER: &str = "__other";
-
-pub struct FormatGroup {
-    pub label: &'static str,
-    pub formats: &'static [(&'static str, &'static str)], // (value, label)
-}
-
-pub const FORMAT_GROUPS: &[FormatGroup] = &[
-    FormatGroup {
-        label: "Object detection / segmentation",
-        formats: &[
-            ("coco", "COCO JSON"),
-            ("coco-segmentation", "COCO Segmentation"),
-            ("yolov11", "YOLOv11 TXT"),
-            ("yolov8", "YOLOv8 TXT"),
-            ("yolov5pytorch", "YOLOv5 PyTorch TXT"),
-            ("voc", "Pascal VOC XML"),
-            ("createml", "CreateML JSON"),
-            ("tfrecord", "TFRecord"),
-        ],
-    },
-    FormatGroup {
-        label: "Classification",
-        formats: &[("folder", "Folder structure"), ("multiclass", "Multi-label CSV")],
-    },
-];
+pub const OTHER: &str = OTHER_FORMAT;
 
 /// Format picker: a list of known formats plus "Other" with a text input.
 #[component]
@@ -50,23 +25,10 @@ pub fn FormatSection(selected: Signal<String>, custom: Signal<String>, error: Op
                     "Roboflow export format "
                     InfoTip {
                         label: "About the export format",
-                        text: "Annotation format Roboflow exports the dataset in; other sources download as they are. Roboflow offers different formats per project type. If the project doesn't offer the one chosen here, Modeloid switches to one it does and tells you which.",
+                        text: "Annotation format Roboflow exports the dataset in; other sources download as they are. Roboflow offers different formats per project type. If the project doesn't offer the one chosen here, Modeloid switches to one it does and tells you which. Formats marked \"download only\" download fine, but Modeloid's tools can't read them yet.",
                     }
                 }
-                select {
-                    id: "download-format",
-                    class: "input select",
-                    value: "{selected}",
-                    onchange: move |e| selected.set(e.value()),
-                    for group in FORMAT_GROUPS {
-                        optgroup { key: "{group.label}", label: group.label,
-                            for (value, label) in group.formats {
-                                option { key: "{value}", value: *value, selected: selected() == *value, "{label}" }
-                            }
-                        }
-                    }
-                    option { value: OTHER, selected: is_other, "Other…" }
-                }
+                FormatSelect { id: "download-format", value: selected(), use_for: FormatUse::Download, onchange: move |v| selected.set(v) }
             }
 
             if is_other {
@@ -81,7 +43,7 @@ pub fn FormatSection(selected: Signal<String>, custom: Signal<String>, error: Op
                         r#type: "text",
                         spellcheck: "false",
                         autocomplete: "off",
-                        placeholder: "e.g. yolov8-obb",
+                        placeholder: "e.g. coco-mmdetection",
                         aria_invalid: if error.is_some() { "true" },
                         value: "{custom}",
                         oninput: move |e| custom.set(e.value()),

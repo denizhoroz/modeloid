@@ -1292,6 +1292,10 @@ fieldset.section-card > legend.section-card-title {
     color: var(--color-fg);
 }
 
+.select option:disabled {
+    color: var(--color-fg-muted);
+}
+
 /* Radio / checkbox cards (DatasetPicker, OutputSelect, Import) */
 .choice-list {
     display: flex;

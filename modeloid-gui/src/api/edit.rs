@@ -6,7 +6,7 @@ use dioxus::fullstack::FileStream;
 use dioxus::prelude::*;
 
 pub use modeloid_types::edit::{
-    is_image_name, parse_tags, DatasetDetails, LabelStatus, NewDataset, CREATE_FORMATS, CREATE_TYPES,
+    is_image_name, parse_tags, DatasetDetails, LabelStatus, NewDataset, CREATE_TYPES,
 };
 
 use crate::api::jobs::Job;
@@ -62,7 +62,7 @@ mod backend {
     use modeloid::{core::edit, Workspace};
     use tokio::io::AsyncWriteExt;
 
-    use super::{DatasetDetails, LabelStatus, NewDataset, CREATE_FORMATS, CREATE_TYPES};
+    use super::{DatasetDetails, LabelStatus, NewDataset, CREATE_TYPES};
     use crate::api::jobs::{self, Job, JobKind};
     use crate::api::{activity, explore, history, workspace};
     use crate::util::plural;
@@ -76,7 +76,7 @@ mod backend {
         let new = NewDataset { name: new.name.trim().to_string(), ..new };
         let (_, dataset) = open()?.create_dataset(&new).map_err(|e| e.to_string())?;
         let label = |list: &[(&str, &'static str)], key: &str| list.iter().find(|(k, _)| *k == key).map_or(key.to_string(), |(_, l)| l.to_string());
-        let detail = format!("{} · {}", label(CREATE_TYPES, &new.dataset_type), label(CREATE_FORMATS, &new.annotation_format));
+        let detail = format!("{} · {}", label(CREATE_TYPES, &new.dataset_type), modeloid_types::formats::label(&new.annotation_format));
         history::record("Dataset Manager", "Datasets", "Create dataset", dataset.name(), Some(detail));
         Ok(dataset.id())
     }

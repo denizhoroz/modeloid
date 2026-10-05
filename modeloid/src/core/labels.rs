@@ -15,6 +15,7 @@ use std::{
     },
 };
 
+use modeloid_types::formats;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -36,17 +37,12 @@ pub enum LabelFormat {
 
 impl LabelFormat {
     /// Accepts the names used in `dataset.toml` and by Roboflow exports,
-    /// e.g. "yolov8", "coco-segmentation", "voc".
+    /// e.g. "yolov8", "coco-segmentation", "voc" (see `formats::family`).
     pub fn parse(name: &str) -> Option<Self> {
-        let name = name.trim().to_ascii_lowercase();
-        if name.starts_with("yolo") {
-            Some(LabelFormat::Yolo)
-        } else if name.starts_with("coco") {
-            Some(LabelFormat::Coco)
-        } else if name.starts_with("voc") || name == "pascal-voc" {
-            Some(LabelFormat::Voc)
-        } else {
-            None
+        match formats::family(name)? {
+            formats::YOLO => Some(LabelFormat::Yolo),
+            formats::COCO => Some(LabelFormat::Coco),
+            _ => Some(LabelFormat::Voc),
         }
     }
 
@@ -933,6 +929,7 @@ mod tests {
         assert_eq!(LabelFormat::parse("coco-segmentation"), Some(LabelFormat::Coco));
         assert_eq!(LabelFormat::parse("voc"), Some(LabelFormat::Voc));
         assert_eq!(LabelFormat::parse("createml"), None);
+        assert_eq!(LabelFormat::parse("yolov8-obb"), None);
     }
 
     #[test]

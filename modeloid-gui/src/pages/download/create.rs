@@ -2,11 +2,12 @@
 //! images are added to in the Edit tab.
 
 use dioxus::prelude::*;
+use modeloid_types::formats;
 
 use crate::api::datasets::validate_dataset_name;
-use crate::api::edit::{create_dataset, NewDataset, CREATE_FORMATS, CREATE_TYPES};
+use crate::api::edit::{create_dataset, NewDataset, CREATE_TYPES};
 use crate::api::error_message;
-use crate::components::InfoTip;
+use crate::components::{FormatSelect, FormatUse, InfoTip};
 use crate::state::{use_datasets_version, use_selected_datasets};
 
 #[component]
@@ -14,7 +15,7 @@ pub fn CreateForm(datasets_path: String, default_format: String, on_add_images: 
     let mut name = use_signal(String::new);
     let mut description = use_signal(String::new);
     let mut dataset_type = use_signal(|| CREATE_TYPES[0].0.to_string());
-    let start_format = if CREATE_FORMATS.iter().any(|(f, _)| *f == default_format) { default_format } else { CREATE_FORMATS[0].0.to_string() };
+    let start_format = if formats::writable(&default_format) { default_format } else { formats::YOLO.to_string() };
     let mut format = use_signal(|| start_format);
 
     let mut submitted = use_signal(|| false);
@@ -121,15 +122,7 @@ pub fn CreateForm(datasets_path: String, default_format: String, on_add_images: 
                 }
                 div { class: "field",
                     label { class: "field-label", r#for: "create-format", "Label format" }
-                    select {
-                        id: "create-format",
-                        class: "input select",
-                        value: "{format}",
-                        onchange: move |e| format.set(e.value()),
-                        for (value, label) in CREATE_FORMATS {
-                            option { key: "{value}", value: *value, selected: format() == *value, "{label}" }
-                        }
-                    }
+                    FormatSelect { id: "create-format", value: format(), use_for: FormatUse::Write, onchange: move |v| format.set(v) }
                 }
             }
 

@@ -137,11 +137,18 @@ impl Workspace {
         LabelFormat::parse(&self.default_format)
     }
 
+    /// The default format's name as chosen (e.g. "yolo26"); empty = none.
+    pub fn default_format_name(&self) -> &str {
+        &self.default_format
+    }
+
     /// Sets the label format tools start on (any name `LabelFormat::parse`
-    /// knows), or clears it with `None` so tools follow the dataset.
+    /// knows, kept as given so pickers show that format), or clears it with
+    /// `None` so tools follow the dataset.
     pub fn set_default_format(&mut self, format: Option<&str>) -> Result<(), crate::Error> {
         self.default_format = match format.map(str::trim).filter(|f| !f.is_empty()) {
-            Some(name) => LabelFormat::parse(name).ok_or_else(|| format!("unknown label format '{name}'; use yolo, coco or voc"))?.name().to_string(),
+            Some(name) if LabelFormat::parse(name).is_some() => name.to_ascii_lowercase(),
+            Some(name) => return Err(format!("'{name}' isn't a label format Modeloid can write; use a YOLO, COCO or Pascal VOC one").into()),
             None => String::new(),
         };
         Ok(())
@@ -582,7 +589,7 @@ impl Workspace {
     pub fn class_merge_suggestion(&self, ids: &[u32], progress: &dyn Progress) -> Result<MergePlan, crate::Error> {
         let inputs = self.merge_inputs(ids, progress)?;
         let format = match ids.first() {
-            _ if self.default_format().is_some() => self.default_format().map_or("", LabelFormat::name),
+            _ if self.default_format().is_some() => self.default_format.as_str(),
             Some(&id) => {
                 let (_, dataset) = self.find_dataset(id)?;
                 LabelFormat::parse(dataset.annotation_format()).unwrap_or(LabelFormat::Yolo).name()

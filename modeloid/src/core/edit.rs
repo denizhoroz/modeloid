@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub use modeloid_types::edit::{AddedImages, CREATE_FORMATS, CREATE_TYPES, DatasetDetails, LabelStatus, NewDataset};
+pub use modeloid_types::edit::{AddedImages, CREATE_TYPES, DatasetDetails, LabelStatus, NewDataset};
 use modeloid_types::edit::is_image_name;
 
 use crate::core::{
@@ -104,7 +104,7 @@ impl Workspace {
         if !CREATE_TYPES.iter().any(|(t, _)| *t == new.dataset_type) {
             return Err(format!("'{}' isn't a dataset type that can be created", new.dataset_type).into());
         }
-        if !CREATE_FORMATS.iter().any(|(f, _)| *f == new.annotation_format) {
+        if !modeloid_types::formats::writable(&new.annotation_format) {
             return Err(format!("'{}' isn't a label format that can be created", new.annotation_format).into());
         }
         let dir = self.datasets_dir().join(&new.name);

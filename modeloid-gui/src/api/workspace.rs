@@ -164,7 +164,7 @@ mod backend {
             datasets_path: workspace.datasets_dir().display().to_string(),
             description: workspace.description().to_string(),
             seed: workspace.seed(),
-            default_format: workspace.default_format().map_or("", |f| f.name()).to_string(),
+            default_format: workspace.default_format_name().to_string(),
         }
     }
 }

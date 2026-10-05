@@ -13,7 +13,7 @@ use crate::api::classes::{
 use crate::api::datasets::{list_datasets, DatasetRow};
 use crate::api::error_message;
 use crate::api::jobs::JobKind;
-use crate::components::{InfoTip, NoWorkspace, set_if_newer, use_job, Bar, BarList, JobProgress, OutputChoice, OutputSelect, SelectDatasetHint, WarningTip};
+use crate::components::{FormatSelect, FormatUse, InfoTip, NoWorkspace, set_if_newer, use_job, Bar, BarList, JobProgress, OutputChoice, OutputSelect, SelectDatasetHint, WarningTip};
 use crate::state::{use_batch_selected, use_datasets_version, use_selected_datasets, use_workspace, use_workspace_checked};
 use crate::util::{format_count, plural};
 
@@ -546,18 +546,15 @@ fn OptionsCard(plan: Signal<Option<MergePlan>>, multiple: bool) -> Element {
             h2 { id: "options-title", class: "section-card-title", "Options" }
             div { class: "field field-inline",
                 label { class: "field-label", r#for: "classes-format", "Output format" }
-                select {
+                FormatSelect {
                     id: "classes-format",
-                    class: "input select",
-                    value: "{current.format}",
-                    onchange: move |e| {
+                    value: current.format.clone(),
+                    use_for: FormatUse::Write,
+                    onchange: move |v| {
                         if let Some(p) = plan.write().as_mut() {
-                            p.format = e.value();
+                            p.format = v;
                         }
                     },
-                    for (value, label) in [("yolo", "YOLO"), ("coco", "COCO JSON"), ("voc", "Pascal VOC")] {
-                        option { key: "{value}", value, selected: current.format == value, "{label}" }
-                    }
                 }
             }
             div { class: "choice-list",
