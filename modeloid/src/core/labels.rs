@@ -1,4 +1,4 @@
-//! Reads and writes object labels in YOLO, COCO and Pascal VOC layouts, so every
+//! Reads and writes object labels in YOLO, COCO, Pascal VOC and VIA layouts, so every
 //! dataset tool works on one in-memory form (`LabelSet`) instead of on files.
 //!
 //! Coordinates are in pixels. Reading YOLO needs each image's size, which is taken
@@ -33,6 +33,9 @@ pub enum LabelFormat {
     Yolo,
     Coco,
     Voc,
+    /// VGG Image Annotator JSON: a file of images with their regions
+    /// (polygons, rectangles), e.g. Kaggle datasets made with VIA.
+    Via,
 }
 
 impl LabelFormat {
@@ -42,6 +45,7 @@ impl LabelFormat {
         match formats::family(name)? {
             formats::YOLO => Some(LabelFormat::Yolo),
             formats::COCO => Some(LabelFormat::Coco),
+            formats::VIA => Some(LabelFormat::Via),
             _ => Some(LabelFormat::Voc),
         }
     }
@@ -51,6 +55,7 @@ impl LabelFormat {
             LabelFormat::Yolo => "yolo",
             LabelFormat::Coco => "coco",
             LabelFormat::Voc => "voc",
+            LabelFormat::Via => "via",
         }
     }
 }
@@ -138,6 +143,7 @@ pub fn read(dir: &Path, format: LabelFormat, progress: &dyn Progress) -> io::Res
         LabelFormat::Yolo => read_yolo(dir, progress),
         LabelFormat::Coco => read_coco(dir, progress),
         LabelFormat::Voc => read_voc(dir, progress),
+        LabelFormat::Via => read_via(dir, progress),
     }
 }
 
@@ -158,6 +164,7 @@ pub fn write(set: &LabelSet, dir: &Path, format: LabelFormat, progress: &dyn Pro
         LabelFormat::Yolo => write_yolo(set, dir, progress),
         LabelFormat::Coco => write_coco(set, dir, progress),
         LabelFormat::Voc => write_voc(set, dir, progress),
+        LabelFormat::Via => write_via(set, dir, progress),
     }
 }
 
@@ -172,14 +179,15 @@ pub fn describe(set: &LabelSet, format: LabelFormat, written: Written) -> Option
     }
     let in_split = |split: Split| images.iter().filter(|i| i.split == Some(split)).count() as u32;
     let formats: BTreeSet<String> = images.iter().map(|i| extension(Path::new(&i.name))).collect();
-    // VOC files name the class of each object, so only classes in use are found.
+    // VOC and VIA files name the class of each object, so only classes in use are found.
+    let named = matches!(format, LabelFormat::Voc | LabelFormat::Via);
     let used: HashSet<usize> = set.images.iter().flat_map(|i| &i.objects).map(|o| o.class).collect();
     let mut seen = HashSet::new();
     let class_names = set
         .classes
         .iter()
         .enumerate()
-        .filter(|(id, name)| !name.is_empty() && (format != LabelFormat::Voc || used.contains(id)))
+        .filter(|(id, name)| !name.is_empty() && (!named || used.contains(id)))
         .filter(|(_, name)| seen.insert(name.as_str()))
         .map(|(_, name)| name.clone())
         .collect();
@@ -751,7 +759,237 @@ pub fn orphan_labels(dir: &Path, format: LabelFormat) -> io::Result<Vec<PathBuf>
             }
             missing
         }
+        LabelFormat::Via => {
+            let by_name = images_by_name(&files);
+            let mut missing = Vec::new();
+            for path in files.iter().filter(|p| extension(p) == "json") {
+                let Ok(json) = serde_json::from_slice::<Value>(&fs::read(path)?) else { continue };
+                let Some(entries) = via_entries(&json) else { continue };
+                let json_dir = path.parent().unwrap_or(dir);
+                for (key, entry) in entries {
+                    let name = via_file_name(key, entry);
+                    if via_image(json_dir, &name, &by_name).is_none() {
+                        missing.push(rel(&json_dir.join(&name)));
+                    }
+                }
+            }
+            missing
+        }
     })
+}
+
+// ---------- VIA (VGG Image Annotator) ----------
+
+/// Name of the VIA file written in each split folder.
+pub const VIA_FILE: &str = "via_annotations.json";
+
+/// The image entries of a VIA file: a VIA project's `_via_img_metadata`, or
+/// the top-level object of an exported annotation file. `None` when it isn't one.
+pub(crate) fn via_entries(json: &Value) -> Option<&serde_json::Map<String, Value>> {
+    let entries = json.get("_via_img_metadata").unwrap_or(json).as_object()?;
+    let looks_like = |v: &Value| v.get("regions").is_some_and(|r| r.is_array() || r.is_object());
+    (!entries.is_empty() && entries.values().all(looks_like)).then_some(entries)
+}
+
+/// The regions of an entry (an array, or an object in VIA 1).
+pub(crate) fn via_regions(entry: &Value) -> Vec<&Value> {
+    match &entry["regions"] {
+        Value::Array(list) => list.iter().collect(),
+        Value::Object(map) => map.values().collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// The image file an entry is about: `filename` (VIA), `name`, or the key
+/// (VIA keys are the file name followed by its size).
+fn via_file_name(key: &str, entry: &Value) -> String {
+    entry["filename"].as_str().or_else(|| entry["name"].as_str()).unwrap_or(key).to_string()
+}
+
+/// A region's class: the `class` field some exports have, else the region
+/// attribute called class / label / name / category / type, else the first
+/// text attribute, else the first ticked option of a checkbox attribute.
+pub(crate) fn via_class(region: &Value) -> Option<String> {
+    let text = |v: &Value| v.as_str().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+    if let Some(class) = text(&region["class"]) {
+        return Some(class);
+    }
+    let attributes = region["region_attributes"].as_object()?;
+    ["class", "label", "name", "category", "type"]
+        .iter()
+        .find_map(|key| attributes.get(*key).and_then(text))
+        .or_else(|| attributes.values().find_map(text))
+        .or_else(|| {
+            attributes.values().find_map(|v| v.as_object()?.iter().find(|(_, on)| on.as_bool() == Some(true)).map(|(k, _)| k.clone()))
+        })
+}
+
+/// A region's box and, for polygons, its outline (pixels).
+pub(crate) fn via_shape(region: &Value) -> Option<(BBox, Option<Vec<[f64; 2]>>)> {
+    let shape = region.get("shape_attributes").unwrap_or(region);
+    let numbers = |v: &Value| v.as_array().map(|a| a.iter().filter_map(Value::as_f64).collect::<Vec<_>>());
+    let xs = numbers(&shape["all_points_x"]).or_else(|| numbers(&shape["all_x"]));
+    let ys = numbers(&shape["all_points_y"]).or_else(|| numbers(&shape["all_y"]));
+    if let (Some(xs), Some(ys)) = (xs, ys) {
+        let points: Vec<[f64; 2]> = xs.into_iter().zip(ys).map(|(x, y)| [x, y]).collect();
+        return (points.len() >= 3).then(|| (BBox::around(&points), Some(points)));
+    }
+    let n = |key: &str| shape[key].as_f64();
+    let bbox = match shape["name"].as_str() {
+        Some("rect") => BBox { x: n("x")?, y: n("y")?, w: n("width")?, h: n("height")? },
+        Some("circle") => {
+            let r = n("r")?;
+            BBox { x: n("cx")? - r, y: n("cy")? - r, w: 2.0 * r, h: 2.0 * r }
+        }
+        Some("ellipse") => {
+            let (rx, ry) = (n("rx")?, n("ry")?);
+            BBox { x: n("cx")? - rx, y: n("cy")? - ry, w: 2.0 * rx, h: 2.0 * ry }
+        }
+        _ => return None,
+    };
+    (bbox.w > 0.0 && bbox.h > 0.0).then_some((bbox, None))
+}
+
+/// The split of the images a VIA file lists, from its folder or its name
+/// (e.g. `0Train_via_annos.json`).
+fn via_split(rel: &Path) -> Option<Split> {
+    if let Some(split) = rel.parent().and_then(Split::of_path) {
+        return Some(split);
+    }
+    let stem = rel.file_stem()?.to_string_lossy().to_ascii_lowercase();
+    if stem.contains("train") {
+        Some(Split::Train)
+    } else if stem.contains("val") {
+        Some(Split::Val)
+    } else if stem.contains("test") {
+        Some(Split::Test)
+    } else {
+        None
+    }
+}
+
+/// Image files by lower-case file name, for VIA files that sit apart from their images.
+fn images_by_name(files: &[PathBuf]) -> HashMap<String, Vec<&PathBuf>> {
+    let mut map: HashMap<String, Vec<&PathBuf>> = HashMap::new();
+    for file in files.iter().filter(|p| is_image(p)) {
+        if let Some(name) = file.file_name() {
+            map.entry(name.to_string_lossy().to_lowercase()).or_default().push(file);
+        }
+    }
+    map
+}
+
+/// Where image `name` of a VIA file in `json_dir` is: beside the file, else
+/// the first image of that name anywhere in the dataset. Looked up in the
+/// listing, without asking the disk (thousands of images).
+fn via_image(json_dir: &Path, name: &str, by_name: &HashMap<String, Vec<&PathBuf>>) -> Option<PathBuf> {
+    let base = Path::new(name).file_name()?.to_string_lossy().to_lowercase();
+    let found = by_name.get(&base)?;
+    let beside = json_dir.join(name);
+    found.iter().find(|p| ***p == beside).or_else(|| found.first()).map(|p| (*p).clone())
+}
+
+fn read_via(dir: &Path, progress: &dyn Progress) -> io::Result<LabelSet> {
+    let mut set = LabelSet::default();
+    let files = walk(dir)?;
+    let by_name = images_by_name(&files);
+    // Each image once: its file, the split its VIA file says, its objects.
+    let mut images: Vec<(PathBuf, Option<Split>, Vec<Object>)> = Vec::new();
+    let mut listed = HashSet::new();
+
+    for path in files.iter().filter(|p| extension(p) == "json") {
+        check_cancel(progress.is_cancelled()).map_err(|e| io::Error::new(io::ErrorKind::Interrupted, e))?;
+        let Ok(json) = serde_json::from_slice::<Value>(&fs::read(path)?) else { continue };
+        let Some(entries) = via_entries(&json) else { continue };
+        let json_dir = path.parent().unwrap_or(dir);
+        let split = via_split(path.strip_prefix(dir).unwrap_or(path));
+
+        for (key, entry) in entries {
+            let name = via_file_name(key, entry);
+            let Some(file) = via_image(json_dir, &name, &by_name) else {
+                set.warnings.push(format!("{}: image {name} not found, skipped", path.display()));
+                continue;
+            };
+            if !listed.insert(file.clone()) {
+                continue; // listed by another VIA file already
+            }
+            let mut objects = Vec::new();
+            for region in via_regions(entry) {
+                let Some((bbox, polygon)) = via_shape(region) else { continue };
+                let Some(class) = via_class(region) else {
+                    set.warnings.push(format!("{}: a region of {name} has no class, skipped", path.display()));
+                    continue;
+                };
+                objects.push(Object { class: set.class_index(&class), bbox, polygon });
+            }
+            images.push((file, split, objects));
+        }
+    }
+    // Images no file lists (e.g. just added to a new dataset): no labels.
+    images.extend(files.iter().filter(|p| is_image(p) && !listed.contains(*p)).map(|f| (f.clone(), None, Vec::new())));
+
+    // Their sizes (from the headers), read on the worker threads.
+    let paths: Vec<&PathBuf> = images.iter().map(|(file, _, _)| file).collect();
+    let sizes = read_each(&paths, progress, |file, warnings| Ok(image_size(file, warnings)))?;
+    for ((file, split, objects), (size, warnings)) in images.into_iter().zip(sizes) {
+        set.warnings.extend(warnings);
+        let Some((width, height)) = size else { continue };
+        let mut image = new_image(&file, file.strip_prefix(dir).unwrap_or(&file), width, height);
+        image.split = split.or(image.split);
+        image.objects = objects;
+        set.images.push(image);
+    }
+    Ok(set)
+}
+
+/// Writes each split's images into its folder with one `via_annotations.json`
+/// (VIA 2 export layout: outlines as polygons, the rest as rectangles, the
+/// class in the region attribute `class`).
+fn write_via(set: &LabelSet, dir: &Path, progress: &dyn Progress) -> io::Result<Written> {
+    let mut names = UniqueNames::default();
+    let mut jobs = Vec::new();
+    let mut splits: std::collections::BTreeMap<Option<Split>, serde_json::Map<String, Value>> = Default::default();
+
+    for image in &set.images {
+        let split_dir = split_dir(dir, image.split);
+        if !splits.contains_key(&image.split) {
+            fs::create_dir_all(&split_dir)?;
+        }
+        let name = names.take(image.split, &image.name);
+        jobs.push(FileJob { from: &image.file, to: split_dir.join(&name), label: None });
+
+        let size = fs::metadata(&image.file).map_or(0, |m| m.len());
+        let regions: Vec<Value> = image
+            .objects
+            .iter()
+            .map(|object| {
+                let shape = match &object.polygon {
+                    Some(points) => json!({
+                        "name": "polygon",
+                        "all_points_x": points.iter().map(|p| p[0]).collect::<Vec<_>>(),
+                        "all_points_y": points.iter().map(|p| p[1]).collect::<Vec<_>>(),
+                    }),
+                    None => {
+                        let b = object.bbox;
+                        json!({ "name": "rect", "x": b.x, "y": b.y, "width": b.w, "height": b.h })
+                    }
+                };
+                let class = set.classes.get(object.class).cloned().unwrap_or_default();
+                json!({ "shape_attributes": shape, "region_attributes": { "class": class } })
+            })
+            .collect();
+        splits.entry(image.split).or_default().insert(
+            format!("{name}{size}"),
+            json!({ "filename": name, "size": size, "regions": regions, "file_attributes": {} }),
+        );
+    }
+    let mut bytes = write_files(&jobs, progress)?;
+    for (split, entries) in splits {
+        let text = serde_json::to_string(&entries).map_err(io::Error::other)?;
+        bytes += text.len() as u64;
+        fs::write(split_dir(dir, split).join(VIA_FILE), text)?;
+    }
+    Ok(Written { bytes })
 }
 
 // ---------- shared helpers ----------
@@ -930,6 +1168,51 @@ mod tests {
         assert_eq!(LabelFormat::parse("voc"), Some(LabelFormat::Voc));
         assert_eq!(LabelFormat::parse("createml"), None);
         assert_eq!(LabelFormat::parse("yolov8-obb"), None);
+        assert_eq!(LabelFormat::parse("via"), Some(LabelFormat::Via));
+    }
+
+    #[test]
+    fn reads_and_writes_via() {
+        // Kaggle's layout: annotation files at the top, images in nested folders.
+        let tmp = TempDir::new("via");
+        tmp.write("image/image/a.png", png(100, 50));
+        tmp.write("validation/validation/b.png", png(200, 100));
+        tmp.write("image/image/unlisted.png", png(10, 10));
+        tmp.write(
+            "0Train_via_annos.json",
+            r#"{"a.png": {"name": "a.png", "regions": [{"all_x": [10, 30, 20], "all_y": [5, 5, 25], "class": "dent"}]}}"#,
+        );
+        // VIA 2's own export: shape and region attributes, a rectangle.
+        tmp.write(
+            "0Val_via_annos.json",
+            r#"{"b.png123": {"filename": "b.png", "size": 123, "regions": [
+                {"shape_attributes": {"name": "rect", "x": 1, "y": 2, "width": 30, "height": 40}, "region_attributes": {"label": "scratch"}},
+                {"shape_attributes": {"name": "point", "cx": 1, "cy": 1}, "region_attributes": {"label": "scratch"}}
+            ], "file_attributes": {}}}"#,
+        );
+        let scanned = crate::core::scan::scan_dataset(&tmp.0, &Silent).unwrap();
+        assert_eq!((scanned.annotation_format.as_str(), scanned.dataset_type.as_str()), ("via", "instance-segmentation"));
+        assert_eq!((scanned.label_count, scanned.class_names.clone()), (2, vec!["dent".to_string(), "scratch".to_string()]));
+
+        let set = read(&tmp.0, LabelFormat::Via, &Silent).unwrap();
+        assert_eq!(set.classes, ["dent", "scratch"]);
+        assert_eq!(set.images.len(), 3, "the unlisted image is read without labels");
+        let a = set.images.iter().find(|i| i.name == "a.png").unwrap();
+        assert_eq!((a.split, a.objects.len()), (Some(Split::Train), 1), "split from the file name");
+        assert_close(a.objects[0].bbox, BBox { x: 10.0, y: 5.0, w: 20.0, h: 20.0 });
+        assert_eq!(a.objects[0].polygon.as_ref().map(Vec::len), Some(3));
+        let b = set.images.iter().find(|i| i.name == "b.png").unwrap();
+        assert_eq!((b.split, b.objects.len()), (Some(Split::Val), 1), "the point is skipped");
+        assert_close(b.objects[0].bbox, BBox { x: 1.0, y: 2.0, w: 30.0, h: 40.0 });
+
+        // Written in VIA 2's layout and read back the same.
+        let out = TempDir::new("via-out");
+        write(&set, &out.0, LabelFormat::Via, &Silent).unwrap();
+        assert!(out.0.join("train").join(VIA_FILE).is_file());
+        let again = read(&out.0, LabelFormat::Via, &Silent).unwrap();
+        let objects = |s: &LabelSet| s.images.iter().map(|i| i.objects.len()).sum::<usize>();
+        assert_eq!((again.images.len(), objects(&again)), (3, 2));
+        assert!(orphan_labels(&out.0, LabelFormat::Via).unwrap().is_empty());
     }
 
     #[test]

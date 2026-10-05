@@ -20,7 +20,8 @@ use crate::routes::Route;
 
 /// Sizes on Windows with Python 3.12, measured with the CUDA 13.0 torch build
 /// (uv's download cache is cleared after installing).
-const GPU_DOWNLOAD_NOTE: &str = "Much faster training. About 2.2 GB to download, around 3.5 GB on disk.";
+const GPU_TEXT: &str = "Training runs on CUDA supported GPU. Faster than CPU.";
+const GPU_DOWNLOAD_NOTE: &str = "Training runs on CUDA supported GPU. Faster than CPU. About 2.2 GB to download, around 3.5 GB on disk.";
 
 fn status_text(status: &EnvStatus) -> (&'static str, &'static str) {
     match status {
@@ -98,14 +99,11 @@ pub fn PythonSetupCard() -> Element {
 
     rsx! {
         div { class: "settings-card python-setup",
+            h3 { class: "python-setup-title", "Training Device" }
             div { class: "python-status",
                 span { class: "python-status-badge {status_class}", "{status_label}" }
                 match &ov.status {
-                    EnvStatus::Ready(info) | EnvStatus::Outdated(info) => rsx! {
-                        span { class: "python-status-detail",
-                            "Python {info.python} · torch {info.torch} · Ultralytics {info.ultralytics} · Optuna {info.optuna} · trains on {device.label()}"
-                        }
-                    },
+                    EnvStatus::Ready(_) | EnvStatus::Outdated(_) => rsx! {},
                     EnvStatus::NoLibraries(_) => rsx! {
                         span { class: "python-status-detail",
                             if running { "Installing the training libraries (PyTorch, Ultralytics, Optuna)…" } else { "The training libraries (PyTorch, Ultralytics, Optuna) didn't finish installing." }
@@ -155,9 +153,9 @@ pub fn PythonSetupCard() -> Element {
                                     Some(problem) => format!("No CUDA compatible device found. {problem}"),
                                     None => "No CUDA compatible device found.".to_string(),
                                 },
-                                TrainDevice::Gpu if installed => format!("{}. Much faster training.", ov.gpu.as_ref().map(|g| g.name.as_str()).unwrap_or("NVIDIA GPU")),
+                                TrainDevice::Gpu if installed => GPU_TEXT.to_string(),
                                 TrainDevice::Gpu => GPU_DOWNLOAD_NOTE.to_string(),
-                                TrainDevice::Cpu => "Always installed. Training runs much slower than on a GPU.".to_string(),
+                                TrainDevice::Cpu => "Training runs on CPU. Slower than GPU.".to_string(),
                             };
                             let class = match (selected, available, installed) {
                                 (_, false, _) => "device-card is-disabled",

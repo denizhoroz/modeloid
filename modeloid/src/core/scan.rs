@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use crate::{
     core::{
-        labels::Split,
+        labels::{Split, via_class, via_entries, via_regions, via_shape},
         progress::{Cancelled, Progress},
     },
     models::dataset::DATASET_FILE,
@@ -101,6 +101,8 @@ pub fn scan_dataset(dir: &Path, progress: &dyn Progress) -> io::Result<DatasetSt
 
     if scan_coco(&found.coco, &mut stats, &mut classes)? {
         stats.annotation_format = "coco".into();
+    } else if scan_via(&found.coco, &mut stats, &mut classes)? {
+        stats.annotation_format = "via".into();
     } else if !found.yolo_labels.is_empty() || !found.yaml.is_empty() {
         stats.annotation_format = "yolo".into();
         scan_yolo(&found, &mut stats, &mut classes)?;
@@ -148,6 +150,27 @@ fn scan_coco(files: &[PathBuf], stats: &mut DatasetStats, classes: &mut ClassNam
         stats.dataset_type = detection_type(segmentation);
     }
     Ok(is_coco)
+}
+
+/// Returns false when none of the json files is a VIA (VGG Image Annotator) file.
+fn scan_via(files: &[PathBuf], stats: &mut DatasetStats, classes: &mut ClassNames) -> io::Result<bool> {
+    let mut is_via = false;
+    let mut segmentation = false;
+    for path in files {
+        let Ok(json) = serde_json::from_slice::<Value>(&fs::read(path)?) else { continue };
+        let Some(entries) = via_entries(&json) else { continue };
+        is_via = true;
+        for region in entries.values().flat_map(via_regions) {
+            let (Some((_, polygon)), Some(class)) = (via_shape(region), via_class(region)) else { continue };
+            stats.label_count += 1;
+            segmentation |= polygon.is_some();
+            classes.push(&class);
+        }
+    }
+    if is_via {
+        stats.dataset_type = detection_type(segmentation);
+    }
+    Ok(is_via)
 }
 
 // Roboflow adds a root category (supercategory "none") that every real class points to.

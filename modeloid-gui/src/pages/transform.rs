@@ -140,7 +140,7 @@ fn ImagesCard(plan: Signal<TransformPlan>, preview: TransformPreview) -> Element
                         "Classes "
                         InfoTip {
                             label: "About classes",
-                            text: "Only images with at least one of the chosen classes get copies, e.g. to add examples of a rare class. With none chosen, every image can.",
+                            text: "Only images with at least one of the chosen classes get copies, e.g. to add examples of a rare class. All are highlighted when none is picked out: every image can get copies. Click a class to keep only it, then add more.",
                         }
                     }
                     div { class: "chip-list", role: "group", aria_label: "Classes",
@@ -148,12 +148,14 @@ fn ImagesCard(plan: Signal<TransformPlan>, preview: TransformPreview) -> Element
                             {
                                 let class = class.clone();
                                 let on = p.classes.contains(&class);
+                                // None chosen means every class: all show as chosen. Clicking one then keeps only it.
+                                let included = on || p.classes.is_empty();
                                 rsx! {
                                     button {
                                         key: "{class}",
                                         class: "chip",
                                         r#type: "button",
-                                        aria_pressed: if on { "true" } else { "false" },
+                                        aria_pressed: if included { "true" } else { "false" },
                                         onclick: {
                                             let class = class.clone();
                                             move |_| {

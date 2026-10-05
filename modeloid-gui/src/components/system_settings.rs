@@ -6,8 +6,8 @@ use crate::components::{use_toasts, InfoTip, Slider, ToastKind};
 use crate::state::use_workspace;
 use crate::util::format_bytes;
 
-/// Settings > System: worker threads, download connections, jobs at once,
-/// preview size, and the open workspace's cache.
+/// Settings > System: worker threads, download connections, jobs at once
+/// and preview size.
 #[component]
 pub fn SystemSettings() -> Element {
     let loaded = use_resource(get_system);
@@ -15,7 +15,6 @@ pub fn SystemSettings() -> Element {
     match view {
         Some(Ok(view)) => rsx! {
             SystemForm { view }
-            CacheRow {}
         },
         Some(Err(message)) => rsx! { p { class: "form-error", role: "alert", "{message}" } },
         None => rsx! { p { class: "field-hint", "Loading…" } },
@@ -136,9 +135,10 @@ fn SystemForm(view: SystemView) -> Element {
     }
 }
 
-/// Size of the open workspace's cached previews and statistics, and a button to delete them.
+/// Settings > Cache: size of the open workspace's cached previews and
+/// statistics, and a button to delete them.
 #[component]
-fn CacheRow() -> Element {
+pub fn CacheSettings() -> Element {
     let workspace = use_workspace();
     let toasts = use_toasts();
     let mut clearing = use_signal(|| false);
@@ -165,7 +165,6 @@ fn CacheRow() -> Element {
     rsx! {
         div { class: "settings-card",
             div { class: "field",
-                span { class: "field-label", "Cache" }
                 match (workspace(), bytes) {
                     (Some(info), Some(bytes)) => rsx! {
                         div { class: "option-row",

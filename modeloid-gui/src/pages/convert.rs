@@ -21,10 +21,11 @@ use crate::state::{use_datasets_version, use_primary_dataset, use_selected_datas
 use crate::util::{format_count, plural};
 
 /// What lands on disk for each label family Modeloid writes.
-const LAYOUTS: [(&str, &str); 3] = [
+const LAYOUTS: [(&str, &str); 4] = [
     (formats::YOLO, "Each split gets an images and a labels folder; data.yaml at the top is ready for training."),
     (formats::COCO, "Each split folder gets its images and one _annotations.coco.json."),
     (formats::VOC, "Each split folder gets its images with one .xml beside each."),
+    (formats::VIA, "Each split folder gets its images and one via_annotations.json (VGG Image Annotator)."),
 ];
 
 #[component]

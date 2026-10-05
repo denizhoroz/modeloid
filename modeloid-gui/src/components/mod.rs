@@ -40,7 +40,7 @@ pub use history::{HistoryButton, HistoryLayer, HistoryOpen};
 pub use icon::{Icon, IconName, TitleIcon};
 pub use info_tip::InfoTip;
 pub use job_progress::{set_if_newer, use_job, JobProgress};
-pub use layout::{AppLayout, PanelWidth};
+pub use layout::{AppLayout, PanelWidth, PANEL_MIN_WIDTH};
 pub use number_input::NumberInput;
 pub use output_choice::{OutputChoice, OutputSelect};
 #[allow(unused_imports)] // LibrariesMissing and open_python_settings: for Train Model
@@ -50,7 +50,7 @@ pub use side_panel::{status_label, use_panel_table, PanelSwitcher, PanelTable, P
 pub use sidebar::Sidebar;
 pub use slider::Slider;
 pub use status_bar::StatusBar;
-pub use system_settings::SystemSettings;
+pub use system_settings::{CacheSettings, SystemSettings};
 pub use toast::{provide_toasts, use_toasts, ToastHost, ToastKind};
 pub use warning_tip::WarningTip;
 pub use workspace_card::{NoWorkspace, WorkspaceCard};

@@ -19,7 +19,7 @@ use modeloid_types::Split;
 use crate::api::error_message;
 use crate::api::explore::image_url;
 use crate::api::label::{label_image, label_session, save_labels, LabelImage, LabelObject, LabelSession};
-use crate::components::{Icon, IconName, PanelWidth, ResizeHandle};
+use crate::components::{Icon, IconName, PanelWidth, ResizeHandle, PANEL_MIN_WIDTH};
 use crate::routes::Route;
 use crate::util::format_count;
 
@@ -493,7 +493,7 @@ fn LabelPage(id: u32, index: ReadSignal<usize>) -> Element {
             }
             ResizeHandle {
                 width: panel_width,
-                min: 260.0,
+                min: PANEL_MIN_WIDTH,
                 max: 900.0,
                 label: "Resize classes panel",
                 controls: "label-classes",

@@ -2,6 +2,7 @@ mod balance;
 mod classes;
 mod convert;
 mod create_workspace;
+mod edit_workspace;
 mod download;
 mod explore;
 mod health;
@@ -17,6 +18,7 @@ mod tune;
 mod tool;
 
 pub use create_workspace::CreateWorkspace;
+pub use edit_workspace::EditWorkspace;
 pub use home::Home;
 pub use label::Label;
 pub use not_found::NotFound;

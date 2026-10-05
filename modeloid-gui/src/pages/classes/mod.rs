@@ -59,19 +59,28 @@ fn Editor() -> Element {
     // renamed class has its new name now) re-read their classes and keep the
     // edits that still apply.
     let mut last_inputs = use_signal(Vec::<u32>::new);
+    // Counts suggestion loads: only the newest one's answer is used. A newer
+    // load cancels the one before it, whose "Cancelled" is no error to show.
+    let mut loads = use_signal(|| 0u64);
     use_effect(move || {
         let ids = inputs();
         let _ = datasets_version();
         let same_inputs = *last_inputs.peek() == ids;
         last_inputs.set(ids.clone());
         let keep_edits = same_inputs || *batch.peek();
+        let load = *loads.peek() + 1;
+        loads.set(load);
         spawn(async move {
             if ids.is_empty() {
                 plan.set(None);
                 preview.set(None);
                 return;
             }
-            match class_merge_suggestion(ids).await {
+            let result = class_merge_suggestion(ids).await;
+            if *loads.peek() != load {
+                return;
+            }
+            match result {
                 Ok(suggested) => {
                     let merged = match plan.peek().as_ref() {
                         Some(old) if keep_edits => edit::carry_over(old, suggested),
@@ -411,20 +420,6 @@ fn MappingCard(plan: Signal<Option<MergePlan>>, preview: MergePreview) -> Elemen
                     }
                 }
             }
-            if !checked.read().is_empty() {
-                div { class: "bulk-bar", role: "group", aria_label: "Assign selected classes",
-                    span { "{checked.read().len()} selected →" }
-                    select {
-                        class: "input select",
-                        aria_label: "Assign selected to",
-                        value: "{bulk}",
-                        onchange: move |e| bulk.set(e.value()),
-                        ChoiceOptions { targets: targets.clone(), current: Choice::Unmapped, allow_unmapped: true }
-                    }
-                    button { class: "button button-sm", r#type: "button", disabled: bulk().is_empty(), onclick: apply_bulk, "Assign" }
-                    button { class: "button button-ghost button-sm", r#type: "button", onclick: move |_| checked.set(Vec::new()), "Clear" }
-                }
-            }
             div { class: "table-scroll",
                 table { class: "data-table mapping-table",
                     thead {
@@ -569,6 +564,20 @@ fn MappingCard(plan: Signal<Option<MergePlan>>, preview: MergePreview) -> Elemen
                             }
                         }
                     }
+                }
+            }
+            if !checked.read().is_empty() {
+                div { class: "bulk-bar", role: "group", aria_label: "Assign selected classes",
+                    span { "{checked.read().len()} selected →" }
+                    select {
+                        class: "input select",
+                        aria_label: "Assign selected to",
+                        value: "{bulk}",
+                        onchange: move |e| bulk.set(e.value()),
+                        ChoiceOptions { targets: targets.clone(), current: Choice::Unmapped, allow_unmapped: true }
+                    }
+                    button { class: "button button-sm", r#type: "button", disabled: bulk().is_empty(), onclick: apply_bulk, "Assign" }
+                    button { class: "button button-ghost button-sm", r#type: "button", onclick: move |_| checked.set(Vec::new()), "Clear" }
                 }
             }
         }

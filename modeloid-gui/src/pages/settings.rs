@@ -2,13 +2,10 @@ use dioxus::prelude::*;
 
 use crate::api::settings::ServiceId;
 use crate::components::{IconName, TitleIcon};
-use crate::components::{AppearanceSettings, CredentialField, PythonSetupCard, SystemSettings, WorkspaceSettings};
-use crate::state::use_workspace;
+use crate::components::{AppearanceSettings, CacheSettings, CredentialField, PythonSetupCard, SystemSettings};
 
 #[component]
 pub fn Settings() -> Element {
-    let workspace = use_workspace();
-
     rsx! {
         document::Title { "Settings · Modeloid" }
         div { class: "page",
@@ -20,30 +17,20 @@ pub fn Settings() -> Element {
                 AppearanceSettings {}
             }
 
-            section { class: "settings-section", aria_labelledby: "settings-workspace",
-                h2 { id: "settings-workspace", class: "settings-section-title", TitleIcon { name: IconName::FolderOpen } "Workspace" }
-                if let Some(info) = workspace() {
-                    p { class: "settings-section-lead",
-                        "Options of the open workspace, "
-                        strong { "{info.folder}" }
-                        ". Stored in its workspace.toml."
-                    }
-                }
-                match workspace() {
-                    // Keyed by folder: another workspace starts from its own values.
-                    Some(info) => rsx! { WorkspaceSettings { key: "{info.path}", info } },
-                    None => rsx! {
-                        p { class: "settings-section-lead", "No workspace loaded. Create or load one to change its options." }
-                    },
-                }
-            }
-
             section { class: "settings-section", aria_labelledby: "settings-system",
                 h2 { id: "settings-system", class: "settings-section-title", TitleIcon { name: IconName::Cpu } "System" }
                 p { class: "settings-section-lead",
                     "How much of this computer Modeloid uses. Stored on this computer, for every workspace."
                 }
                 SystemSettings {}
+            }
+
+            section { class: "settings-section", aria_labelledby: "settings-cache",
+                h2 { id: "settings-cache", class: "settings-section-title", TitleIcon { name: IconName::Database } "Cache" }
+                p { class: "settings-section-lead",
+                    "Image previews and statistics of the open workspace, kept so pages open fast. Stored in its .cache folder."
+                }
+                CacheSettings {}
             }
 
             section { class: "settings-section", aria_labelledby: "settings-python",

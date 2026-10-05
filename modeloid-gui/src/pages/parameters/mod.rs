@@ -16,7 +16,7 @@ use crate::api::parameters::{
 use crate::components::{use_panel_table, use_toasts, InfoTip, NoWorkspace, PanelTable, PythonNotice, ToastKind};
 use crate::components::table;
 use crate::state::{
-    use_datasets_version, use_parameters_version, use_primary_dataset, use_primary_parameters, use_selected_datasets, use_selected_parameters,
+    use_datasets_version, use_parameters_version, use_primary_dataset, use_primary_parameters, use_selected_parameters,
     use_workspace, use_workspace_checked,
 };
 use crate::util::format_count;
@@ -193,7 +193,7 @@ fn ParameterEditor() -> Element {
                 }
             }
 
-            PrepareSection { form }
+            PrepareSection { key: "{editing().unwrap_or_default()}", form, editing: editing().is_some() }
             ModelSection { form, p: p.clone() }
             TrainingSection { form, p: p.clone() }
             ScheduleSection { form, p: p.clone() }
@@ -271,7 +271,7 @@ fn prepare_from(set: &mut ParameterSet, row: &DatasetRow) {
     m.task = task;
     let pretrained = m.weights == Weights::Pretrained;
     if !m.family.tasks().contains(&task) || (pretrained && !m.family.pretrained_tasks().contains(&task)) {
-        m.family = Family::Yolo11;
+        m.family = Family::Yolo26;
     }
     if !m.family.sizes().contains(&m.size) {
         m.size = m.family.sizes()[0];
@@ -295,53 +295,40 @@ fn format_note(format: &str) -> &'static str {
     }
 }
 
-/// Fill the model settings from a dataset (optional; open by default). "Select dataset" opens
-/// the Datasets table; the next dataset picked there is used, then the panel
-/// goes back to Parameters.
+/// Fill the model settings from a dataset (open by default): the dataset
+/// selected last (anywhere in the app) is used as soon as it is selected, and
+/// again whenever the selection changes. A saved set opened for editing isn't
+/// changed by the selection it opens with. "Open Datasets" only shows the table.
 #[component]
-fn PrepareSection(form: Signal<ParameterSet>) -> Element {
+fn PrepareSection(form: Signal<ParameterSet>, editing: bool) -> Element {
     let mut form = form;
     let mut panel = use_panel_table();
     let primary = use_primary_dataset();
-    let mut selected = use_selected_datasets();
     let datasets_version = use_datasets_version();
     let datasets = use_resource(move || async move {
         let _ = datasets_version();
         list_datasets().await
     });
-    // Waiting for a pick in the Datasets table; the dataset chosen when it started.
-    let mut waiting = use_signal(|| None::<Option<u32>>);
+    // The dataset applied last; a saved set starts from the current selection, so it stays as saved.
+    let mut applied = use_signal(move || if editing { Some(*primary.peek()) } else { None });
     // The dataset used last, for the summary.
     let mut used = use_signal(|| None::<DatasetRow>);
 
-    let row_of = move |id: u32| datasets.read().as_ref()?.as_ref().ok()?.iter().find(|r| r.id == id).cloned();
-    let mut apply = move |row: DatasetRow| {
-        prepare_from(&mut form.write(), &row);
-        used.set(Some(row));
-        waiting.set(None);
-        panel.set(PanelTable::Parameters);
-    };
-
-    // Any pick in the Datasets table while waiting. Clicking the dataset that
-    // was selected already clears the selection (table rule): that means
-    // "this one", so it is selected again and used.
+    // A newly selected dataset is applied once its row is known.
     use_effect(move || {
-        let picked = primary();
-        let Some(start) = *waiting.peek() else { return };
-        let chosen = match (picked, start) {
-            (Some(id), _) => id,
-            (None, Some(id)) => {
-                selected.set(vec![id]);
-                id
-            }
-            (None, None) => return,
-        };
-        if let Some(row) = row_of(chosen) {
-            apply(row);
+        let current = primary();
+        let rows = datasets.read();
+        let Some(Ok(rows)) = rows.as_ref() else { return };
+        if applied.peek().as_ref() == Some(&current) {
+            return;
+        }
+        applied.set(Some(current));
+        if let Some(row) = current.and_then(|id| rows.iter().find(|r| r.id == id).cloned()) {
+            prepare_from(&mut form.write(), &row);
+            used.set(Some(row));
         }
     });
 
-    let current = primary().and_then(row_of);
     let meta = match used() {
         Some(row) => format!("from {}", row.name),
         None => "optional".to_string(),
@@ -353,52 +340,30 @@ fn PrepareSection(form: Signal<ParameterSet>) -> Element {
                 h2 { id: "param-prepare-title", class: "section-card-title",
                     TitleIcon { name: IconName::Wand }
                     "Prepare from dataset "
-                    InfoTip { label: "About preparing from a dataset", text: "Sets the task and a model that fits it from a dataset's labels. Everything stays editable." }
+                    InfoTip { label: "About preparing from a dataset", text: "Sets the task and a model that fits it from the selected dataset's labels (the last one when several are selected). Everything stays editable." }
                 }
                 span { class: "section-card-meta", "{meta}" }
             }
-            if let Some(row) = used() {
-                div { class: "train-input-chosen",
-                    span { class: "train-input-name", "{row.name}" }
-                    span { class: "train-input-detail",
-                        "{row.task} · {row.format} · {format_count(row.images)} images · {row.classes} classes → task {dataset_task(&row).label()}. {format_note(&row.format)}"
+            match (primary(), used()) {
+                (Some(_), Some(row)) => rsx! {
+                    div { class: "train-input-chosen",
+                        span { class: "train-input-name", "{row.name}" }
+                        span { class: "train-input-detail",
+                            "{row.task} · {row.format} · {format_count(row.images)} images · {row.classes} classes → task {dataset_task(&row).label()}. {format_note(&row.format)}"
+                        }
                     }
-                }
+                },
+                (Some(_), None) => rsx! {},
+                (None, _) => rsx! {
+                    p { class: "field-hint", "Select a dataset to prepare the parameters from it, according to its properties." }
+                },
             }
-            if waiting().is_some() {
-                div { class: "notice", role: "status",
-                    p { "Choose a dataset in the Datasets table." }
-                    div { class: "notice-actions",
-                        button {
-                            class: "button button-ghost button-sm",
-                            r#type: "button",
-                            onclick: move |_| {
-                                waiting.set(None);
-                                panel.set(PanelTable::Parameters);
-                            },
-                            "Cancel"
-                        }
-                    }
-                }
-            } else {
-                div { class: "form-actions",
-                    button {
-                        class: "button button-secondary button-sm",
-                        r#type: "button",
-                        onclick: move |_| {
-                            waiting.set(Some(primary()));
-                            panel.set(PanelTable::Datasets);
-                        },
-                        "Select dataset"
-                    }
-                    if let Some(row) = current {
-                        button {
-                            class: "button button-ghost button-sm",
-                            r#type: "button",
-                            onclick: move |_| apply(row.clone()),
-                            "Use {row.name}"
-                        }
-                    }
+            div { class: "form-actions",
+                button {
+                    class: "button button-secondary button-sm",
+                    r#type: "button",
+                    onclick: move |_| panel.set(PanelTable::Datasets),
+                    "Open Datasets"
                 }
             }
         }
@@ -432,7 +397,7 @@ pub(crate) fn ModelSection(form: Signal<ParameterSet>, p: UltralyticsParams) -> 
                 }
                 ChoiceField {
                     label: "Model family",
-                    tip: "YOLO11 is the current default; YOLOv8 is widely used; YOLO12 and RT-DETR (transformer) are detection-focused.",
+                    tip: "YOLO26 is Ultralytics' newest and the default (every task); YOLO11 and YOLOv8 are widely used (every task); YOLO12, YOLOv10, YOLOv5u and RT-DETR (transformer) are detection only.",
                     options: options(&Family::ALL, Family::label, Family::label),
                     value: m.family.label(),
                     onchange: move |v: String| if let Some(f) = pick(&Family::ALL, Family::label, &v) {
@@ -752,8 +717,8 @@ mod tests {
 
         prepare_from(&mut set, &row("instance-segmentation"));
         let m = &ultra(&set).model;
-        // RT-DETR can't segment: back to YOLO11, size kept when it has it.
-        assert_eq!((m.task, m.family, m.size), (Task::Segment, Family::Yolo11, ModelSize::L));
+        // RT-DETR can't segment: back to YOLO26, size kept when it has it.
+        assert_eq!((m.task, m.family, m.size), (Task::Segment, Family::Yolo26, ModelSize::L));
         assert_eq!(set.name, "cars-segment");
 
         set.name = "mine".into();

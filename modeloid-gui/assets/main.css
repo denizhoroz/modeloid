@@ -172,6 +172,8 @@ button {
     /* Its height already leaves room for the status bar */
     height: calc(100dvh - var(--statusbar-height));
     padding-bottom: 0;
+    /* The page and the panel scroll inside; the window itself never does. */
+    overflow: hidden;
 }
 
 .content-main {
@@ -218,6 +220,8 @@ button {
     display: flex;
     flex-direction: column;
     min-width: 0;
+    /* Its table scrolls in the body; nothing spills out of the panel. */
+    overflow: hidden;
     background: var(--color-surface);
 }
 
@@ -527,6 +531,45 @@ button {
     font-weight: 600;
     letter-spacing: 0.06em;
     text-transform: uppercase;
+}
+
+.python-setup-title {
+    margin: 0;
+    font-size: var(--text-sm);
+    font-weight: 700;
+}
+
+.workspace-card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-1);
+}
+
+/* Gear at the top right: opens the workspace's options */
+.workspace-card-edit {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    color: var(--color-fg-muted);
+    transition:
+        background-color var(--duration) var(--ease-out),
+        color var(--duration) var(--ease-out);
+}
+
+.workspace-card-edit:hover {
+    background: var(--color-surface-hover);
+    color: var(--color-fg);
+}
+
+.workspace-card-edit.is-active {
+    border-color: var(--color-accent);
+    background: var(--color-accent-soft);
+    color: var(--color-accent-fg);
 }
 
 .workspace-card-name {
@@ -1987,10 +2030,19 @@ fieldset.section-card:disabled {
     font-size: var(--text-sm);
 }
 
+/* Side by side, the chosen boxes fill their column, so both are the same height */
+.train-input .train-input-chosen {
+    flex: 1 1 auto;
+}
+
 /* The "Choose in the … table" buttons sit at the bottom of their column,
    so both line up whatever is chosen above them. */
 .train-input .button {
     margin-top: auto;
+}
+
+.train-input .train-input-chosen + .button {
+    margin-top: var(--space-1);
 }
 
 .train-console {
@@ -3435,7 +3487,9 @@ button.bar-row:hover,
 
 /* Datasets panel: selection bar and checkbox column */
 .panel-selection {
+    position: relative;
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: var(--space-1);
     padding: var(--space-1) var(--space-3);
@@ -3443,11 +3497,33 @@ button.bar-row:hover,
 }
 
 /* "Delete N …?" under the selection bar, after Remove */
+/* The confirm popup is placed against the selection bar, so it stays inside the panel */
+.remove-anchor {
+    position: static;
+}
+
+.panel-confirm-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 29;
+}
+
+/* Popup under Remove: floats over the table instead of pushing it down */
 .panel-confirm {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: var(--space-3);
+    z-index: 30;
     display: flex;
     flex-direction: column;
     gap: var(--space-2);
-    margin: var(--space-2) var(--space-3);
+    width: max-content;
+    max-width: min(280px, calc(100% - 2 * var(--space-3)));
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--color-warning);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg);
+    box-shadow: 0 6px 20px var(--color-scrim);
     font-size: var(--text-sm);
 }
 
@@ -4023,6 +4099,12 @@ button.bar-row:hover,
     font-weight: 600;
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
+}
+
+/* Settings sliders keep room for "Automatic (16)", so the track doesn't
+   change length when the value turns to text, and they line up. */
+.settings-card .slider-value {
+    min-width: 15ch;
 }
 
 .input-narrow {

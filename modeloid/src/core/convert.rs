@@ -23,6 +23,7 @@ pub fn format_label(format: LabelFormat) -> &'static str {
         LabelFormat::Yolo => "YOLO",
         LabelFormat::Coco => "COCO",
         LabelFormat::Voc => "Pascal VOC",
+        LabelFormat::Via => "VIA",
     }
 }
 

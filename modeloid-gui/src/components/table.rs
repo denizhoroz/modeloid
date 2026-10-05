@@ -96,7 +96,8 @@ pub fn SortHeader(column: usize, def: Column, sort: Signal<Sort>) -> Element {
 }
 
 /// "Select all", "None", a red "Remove" and "N selected", above a table
-/// with checkboxes. Remove asks first; `on_remove` then deletes the selected rows.
+/// with checkboxes. Remove asks first, in a small popup under the button
+/// (so the table doesn't move); `on_remove` then deletes the selected rows.
 #[component]
 pub fn SelectionBar(
     /// What the rows are, for screen readers, e.g. "Dataset selection".
@@ -138,34 +139,45 @@ pub fn SelectionBar(
                 onclick: move |_| on_none.call(()),
                 "None"
             }
-            button {
-                class: "button button-danger button-sm",
-                r#type: "button",
-                disabled: selected == 0 || busy,
-                aria_expanded: if confirming() { "true" } else { "false" },
-                onclick: move |_| confirming.toggle(),
-                "Remove"
+            div {
+                class: "remove-anchor",
+                onkeydown: move |e| {
+                    if e.key() == Key::Escape {
+                        confirming.set(false);
+                    }
+                },
+                button {
+                    class: "button button-danger button-sm",
+                    r#type: "button",
+                    disabled: selected == 0 || busy,
+                    aria_haspopup: "dialog",
+                    aria_expanded: if confirming() { "true" } else { "false" },
+                    onclick: move |_| confirming.toggle(),
+                    "Remove"
+                }
+                if confirming() && selected > 0 {
+                    // A click anywhere else cancels.
+                    div { class: "panel-confirm-backdrop", onclick: move |_| confirming.set(false) }
+                    div { class: "panel-confirm", role: "alertdialog", aria_label: "Delete {what}?",
+                        span { strong { "Delete {what}? " } "{remove_note} This can't be undone." }
+                        div { class: "panel-confirm-actions",
+                            button {
+                                class: "button button-danger button-sm",
+                                r#type: "button",
+                                disabled: busy,
+                                onclick: move |_| {
+                                    confirming.set(false);
+                                    on_remove.call(());
+                                },
+                                "Delete"
+                            }
+                            button { class: "button button-secondary button-sm", r#type: "button", onclick: move |_| confirming.set(false), "Cancel" }
+                        }
+                    }
+                }
             }
             span { class: "section-card-meta", aria_live: "polite",
                 if selected == 0 { "Nothing selected" } else { "{selected} selected" }
-            }
-        }
-        if confirming() && selected > 0 {
-            div { class: "notice notice-warning panel-confirm", role: "alert",
-                span { strong { "Delete {what}? " } "{remove_note} This can't be undone." }
-                div { class: "panel-confirm-actions",
-                    button {
-                        class: "button button-danger button-sm",
-                        r#type: "button",
-                        disabled: busy,
-                        onclick: move |_| {
-                            confirming.set(false);
-                            on_remove.call(());
-                        },
-                        "Delete"
-                    }
-                    button { class: "button button-secondary button-sm", r#type: "button", onclick: move |_| confirming.set(false), "Cancel" }
-                }
             }
         }
     }

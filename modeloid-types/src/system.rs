@@ -4,9 +4,9 @@
 use serde::{Deserialize, Serialize};
 
 /// Most parallel connections a large download may use.
-pub const MAX_DOWNLOAD_CONNECTIONS: u32 = 16;
+pub const MAX_DOWNLOAD_CONNECTIONS: u32 = 32;
 /// Most jobs that may run at the same time.
-pub const MAX_JOBS: u32 = 4;
+pub const MAX_JOBS: u32 = 8;
 /// Longest side of gallery previews the settings offer, in pixels.
 pub const THUMB_SIZES: [u32; 4] = [160, 240, 320, 480];
 

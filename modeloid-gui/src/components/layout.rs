@@ -4,6 +4,10 @@ use crate::components::{provide_toasts, HistoryLayer, HistoryOpen, Icon, IconNam
 use crate::routes::Route;
 use crate::state::{provide_activity_state, provide_workspace_state};
 
+/// Narrowest the right-hand panels get: their header, selection bar and the
+/// table's first columns still fit.
+pub const PANEL_MIN_WIDTH: f64 = 360.0;
+
 /// Width of the right-hand panel, shared by the tool pages' side panel and
 /// the labelling page's Classes panel. Provided by `AppLayout`.
 #[derive(Clone, Copy)]
@@ -91,7 +95,7 @@ pub fn AppLayout() -> Element {
                     }
                     ResizeHandle {
                         width: panel_width,
-                        min: 260.0,
+                        min: PANEL_MIN_WIDTH,
                         max: 900.0,
                         label: "Resize side panel",
                         controls: "side-panel",

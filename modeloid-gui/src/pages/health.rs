@@ -516,8 +516,8 @@ fn FixForm(datasets: Vec<HealthSummary>, total: HealthCounts, disabled: bool, st
     let mut fixes = use_signal(move || recommended);
     // One dataset: a name of its own, or overwrite it.
     let output = use_signal(OutputChoice::default);
-    // Several: each new name is the old one plus this ending, or overwrite them all.
-    let mut ending = use_signal(|| "-fixed".to_string());
+    // Several: a new name each (typed ones by dataset id; the rest `<name>-fixed`), or overwrite them all.
+    let mut names = use_signal(std::collections::BTreeMap::<u32, String>::new);
     let mut overwrite_all = use_signal(|| false);
     let mut confirmed = use_signal(|| false);
     let mut submitted = use_signal(|| false);
@@ -553,15 +553,17 @@ fn FixForm(datasets: Vec<HealthSummary>, total: HealthCounts, disabled: bool, st
             }
             return Ok(datasets_for_targets.iter().map(|d| (d.id, OutputTarget::Overwrite)).collect());
         }
-        let ending = ending();
-        if ending.trim().is_empty() {
-            return Err("Enter an ending for the new names, e.g. -fixed.".into());
-        }
+        let typed = names();
+        let mut taken = std::collections::BTreeSet::new();
         datasets_for_targets
             .iter()
             .map(|d| {
-                let name = format!("{}{}", d.name, ending.trim());
-                validate_dataset_name(&name).map(|()| (d.id, OutputTarget::New { name }))
+                let name = typed.get(&d.id).map_or_else(|| format!("{}-fixed", d.name), |n| n.trim().to_string());
+                validate_dataset_name(&name).map_err(|e| format!("{}: {e}", d.name))?;
+                if !taken.insert(name.clone()) {
+                    return Err(format!("Two new datasets would be called {name}."));
+                }
+                Ok((d.id, OutputTarget::New { name }))
             })
             .collect()
     };
@@ -654,19 +656,25 @@ fn FixForm(datasets: Vec<HealthSummary>, total: HealthCounts, disabled: bool, st
                             span { "I understand these " strong { "{datasets.len()} datasets" } " will be replaced. This can't be undone." }
                         }
                     } else {
-                        div { class: "field",
-                            label { class: "field-label", r#for: "health-ending", "Name ending" }
-                            input {
-                                id: "health-ending",
-                                class: "input",
-                                r#type: "text",
-                                spellcheck: false,
-                                autocomplete: "off",
-                                value: "{ending}",
-                                aria_invalid: if output_error.is_some() { "true" },
-                                oninput: move |e| ending.set(e.value()),
+                        for d in datasets.iter() {
+                            div { key: "{d.id}", class: "field",
+                                label { class: "field-label", r#for: "health-name-{d.id}", "New name for {d.name}" }
+                                input {
+                                    id: "health-name-{d.id}",
+                                    class: "input",
+                                    r#type: "text",
+                                    spellcheck: false,
+                                    autocomplete: "off",
+                                    value: names.read().get(&d.id).cloned().unwrap_or_else(|| format!("{}-fixed", d.name)),
+                                    aria_invalid: if output_error.is_some() { "true" },
+                                    oninput: {
+                                        let id = d.id;
+                                        move |e: FormEvent| {
+                                            names.write().insert(id, e.value());
+                                        }
+                                    },
+                                }
                             }
-                            p { class: "field-hint", "Each new dataset is named after its source plus this ending, e.g. {first_name}{ending}." }
                         }
                     }
                     if let Some(message) = &output_error {

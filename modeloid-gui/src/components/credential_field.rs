@@ -4,9 +4,9 @@ use crate::api::error_message;
 use crate::api::settings::{
     credential_status, remove_credential, save_credential, validate_credential, KeyStatus, ServiceId,
 };
-use crate::components::{Icon, IconName};
+use crate::components::{Icon, IconName, InfoTip};
 
-/// Help line and docs link for each service.
+/// What the credential is for (shown in the label's tip) and its docs link.
 fn help(service: ServiceId) -> (&'static str, &'static str) {
     match service {
         ServiceId::Roboflow => (
@@ -84,13 +84,13 @@ pub fn CredentialField(service: ServiceId) -> Element {
     rsx! {
         form { class: "field", novalidate: true, onsubmit: save,
             div { class: "field-row",
-                label { class: "field-label", r#for: "{slug}-credential", "{service.credential()}" }
+                label { class: "field-label", r#for: "{slug}-credential",
+                    "{service.credential()} "
+                    InfoTip { label: "About the {service.label()} credential", text: help_text }
+                }
                 match &current {
-                    Some(KeyStatus { saved_hint: Some(hint), .. }) if service == ServiceId::Kaggle => rsx! {
-                        span { class: "badge badge-ok", "Saved · {hint}" }
-                    },
-                    Some(KeyStatus { saved_hint: Some(hint), .. }) => rsx! {
-                        span { class: "badge badge-ok", "Saved · ends in {hint}" }
+                    Some(KeyStatus { saved_hint: Some(_), .. }) => rsx! {
+                        span { class: "badge badge-ok", "Saved" }
                     },
                     Some(KeyStatus { fallback: Some(source), .. }) => rsx! {
                         span { class: "badge", title: "{source}", "Using {source}" }
@@ -150,8 +150,7 @@ pub fn CredentialField(service: ServiceId) -> Element {
                     p { class: "field-success", "{message}" }
                 }
                 p { class: "field-hint",
-                    "{help_text} "
-                    a { href: docs, target: "_blank", rel: "noopener noreferrer", "Where to find it" }
+                    a { href: docs, target: "_blank", rel: "noopener noreferrer", "Where to find {service.label()} API token" }
                 }
             }
         }

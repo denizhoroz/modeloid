@@ -142,21 +142,31 @@ impl Task {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Family {
+    /// Ultralytics' newest (2026): every task, pretrained.
     #[default]
+    Yolo26,
     Yolo11,
-    Yolov8,
     Yolo12,
+    /// Detection only, no NMS.
+    Yolov10,
+    Yolov8,
+    /// The anchor-free YOLOv5u weights; detection only.
+    Yolov5,
     RtDetr,
 }
 
 impl Family {
-    pub const ALL: [Family; 4] = [Family::Yolo11, Family::Yolov8, Family::Yolo12, Family::RtDetr];
+    pub const ALL: [Family; 7] =
+        [Family::Yolo26, Family::Yolo11, Family::Yolo12, Family::Yolov10, Family::Yolov8, Family::Yolov5, Family::RtDetr];
 
     pub fn label(self) -> &'static str {
         match self {
+            Family::Yolo26 => "YOLO26",
             Family::Yolo11 => "YOLO11",
-            Family::Yolov8 => "YOLOv8",
             Family::Yolo12 => "YOLO12",
+            Family::Yolov10 => "YOLOv10",
+            Family::Yolov8 => "YOLOv8",
+            Family::Yolov5 => "YOLOv5u",
             Family::RtDetr => "RT-DETR",
         }
     }
@@ -172,15 +182,15 @@ impl Family {
     /// Tasks it has pretrained weights for.
     pub fn pretrained_tasks(self) -> &'static [Task] {
         match self {
-            Family::Yolo11 | Family::Yolov8 => &Task::ALL,
-            Family::Yolo12 | Family::RtDetr => &[Task::Detect],
+            Family::Yolo26 | Family::Yolo11 | Family::Yolov8 => &Task::ALL,
+            Family::Yolo12 | Family::Yolov10 | Family::Yolov5 | Family::RtDetr => &[Task::Detect],
         }
     }
 
     /// Tasks it can train at all (from scratch included).
     pub fn tasks(self) -> &'static [Task] {
         match self {
-            Family::RtDetr => &[Task::Detect],
+            Family::RtDetr | Family::Yolov10 | Family::Yolov5 => &[Task::Detect],
             _ => &Task::ALL,
         }
     }
@@ -544,9 +554,14 @@ impl UltralyticsParams {
         };
         match m.family {
             Family::RtDetr => format!("rtdetr-{}.{ext}", m.size.id()),
+            Family::Yolo26 => format!("yolo26{}{}.{ext}", m.size.id(), m.task.suffix()),
             Family::Yolo11 => format!("yolo11{}{}.{ext}", m.size.id(), m.task.suffix()),
             Family::Yolov8 => format!("yolov8{}{}.{ext}", m.size.id(), m.task.suffix()),
             Family::Yolo12 => format!("yolo12{}{}.{ext}", m.size.id(), m.task.suffix()),
+            Family::Yolov10 => format!("yolov10{}.{ext}", m.size.id()),
+            // The pretrained weights are the "u" (anchor-free) ones.
+            Family::Yolov5 if ext == "pt" => format!("yolov5{}u.pt", m.size.id()),
+            Family::Yolov5 => format!("yolov5{}.{ext}", m.size.id()),
         }
     }
 
@@ -699,8 +714,10 @@ mod tests {
     #[test]
     fn names_the_model() {
         let mut p = UltralyticsParams::default();
-        assert_eq!(p.model_name(), "yolo11n.pt");
+        assert_eq!(p.model_name(), "yolo26n.pt");
         p.model.task = Task::Segment;
+        assert_eq!(p.model_name(), "yolo26n-seg.pt");
+        p.model.family = Family::Yolo11;
         assert_eq!(p.model_name(), "yolo11n-seg.pt");
         p.model.family = Family::Yolov8;
         p.model.size = ModelSize::S;
@@ -708,6 +725,11 @@ mod tests {
         assert_eq!(p.model_name(), "yolov8s-seg.yaml");
         p.model = ModelConfig { task: Task::Detect, family: Family::RtDetr, size: ModelSize::L, weights: Weights::Pretrained };
         assert_eq!(p.model_name(), "rtdetr-l.pt");
+        p.model.family = Family::Yolov5;
+        assert_eq!(p.model_name(), "yolov5lu.pt");
+        p.model.family = Family::Yolov10;
+        assert_eq!(p.model_name(), "yolov10l.pt");
+        p.model.family = Family::RtDetr;
         assert_eq!(p.summary(), "RT-DETR-l · detect");
         p.model.weights = Weights::File("C:/runs/best.pt".into());
         assert_eq!(p.model_name(), "C:/runs/best.pt");

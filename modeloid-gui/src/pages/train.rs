@@ -356,7 +356,7 @@ mod tests {
     #[test]
     fn suggests_dataset_and_model_names() {
         let mut set = ParameterSet::new("baseline");
-        assert_eq!(model_stem(&set), "yolo11n");
+        assert_eq!(model_stem(&set), "yolo26n");
         let FrameworkParams::Ultralytics(p) = &mut set.params;
         p.model.weights = Weights::File("training/trains/old/weights/best.pt".into());
         assert_eq!(model_stem(&set), "best");

@@ -113,6 +113,11 @@ fn run(plan: &BalancePlan, set: &LabelSet) -> (Vec<(usize, Option<Split>)>, Bala
         preview.problems.push("Keep at least one class that has labels.".into());
     }
     if !preview.problems.is_empty() {
+        // Nothing runs: the counts stay as they are (the chart shows every column whole).
+        preview.images_after = preview.images_before;
+        for class in &mut preview.classes {
+            class.after = class.before;
+        }
         return (Vec::new(), preview);
     }
 

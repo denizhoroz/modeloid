@@ -10,19 +10,16 @@ use crate::api::jobs::JobKind;
 use crate::api::dialogs::{pick_file, pick_folder, DialogPurpose};
 use crate::components::{set_if_newer, use_job, Icon, IconName, InfoTip, JobProgress};
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum SourceKind {
-    Folder,
-    Zip,
+/// A picked path is a zip by its extension; anything else is a folder.
+fn is_zip(path: &str) -> bool {
+    path.to_ascii_lowercase().ends_with(".zip")
 }
 
 #[component]
 pub fn ImportForm(datasets_path: String) -> Element {
-    let mut source_kind = use_signal(|| SourceKind::Folder);
     let mut move_folder = use_signal(|| false);
-    // Picked path per kind, so switching back keeps the earlier choice.
-    let mut folder = use_signal(|| None::<String>);
-    let mut zip = use_signal(|| None::<String>);
+    // A folder or a zip; which one is told from the path.
+    let mut picked = use_signal(|| None::<String>);
     // Typed name; `None` until edited, so the path's name is suggested.
     let mut name = use_signal(|| None::<String>);
 
@@ -34,30 +31,24 @@ pub fn ImportForm(datasets_path: String) -> Element {
     let (job, poll_error) = use_job(JobKind::Import);
     let running = job.read().as_ref().is_some_and(|j| !j.finished);
 
-    let path = match source_kind() {
-        SourceKind::Folder => folder(),
-        SourceKind::Zip => zip(),
-    };
+    let path = picked();
+    let zip_picked = path.as_deref().is_some_and(is_zip);
     let suggested = path.as_deref().map(name_from_path).unwrap_or_default();
     let name_value = name().unwrap_or_else(|| suggested.clone());
-    let path_error = (submitted() && path.is_none()).then(|| match source_kind() {
-        SourceKind::Folder => "Choose a dataset folder.",
-        SourceKind::Zip => "Choose a zip file.",
-    });
+    let path_error = (submitted() && path.is_none()).then_some("Choose a dataset folder or zip file.");
     let name_error = if submitted() || name().is_some() { validate_dataset_name(&name_value).err() } else { None };
 
-    let choose = move |_| async move {
+    // The system dialogs pick either a folder or a file, so there's one button each.
+    let choose = move |zip_file: bool| async move {
         picking.set(true);
         form_error.set(None);
-        let picked = match source_kind() {
-            SourceKind::Folder => pick_folder("Choose a dataset folder".into(), DialogPurpose::DatasetFolder).await,
-            SourceKind::Zip => pick_file("Choose a dataset zip".into(), DialogPurpose::DatasetZip, "Zip archive".into(), vec!["zip".into()]).await,
+        let result = if zip_file {
+            pick_file("Choose a dataset zip".into(), DialogPurpose::DatasetZip, "Zip archive".into(), vec!["zip".into()]).await
+        } else {
+            pick_folder("Choose a dataset folder".into(), DialogPurpose::DatasetFolder).await
         };
-        match picked {
-            Ok(Some(path)) => match source_kind() {
-                SourceKind::Folder => folder.set(Some(path)),
-                SourceKind::Zip => zip.set(Some(path)),
-            },
+        match result {
+            Ok(Some(path)) => picked.set(Some(path)),
             Ok(None) => {} // dialog cancelled
             Err(e) => form_error.set(Some(error_message(&e))),
         }
@@ -68,19 +59,15 @@ pub fn ImportForm(datasets_path: String) -> Element {
         e.prevent_default();
         submitted.set(true);
         form_error.set(None);
-        let path = match source_kind() {
-            SourceKind::Folder => folder(),
-            SourceKind::Zip => zip(),
-        };
-        let Some(path) = path else { return };
+        let Some(path) = picked() else { return };
         let name_value = name().unwrap_or_else(|| name_from_path(&path));
         if validate_dataset_name(&name_value).is_err() {
             return;
         }
-        let kind = match (source_kind(), move_folder()) {
-            (SourceKind::Zip, _) => ImportKind::Zip,
-            (SourceKind::Folder, true) => ImportKind::Move,
-            (SourceKind::Folder, false) => ImportKind::Copy,
+        let kind = match (is_zip(&path), move_folder()) {
+            (true, _) => ImportKind::Zip,
+            (false, true) => ImportKind::Move,
+            (false, false) => ImportKind::Copy,
         };
 
         starting.set(true);
@@ -89,10 +76,7 @@ pub fn ImportForm(datasets_path: String) -> Element {
                 set_if_newer(job, started);
                 submitted.set(false);
                 name.set(None);
-                match source_kind() {
-                    SourceKind::Folder => folder.set(None),
-                    SourceKind::Zip => zip.set(None),
-                }
+                picked.set(None);
             }
             Err(e) => form_error.set(Some(error_message(&e))),
         }
@@ -105,22 +89,7 @@ pub fn ImportForm(datasets_path: String) -> Element {
     rsx! {
         form { class: "section-stack", novalidate: true, onsubmit: submit,
             section { class: "section-card", aria_labelledby: "import-source-title",
-                div { class: "section-card-header",
-                    h2 { id: "import-source-title", class: "section-card-title", TitleIcon { name: IconName::Upload } "Source" }
-                    div { class: "segmented", role: "radiogroup", aria_label: "Import from",
-                        for (value, label) in [(SourceKind::Folder, "Folder"), (SourceKind::Zip, "Zip file")] {
-                            button {
-                                key: "{label}",
-                                class: if source_kind() == value { "segmented-option is-selected" } else { "segmented-option" },
-                                r#type: "button",
-                                role: "radio",
-                                aria_checked: if source_kind() == value { "true" } else { "false" },
-                                onclick: move |_| source_kind.set(value),
-                                "{label}"
-                            }
-                        }
-                    }
-                }
+                h2 { id: "import-source-title", class: "section-card-title", TitleIcon { name: IconName::Upload } "Source" }
 
                 div { class: "folder-pick-row",
                     button {
@@ -128,19 +97,18 @@ pub fn ImportForm(datasets_path: String) -> Element {
                         r#type: "button",
                         disabled: picking() || busy,
                         aria_busy: if picking() { "true" },
-                        onclick: choose,
+                        onclick: move |_| choose(false),
                         Icon { name: IconName::FolderOpen, size: 14 }
-                        span {
-                            if picking() {
-                                "Opening…"
-                            } else if path.is_some() {
-                                "Change"
-                            } else if source_kind() == SourceKind::Folder {
-                                "Choose folder"
-                            } else {
-                                "Choose zip"
-                            }
-                        }
+                        span { "Choose folder" }
+                    }
+                    button {
+                        class: "button button-secondary",
+                        r#type: "button",
+                        disabled: picking() || busy,
+                        aria_busy: if picking() { "true" },
+                        onclick: move |_| choose(true),
+                        Icon { name: IconName::Package, size: 14 }
+                        span { "Choose zip" }
                     }
                     match &path {
                         Some(p) => rsx! { code { class: "picked-path", title: "{p}", "{p}" } },
@@ -151,14 +119,10 @@ pub fn ImportForm(datasets_path: String) -> Element {
                     p { class: "field-error", role: "alert", "{message}" }
                 }
                 p { class: "field-hint",
-                    if source_kind() == SourceKind::Folder {
-                        "A dataset folder in any layout (YOLO, COCO, VOC...). It's scanned and gets a dataset.toml."
-                    } else {
-                        "A dataset zip. If everything is inside one top folder, that folder is unwrapped."
-                    }
+                    "A dataset folder or zip in any layout (YOLO, COCO, VOC...). A zip is unpacked, one top folder unwrapped; either way it is scanned and gets a dataset.toml."
                 }
 
-                if source_kind() == SourceKind::Folder {
+                if path.is_some() && !zip_picked {
                     div { class: "choice-list",
                         label { class: if !move_folder() { "choice is-selected" } else { "choice" },
                             input {

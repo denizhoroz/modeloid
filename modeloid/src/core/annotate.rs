@@ -39,7 +39,8 @@ impl Workspace {
     fn labelling(&self, id: u32) -> Result<(PathBuf, Dataset, LabelFormat), crate::Error> {
         let (dir, dataset) = self.find_dataset(id)?;
         let format = LabelFormat::parse(dataset.annotation_format())
-            .ok_or_else(|| format!("'{}' labels can't be edited; YOLO, COCO and Pascal VOC can", dataset.annotation_format()))?;
+            .filter(|f| *f != LabelFormat::Via)
+            .ok_or_else(|| format!("'{}' labels can't be edited here; YOLO, COCO and Pascal VOC can. Convert the dataset first.", dataset.annotation_format()))?;
         Ok((dir, dataset, format))
     }
 
@@ -55,6 +56,7 @@ impl Workspace {
         image.objects = objects;
 
         match format {
+            LabelFormat::Via => unreachable!("labelling() refuses VIA datasets"),
             LabelFormat::Yolo => {
                 let path = yolo_label_path(&image.file);
                 if let Some(parent) = path.parent() {
@@ -78,6 +80,7 @@ impl Workspace {
             set.declared_classes = Some(set.classes.len());
         }
         match format {
+            LabelFormat::Via => unreachable!("labelling() refuses VIA datasets"),
             LabelFormat::Yolo => write_yolo_names(&dir, set)?,
             LabelFormat::Voc => write_voc_classes(&dir, set)?,
             LabelFormat::Coco => {
@@ -104,6 +107,7 @@ impl Workspace {
         let name = validate_class_name(name, &set.classes, Some(class))?;
         set.classes[class] = name.clone();
         match format {
+            LabelFormat::Via => unreachable!("labelling() refuses VIA datasets"),
             LabelFormat::Yolo => write_yolo_names(&dir, set)?,
             LabelFormat::Voc => {
                 write_voc_classes(&dir, set)?;
@@ -180,6 +184,7 @@ impl Workspace {
         }
 
         match format {
+            LabelFormat::Via => unreachable!("labelling() refuses VIA datasets"),
             LabelFormat::Yolo => {
                 for &i in &changed {
                     let image = &set.images[i];

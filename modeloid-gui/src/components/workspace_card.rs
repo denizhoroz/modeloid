@@ -66,10 +66,24 @@ pub fn WorkspaceCard(on_navigate: EventHandler<()>) -> Element {
     let (loading, error, load) = use_load_workspace();
     let current = use_route::<Route>();
     let creating = current == Route::CreateWorkspace {};
+    let editing = current == Route::EditWorkspace {};
 
     rsx! {
         section { class: "workspace-card", aria_labelledby: "workspace-card-label",
-            p { id: "workspace-card-label", class: "workspace-card-label", "Current Workspace" }
+            div { class: "workspace-card-head",
+                p { id: "workspace-card-label", class: "workspace-card-label", "Current Workspace" }
+                if workspace().is_some() {
+                    Link {
+                        class: if editing { "workspace-card-edit is-active" } else { "workspace-card-edit" },
+                        aria_current: if editing { "page" },
+                        to: Route::EditWorkspace {},
+                        onclick: move |_| on_navigate.call(()),
+                        title: "Workspace options",
+                        aria_label: "Workspace options",
+                        Icon { name: IconName::Settings, size: 14 }
+                    }
+                }
+            }
 
             // One line in both states, so the navbar below doesn't shift on load.
             match workspace() {

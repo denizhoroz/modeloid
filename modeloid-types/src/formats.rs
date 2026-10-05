@@ -4,13 +4,14 @@
 //!
 //! A format's `id` is its Roboflow export name when `roboflow` is set,
 //! otherwise a name of our own. `writes_as` is the label family Modeloid
-//! reads and writes it as ("yolo", "coco", "voc"); `None` means Modeloid
+//! reads and writes it as ("yolo", "coco", "voc", "via"); `None` means Modeloid
 //! can't read or write it yet (it can still be downloaded from Roboflow).
 
 /// Label families Modeloid reads and writes.
 pub const YOLO: &str = "yolo";
 pub const COCO: &str = "coco";
 pub const VOC: &str = "voc";
+pub const VIA: &str = "via";
 
 /// What a format's labels describe; pickers group formats by it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -86,6 +87,7 @@ pub const FORMATS: &[AnnotationFormat] = &[
     f("coco", "COCO JSON", Detection, Some(COCO), true),
     f("coco-segmentation", "COCO Segmentation JSON", Detection, Some(COCO), true),
     f("voc", "Pascal VOC XML", Detection, Some(VOC), true),
+    f("via", "VGG Image Annotator (VIA) JSON", Detection, Some(VIA), false),
     f("yolov4scaled", "Scaled-YOLOv4 TXT", Detection, None, true),
     f("yolov4pytorch", "YOLOv4 PyTorch TXT", Detection, None, true),
     f("darknet", "YOLO Darknet TXT", Detection, None, true),
@@ -140,6 +142,7 @@ pub fn family(name: &str) -> Option<&'static str> {
         YOLO => return Some(YOLO),
         COCO => return Some(COCO),
         VOC | "pascal-voc" => return Some(VOC),
+        VIA | "vgg" => return Some(VIA),
         _ => {}
     }
     if let Some(format) = find(&name) {
@@ -172,6 +175,7 @@ pub fn label(name: &str) -> String {
         YOLO => "YOLO".into(),
         COCO => "COCO".into(),
         VOC => "Pascal VOC".into(),
+        VIA => "VIA".into(),
         _ => find(name).map_or_else(|| name.to_string(), |f| f.label.to_string()),
     }
 }

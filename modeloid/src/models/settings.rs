@@ -296,7 +296,7 @@ mod tests {
 
         settings.set_system(SystemPrefs { threads: 1, download_connections: 99, max_jobs: 2, thumb_size: 240 });
         let loaded: Settings = toml::from_str(&toml::to_string(&settings).unwrap()).unwrap();
-        assert_eq!(loaded.system(), SystemPrefs { threads: 1, download_connections: 16, max_jobs: 2, thumb_size: 240 });
+        assert_eq!(loaded.system(), SystemPrefs { threads: 1, download_connections: 32, max_jobs: 2, thumb_size: 240 });
 
         // A file that names only one setting keeps the defaults for the rest.
         let partial: Settings = toml::from_str("[system]\nmax_jobs = 3\n").unwrap();
