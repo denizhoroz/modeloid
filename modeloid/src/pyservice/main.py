@@ -30,11 +30,18 @@ Commands:
                   Writes the copies to out_dir. Events: start (images),
                   image (index, outputs: [{file, width, height, objects}],
                   or error), done.
+  hf-download <config> Downloads a Hugging Face dataset repo with
+                  huggingface_hub (Xet storage, several files at once):
+                  {"repo": "owner/name", "revision": "main", "out_dir": "...",
+                   "workers": 8}. The token comes from HF_TOKEN. Events:
+                  start (files, bytes), progress (bytes so far), done (files:
+                  the repo paths written).
 
 Errors exit non-zero; `check` prints {"error": "..."}, the others an error event.
 """
 
 import json
+import os
 import platform
 import shutil
 import sys
@@ -74,9 +81,16 @@ def check():
         albumentations_version = albumentations.__version__
     except ImportError:
         albumentations_version = ""
+    try:
+        import huggingface_hub
+
+        huggingface_hub_version = huggingface_hub.__version__
+    except ImportError:
+        huggingface_hub_version = ""
     emit({
         "optuna": optuna_version,
         "albumentations": albumentations_version,
+        "huggingface_hub": huggingface_hub_version,
         "python": platform.python_version(),
         "torch": torch.__version__,
         "torchvision": torchvision.__version__,
@@ -326,6 +340,64 @@ def augment(config_path):
     event("done", images=len(images))
 
 
+def folder_size(path):
+    """Bytes under `path`, half-written files included; unreadable ones skipped."""
+    total = 0
+    for root, _, files in os.walk(path):
+        for name in files:
+            try:
+                total += os.path.getsize(os.path.join(root, name))
+            except OSError:
+                pass
+    return total
+
+
+def hf_download(config_path):
+    with open(config_path, encoding="utf-8") as f:
+        config = json.load(f)
+
+    import threading
+
+    from huggingface_hub import HfApi, snapshot_download
+
+    repo, revision, out_dir = config["repo"], config.get("revision") or "main", config["out_dir"]
+    skip = [".gitattributes"]
+    info = HfApi().dataset_info(repo, revision=revision, files_metadata=True)
+    files = [s for s in info.siblings or [] if s.rfilename not in skip]
+    if not files:
+        raise RuntimeError(f"Hugging Face dataset {repo} has no files")
+    event("start", files=len(files), bytes=sum(s.size or 0 for s in files))
+
+    # huggingface_hub reports per file; the folder's size is the progress.
+    finished = threading.Event()
+
+    def report():
+        while not finished.wait(1.0):
+            event("progress", bytes=folder_size(out_dir))
+
+    reporter = threading.Thread(target=report, daemon=True)
+    reporter.start()
+    try:
+        snapshot_download(
+            repo_id=repo,
+            repo_type="dataset",
+            revision=revision,
+            local_dir=out_dir,
+            ignore_patterns=skip,
+            max_workers=config.get("workers", 8),
+        )
+    finally:
+        finished.set()
+        reporter.join()
+    # Download bookkeeping huggingface_hub keeps in the folder.
+    shutil.rmtree(os.path.join(out_dir, ".cache", "huggingface"), ignore_errors=True)
+    try:
+        os.rmdir(os.path.join(out_dir, ".cache"))
+    except OSError:
+        pass
+    event("done", files=[s.rfilename for s in files])
+
+
 def main(argv):
     command = argv[1] if len(argv) > 1 else ""
     if command == "check":
@@ -335,7 +407,7 @@ def main(argv):
             emit({"error": f"{type(e).__name__}: {e}"})
             return 1
         return 0
-    commands = {"train": train, "tune": tune, "augment": augment}
+    commands = {"train": train, "tune": tune, "augment": augment, "hf-download": hf_download}
     if command in commands and len(argv) > 2:
         try:
             commands[command](argv[2])
@@ -348,7 +420,7 @@ def main(argv):
             event("error", error=f"{type(e).__name__}: {e}")
             return 1
         return 0
-    emit({"error": "usage: main.py check | train <config.json> | tune <config.json> | augment <config.json>"})
+    emit({"error": "usage: main.py check | train | tune | augment | hf-download <config.json>"})
     return 2
 
 

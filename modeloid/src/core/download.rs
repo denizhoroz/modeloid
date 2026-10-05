@@ -16,9 +16,10 @@ use url::Url;
 use crate::core::{
     io::{self, unless_cancelled},
     labels::LabelFormat,
+    pyenv::{self, PyEnv},
     progress::{Progress, Reporter, Unit, check_cancel},
 };
-use crate::models::settings::{HF_TOKEN_ENV, KAGGLE_KEY_ENV, KAGGLE_USERNAME_ENV, KaggleCredentials, ROBOFLOW_KEY_ENV};
+use crate::models::settings::{HF_TOKEN_ENV, KAGGLE_KEY_ENV, KAGGLE_TOKEN_ENV, KAGGLE_USERNAME_ENV, KaggleCredentials, ROBOFLOW_KEY_ENV};
 
 const ROBOFLOW_API: &str = "https://api.roboflow.com";
 const KAGGLE_API: &str = "https://www.kaggle.com/api/v1";
@@ -45,6 +46,10 @@ pub struct DownloadOptions {
     /// own workspace, generate a version there, download that, and delete the
     /// copy again. Off: such a project fails with `NoVersions`.
     pub fork_unversioned: bool,
+    /// Downloads Hugging Face datasets with huggingface_hub in this Python
+    /// environment (`main.py hf-download`: Xet storage, several files at
+    /// once), much faster than plain HTTP. `None`: Modeloid's own downloader.
+    pub python: Option<PyEnv>,
 }
 
 /// A Roboflow project that has images and annotations but no generated
@@ -302,7 +307,7 @@ impl Downloader {
             Source::Kaggle { owner, dataset } => {
                 let creds = kaggle_credentials(opts)?;
                 let url = format!("{KAGGLE_API}/datasets/view/{owner}/{dataset}");
-                let resp = self.client.get(&url).basic_auth(&creds.username, Some(&creds.key)).send().await?;
+                let resp = kaggle_auth(self.client.get(&url), &creds).send().await?;
                 let body = match resp.status() {
                     s if s.is_success() => resp.json::<Value>().await.unwrap_or(Value::Null),
                     StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
@@ -568,7 +573,7 @@ impl Downloader {
         let creds = kaggle_credentials(opts)?;
         let client = client_builder().redirect(reqwest::redirect::Policy::none()).build()?;
         let url = format!("{KAGGLE_API}/datasets/download/{owner}/{dataset}");
-        let resp = client.get(&url).basic_auth(&creds.username, Some(&creds.key)).send().await?;
+        let resp = kaggle_auth(client.get(&url), &creds).send().await?;
         match resp.status() {
             s if s.is_redirection() => {
                 let location = resp.headers().get(header::LOCATION).and_then(|l| l.to_str().ok());
@@ -601,9 +606,36 @@ impl Downloader {
         }
     }
 
-    /// Downloads every file of a Hugging Face dataset repo into `out`, then
-    /// extracts any zip files in place.
+    /// Downloads every file of a Hugging Face dataset repo into `out` (with
+    /// the Python environment when there is one), then extracts any zip files
+    /// in place.
     async fn hf_download(&self, repo: &str, revision: &str, opts: &DownloadOptions, out: &Path) -> Result<(), crate::Error> {
+        let names = match &opts.python {
+            Some(env) => {
+                let (env, repo, revision, out) = (env.clone(), repo.to_string(), revision.to_string(), out.to_path_buf());
+                let (reporter, token) = (self.reporter.clone(), hf_token(opts));
+                tokio::task::spawn_blocking(move || hf_download_python(&env, &repo, &revision, token, &out, reporter.as_ref())).await??
+            }
+            None => self.hf_download_http(repo, revision, opts, out).await?,
+        };
+
+        // `data/train.zip` → `data/train/`, so split names in zip names survive.
+        for name in names.iter().filter(|n| n.to_ascii_lowercase().ends_with(".zip")) {
+            let Some(zip) = safe_join(out, name) else { continue };
+            let dir = zip.with_extension("");
+            if dir.exists() {
+                continue; // a folder of that name came with the repo; leave the zip alone
+            }
+            io::extract_zip(&zip, &dir, self.reporter.as_ref()).await?;
+            io::unwrap_single_dir(&dir)?;
+            io::retry_busy(&zip, || fs::remove_file(&zip))?;
+        }
+        Ok(())
+    }
+
+    /// Downloads every file of a Hugging Face dataset repo into `out` over
+    /// plain HTTP, one file after another. Returns the repo paths.
+    async fn hf_download_http(&self, repo: &str, revision: &str, opts: &DownloadOptions, out: &Path) -> Result<Vec<String>, crate::Error> {
         let body = self.hf_info(repo, revision, opts).await?;
         let files: Vec<(String, Option<u64>)> = body["siblings"]
             .as_array()
@@ -654,25 +686,104 @@ impl Downloader {
         .await;
         progress.finish();
         result?;
-
-        // `data/train.zip` → `data/train/`, so split names in zip names survive.
-        for (name, _) in files.iter().filter(|(n, _)| n.to_ascii_lowercase().ends_with(".zip")) {
-            let Some(zip) = safe_join(out, name) else { continue };
-            let dir = zip.with_extension("");
-            if dir.exists() {
-                continue; // a folder of that name came with the repo; leave the zip alone
-            }
-            io::extract_zip(&zip, &dir, self.reporter.as_ref()).await?;
-            io::unwrap_single_dir(&dir)?;
-            io::retry_busy(&zip, || fs::remove_file(&zip))?;
-        }
-        Ok(())
+        Ok(files.into_iter().map(|(name, _)| name).collect())
     }
 
     /// Downloads `url` to `dest`, writing to `dest.part` until complete.
     pub async fn download_file(&self, url: &str, dest: &Path) -> Result<(), crate::Error> {
         io::download(&self.client, url, dest, self.reporter.as_ref()).await?;
         Ok(())
+    }
+}
+
+/// Runs `main.py hf-download` for `repo` into `out`, counting bytes on a
+/// "Downloading" progress. Returns the repo paths written.
+fn hf_download_python(
+    env: &PyEnv,
+    repo: &str,
+    revision: &str,
+    token: Option<String>,
+    out: &Path,
+    reporter: &dyn Reporter,
+) -> Result<Vec<String>, crate::Error> {
+    fs::create_dir_all(out)?;
+    // Outside the dataset folder, so it never ends up in it.
+    let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+    let config = std::env::temp_dir().join(format!("modeloid-hf-download-{}-{stamp}.json", std::process::id()));
+    fs::write(
+        &config,
+        serde_json::to_vec(&serde_json::json!({ "repo": repo, "revision": revision, "out_dir": out.display().to_string(), "workers": 8 }))?,
+    )?;
+    let mut cmd = env.service_command([std::ffi::OsStr::new("hf-download"), config.as_os_str()])?;
+    // No progress bars (unreadable in a log), no telemetry, no chunk cache
+    // filling the disk: each file is downloaded once.
+    cmd.env("HF_HUB_DISABLE_PROGRESS_BARS", "1").env("HF_HUB_DISABLE_TELEMETRY", "1").env("HF_XET_CHUNK_CACHE_SIZE_BYTES", "0");
+    if let Some(token) = token {
+        cmd.env("HF_TOKEN", token);
+    }
+    reporter.message("Downloading with huggingface_hub (Python environment)");
+
+    let progress = reporter.start("Downloading", Unit::Bytes);
+    let (mut counted, mut total) = (0u64, 0u64);
+    let mut names: Option<Vec<String>> = None;
+    let mut last_error: Option<String> = None;
+    let mut output_tail: Vec<String> = Vec::new();
+    let result = pyenv::stream(cmd, progress.as_ref(), |output| {
+        let pyenv::Output::Line(line) = output else { return };
+        let Some(event) = line.strip_prefix("@modeloid ").and_then(|j| serde_json::from_str::<Value>(j).ok()) else {
+            // Kept for the error message if Python fails without an event.
+            if !line.trim().is_empty() {
+                output_tail.push(line.trim_end().to_string());
+                if output_tail.len() > 5 {
+                    output_tail.remove(0);
+                }
+            }
+            return;
+        };
+        match event["event"].as_str() {
+            Some("start") => {
+                total = event["bytes"].as_u64().unwrap_or(0);
+                if total > 0 {
+                    progress.set_total(total);
+                }
+                if let Some(files) = event["files"].as_u64() {
+                    reporter.message(&format!("{files} files"));
+                }
+            }
+            Some("progress") => {
+                // The folder can grow past the listed sizes (bookkeeping files).
+                let now = event["bytes"].as_u64().unwrap_or(0);
+                let now = if total > 0 { now.min(total) } else { now };
+                progress.add(now.saturating_sub(counted));
+                counted = counted.max(now);
+            }
+            Some("done") => {
+                progress.add(total.saturating_sub(counted));
+                names = event["files"].as_array().map(|f| f.iter().filter_map(|n| n.as_str().map(str::to_string)).collect());
+            }
+            Some("error") => last_error = event["error"].as_str().map(str::to_string),
+            _ => {}
+        }
+    });
+    progress.finish();
+    let _ = fs::remove_file(&config);
+    if let Err(e) = result {
+        if e.downcast_ref::<crate::Cancelled>().is_some() {
+            return Err(e);
+        }
+        let detail = last_error.or_else(|| output_tail.last().cloned()).unwrap_or_else(|| e.to_string());
+        return Err(hf_python_error(repo, &detail).into());
+    }
+    names.ok_or_else(|| "The Hugging Face download ended without finishing".into())
+}
+
+/// A readable message for a failed `main.py hf-download`.
+fn hf_python_error(repo: &str, detail: &str) -> String {
+    let lower = detail.to_ascii_lowercase();
+    if ["gatedrepoerror", "repositorynotfounderror", "401", "403"].iter().any(|k| lower.contains(k)) {
+        format!("Hugging Face dataset {repo} not found or not accessible. Private and gated datasets need a token ({detail})")
+    } else {
+        format!("Downloading {repo} from Hugging Face failed: {detail}")
     }
 }
 
@@ -714,10 +825,18 @@ fn kaggle_credentials(opts: &DownloadOptions) -> Result<KaggleCredentials, crate
     opts.kaggle
         .clone()
         .or_else(KaggleCredentials::from_env)
-        .or_else(|| KaggleCredentials::from_kaggle_json().map(|(c, _)| c))
+        .or_else(|| KaggleCredentials::from_files().map(|(c, _)| c))
         .ok_or_else(|| {
-            format!("Kaggle credentials missing: save them in settings, set {KAGGLE_USERNAME_ENV} and {KAGGLE_KEY_ENV}, or add ~/.kaggle/kaggle.json").into()
+            format!(
+                "Kaggle credentials missing: save an API token in settings, set {KAGGLE_TOKEN_ENV} (or {KAGGLE_USERNAME_ENV} and {KAGGLE_KEY_ENV}), or add ~/.kaggle/access_token or kaggle.json"
+            )
+            .into()
         })
+}
+
+/// Signs a Kaggle request: an API token as a bearer token, a legacy key with basic auth.
+fn kaggle_auth(request: reqwest::RequestBuilder, creds: &KaggleCredentials) -> reqwest::RequestBuilder {
+    if creds.is_token() { request.bearer_auth(&creds.key) } else { request.basic_auth(&creds.username, Some(&creds.key)) }
 }
 
 fn hf_token(opts: &DownloadOptions) -> Option<String> {

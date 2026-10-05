@@ -11,6 +11,7 @@ mod links;
 
 use dioxus::prelude::*;
 
+use crate::api::pyenv::python_env_overview;
 use crate::api::download::{download_forking, is_hugging_face, link_service, parse_links, start_download};
 use crate::api::jobs::{ItemAction, JobKind};
 use crate::api::error_message;
@@ -157,8 +158,11 @@ fn DownloadForm(datasets_path: String) -> Element {
             Ok(started) => {
                 set_if_newer(job, started);
                 submitted.set(false);
-                if from_hugging_face {
-                    toasts.info("Hugging Face downloads through the API can be slow. If this one takes too long, cancel it, download the files from the website and bring them in with Import.");
+                // Without huggingface_hub (Python environment not set up yet) files come one at a time.
+                let fast = from_hugging_face
+                    && python_env_overview().await.is_ok_and(|o| o.status.info().is_some_and(|i| !i.huggingface_hub.is_empty()));
+                if from_hugging_face && !fast {
+                    toasts.info("Hugging Face downloads are much faster once the Python environment is set up (Settings → Python environment). Until then files come one at a time; if this one takes too long, cancel it, download the files from the website and bring them in with Import.");
                 }
             }
             Err(e) => form_error.set(Some(error_message(&e))),

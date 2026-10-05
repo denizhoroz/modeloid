@@ -148,6 +148,10 @@ pub struct EnvInfo {
     /// installed before it was added.
     #[serde(default)]
     pub albumentations: String,
+    /// huggingface_hub's version (Hugging Face downloads); empty in an
+    /// environment installed before it was added.
+    #[serde(default)]
+    pub huggingface_hub: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

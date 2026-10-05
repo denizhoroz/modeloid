@@ -14,7 +14,7 @@ fn help(service: ServiceId) -> (&'static str, &'static str) {
             "https://docs.roboflow.com/developer/authentication/find-your-roboflow-api-key",
         ),
         ServiceId::Kaggle => (
-            "Paste the contents of kaggle.json, or username:key. Without it, ~/.kaggle/kaggle.json is used if present.",
+            "Paste an API token from Kaggle's settings page (starts with KGAT_). A legacy username:key or kaggle.json works too. Without it, KAGGLE_API_TOKEN or ~/.kaggle (access_token, kaggle.json) is used if present.",
             "https://www.kaggle.com/docs/api#authentication",
         ),
         ServiceId::HuggingFace => (
@@ -108,7 +108,7 @@ pub fn CredentialField(service: ServiceId) -> Element {
                         r#type: if reveal() { "text" } else { "password" },
                         autocomplete: "off",
                         spellcheck: "false",
-                        placeholder: if saved { "Paste new credentials to replace them" } else if service == ServiceId::Kaggle { "username:key or kaggle.json contents" } else { "Paste your key" },
+                        placeholder: if saved { "Paste new credentials to replace them" } else if service == ServiceId::Kaggle { "KGAT_… API token" } else { "Paste your key" },
                         aria_invalid: if error().is_some() { "true" },
                         aria_describedby: "{slug}-credential-help",
                         value: "{value}",

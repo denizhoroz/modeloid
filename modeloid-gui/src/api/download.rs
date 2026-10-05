@@ -60,7 +60,7 @@ pub async fn download_forking(index: usize, link: String, format: String) -> Res
 
 #[cfg(feature = "server")]
 mod backend {
-    use modeloid::{AlreadyExists, DownloadOptions, NoVersions, Settings, Source, Workspace};
+    use modeloid::{AlreadyExists, DownloadOptions, NoVersions, PyEnv, Settings, Source, Workspace};
 
     use crate::api::jobs::{self, ItemAction, ItemCtx, Job, JobKind};
     use crate::api::workspace;
@@ -103,6 +103,7 @@ mod backend {
         let ws = open()?;
         let mut opts = Settings::load_default().download_options(format);
         opts.fork_unversioned = true;
+        opts.python = PyEnv::for_hugging_face();
         jobs::rerun_item(JobKind::Download, index, &link.clone(), move |ctx| download(ctx, &ws, &link, &opts))
     }
 
@@ -124,7 +125,9 @@ mod backend {
         }
 
         let ws = open()?;
-        let opts = Settings::load_default().download_options(format);
+        let mut opts = Settings::load_default().download_options(format);
+        // Hugging Face downloads go through huggingface_hub when the environment has it.
+        opts.python = PyEnv::for_hugging_face();
         jobs::start(JobKind::Download, links.clone(), jobs::Touches::Nothing, move |ctx| download(ctx, &ws, &links[ctx.index()], &opts))
     }
 

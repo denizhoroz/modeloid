@@ -120,6 +120,12 @@ impl PyEnv {
         Ok(cmd)
     }
 
+    /// The environment when it can download from Hugging Face (huggingface_hub installed).
+    pub fn for_hugging_face() -> Option<PyEnv> {
+        let env = PyEnv::locate().ok()?;
+        env.status().info().is_some_and(|i| !i.huggingface_hub.is_empty()).then_some(env)
+    }
+
     pub fn cache_dir(&self) -> PathBuf {
         self.root.join(".uv-cache")
     }
@@ -327,6 +333,8 @@ impl PyEnv {
             optuna: String,
             #[serde(default)]
             albumentations: String,
+            #[serde(default)]
+            huggingface_hub: String,
         }
         let mut cmd = Command::new(self.python());
         cmd.arg("main.py").arg("check").current_dir(self.pyservice()).env("PYTHONIOENCODING", "utf-8");
@@ -348,6 +356,7 @@ impl PyEnv {
             lock_hash: self.lock_hash(),
             optuna: checked.optuna,
             albumentations: checked.albumentations,
+            huggingface_hub: checked.huggingface_hub,
         })
     }
 }

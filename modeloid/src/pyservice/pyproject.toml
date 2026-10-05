@@ -4,7 +4,7 @@
 # Python environment) runs uv with this project, putting the venv in
 # modeloid/.venv and a uv-managed Python in modeloid/python.
 #
-# Ultralytics, Optuna and Albumentations are always installed. PyTorch comes in two builds,
+# Ultralytics, Optuna, Albumentations and huggingface_hub are always installed. PyTorch comes in two builds,
 # chosen by extra: `cpu` (the default) or `cu130` (NVIDIA GPU, CUDA 13.0).
 # Exactly one is installed; switching builds only swaps torch and torchvision.
 #
@@ -20,6 +20,8 @@ dependencies = [
     "ultralytics>=8.3",
     "optuna>=4.2",
     "albumentations>=2.0",
+    # Hugging Face dataset downloads (several files at once, Xet storage).
+    "huggingface_hub[hf_xet]>=0.34",
 ]
 
 [project.optional-dependencies]

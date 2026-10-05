@@ -15,6 +15,10 @@ use crate::core::limits::{self, SystemPrefs};
 pub const ROBOFLOW_KEY_ENV: &str = "ROBOFLOW_API_KEY";
 pub const KAGGLE_USERNAME_ENV: &str = "KAGGLE_USERNAME";
 pub const KAGGLE_KEY_ENV: &str = "KAGGLE_KEY";
+/// Kaggle's newer API token (`KGAT_…`), used on its own.
+pub const KAGGLE_TOKEN_ENV: &str = "KAGGLE_API_TOKEN";
+/// How Kaggle's API tokens start.
+pub const KAGGLE_TOKEN_PREFIX: &str = "KGAT_";
 pub const HF_TOKEN_ENV: &str = "HF_TOKEN";
 
 /// A service that needs credentials to download from.
@@ -42,33 +46,50 @@ impl Service {
         let set = |name: &str| env::var_os(name).is_some_and(|v| !v.is_empty());
         match self {
             Service::Roboflow => set(ROBOFLOW_KEY_ENV).then(|| format!("{ROBOFLOW_KEY_ENV} env var")),
+            Service::Kaggle if set(KAGGLE_TOKEN_ENV) => Some(format!("{KAGGLE_TOKEN_ENV} env var")),
             Service::Kaggle if set(KAGGLE_USERNAME_ENV) && set(KAGGLE_KEY_ENV) => {
                 Some(format!("{KAGGLE_USERNAME_ENV}/{KAGGLE_KEY_ENV} env vars"))
             }
-            Service::Kaggle => KaggleCredentials::from_kaggle_json().map(|(_, path)| path.display().to_string()),
+            Service::Kaggle => KaggleCredentials::from_files().map(|(_, path)| path.display().to_string()),
             Service::HuggingFace => set(HF_TOKEN_ENV).then(|| format!("{HF_TOKEN_ENV} env var")),
         }
     }
 }
 
-/// Kaggle API credentials, as in `kaggle.json`.
+/// Kaggle API credentials: an API token (`KGAT_…`, sent as a bearer token;
+/// `username` is empty), or the legacy username and key of `kaggle.json`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KaggleCredentials {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub username: String,
     pub key: String,
 }
 
 impl KaggleCredentials {
-    /// Accepts the contents of `kaggle.json` or `username:key`.
+    /// An API token from Kaggle's settings page.
+    pub fn token(token: &str) -> Self {
+        KaggleCredentials { username: String::new(), key: token.trim().to_string() }
+    }
+
+    /// An API token rather than a username and key.
+    pub fn is_token(&self) -> bool {
+        self.username.is_empty()
+    }
+
+    /// Accepts an API token (`KGAT_…`), the contents of `kaggle.json` or `username:key`.
     pub fn parse(text: &str) -> Result<Self, String> {
         let text = text.trim();
+        if text.starts_with(KAGGLE_TOKEN_PREFIX) {
+            validate_api_key(text)?;
+            return Ok(KaggleCredentials::token(text));
+        }
         let creds = if text.starts_with('{') {
             serde_json::from_str::<KaggleCredentials>(text)
                 .map_err(|_| "That isn't a valid kaggle.json. It needs \"username\" and \"key\".".to_string())?
         } else {
-            let (username, key) = text
-                .split_once(':')
-                .ok_or("Paste the contents of kaggle.json, or username:key.")?;
+            let (username, key) = text.split_once(':').ok_or(
+                "Kaggle API tokens start with KGAT_. A legacy key needs your username too: username:key, or the contents of kaggle.json.",
+            )?;
             KaggleCredentials { username: username.trim().into(), key: key.trim().into() }
         };
         if creds.username.is_empty() || creds.username.chars().any(char::is_whitespace) {
@@ -78,18 +99,27 @@ impl KaggleCredentials {
         Ok(creds)
     }
 
+    /// `KAGGLE_API_TOKEN`, else `KAGGLE_USERNAME` with `KAGGLE_KEY`.
     pub fn from_env() -> Option<Self> {
+        if let Some(token) = env::var(KAGGLE_TOKEN_ENV).ok().filter(|v| !v.trim().is_empty()) {
+            return Some(KaggleCredentials::token(&token));
+        }
         let username = env::var(KAGGLE_USERNAME_ENV).ok().filter(|v| !v.is_empty())?;
         let key = env::var(KAGGLE_KEY_ENV).ok().filter(|v| !v.is_empty())?;
         Some(KaggleCredentials { username, key })
     }
 
-    /// The Kaggle CLI's `kaggle.json` (`$KAGGLE_CONFIG_DIR` or `~/.kaggle`) and its path.
-    pub fn from_kaggle_json() -> Option<(Self, PathBuf)> {
+    /// The Kaggle CLI's files (`$KAGGLE_CONFIG_DIR` or `~/.kaggle`) and the
+    /// path used: the API token in `access_token`, else `kaggle.json`.
+    pub fn from_files() -> Option<(Self, PathBuf)> {
         let dir = env::var_os("KAGGLE_CONFIG_DIR").map(PathBuf::from).or_else(|| dirs::home_dir().map(|h| h.join(".kaggle")))?;
+        let token = dir.join("access_token");
+        if let Some(text) = fs::read_to_string(&token).ok().filter(|t| !t.trim().is_empty()) {
+            return Some((KaggleCredentials::token(&text), token));
+        }
         let path = dir.join("kaggle.json");
-        let creds = serde_json::from_str(&fs::read_to_string(&path).ok()?).ok()?;
-        Some((creds, path))
+        let creds: KaggleCredentials = serde_json::from_str(&fs::read_to_string(&path).ok()?).ok()?;
+        (!creds.username.is_empty()).then_some((creds, path))
     }
 }
 
@@ -212,7 +242,7 @@ impl Settings {
     }
 
     /// Saves validated credentials for `service`, or removes them with `None`.
-    /// Kaggle takes `kaggle.json` contents or `username:key`.
+    /// Kaggle takes an API token, `kaggle.json` contents or `username:key`.
     pub fn set_credential(&mut self, service: Service, value: Option<&str>) -> Result<(), String> {
         match (service, value) {
             (Service::Roboflow, value) => self.roboflow_api_key = value.map(checked_key).transpose()?,
@@ -229,7 +259,7 @@ impl Settings {
         match service {
             Service::Roboflow => self.roboflow_api_key.as_deref().map(tail),
             Service::HuggingFace => self.huggingface_token.as_deref().map(tail),
-            Service::Kaggle => self.kaggle.as_ref().map(|k| k.username.clone()),
+            Service::Kaggle => self.kaggle.as_ref().map(|k| if k.is_token() { format!("API token …{}", tail(&k.key)) } else { k.username.clone() }),
         }
     }
 
@@ -242,6 +272,7 @@ impl Settings {
             kaggle: self.kaggle.clone(),
             hf_token: self.huggingface_token.clone(),
             fork_unversioned: false,
+            python: None,
         }
     }
 }
@@ -277,7 +308,12 @@ mod tests {
         let json = KaggleCredentials::parse(r#"{"username":"deniz","key":"0123456789abcdef"}"#).unwrap();
         assert_eq!(json, KaggleCredentials { username: "deniz".into(), key: "0123456789abcdef".into() });
         assert_eq!(KaggleCredentials::parse(" deniz:0123456789abcdef ").unwrap(), json);
-        assert!(KaggleCredentials::parse("0123456789abcdef").is_err());
+        assert!(KaggleCredentials::parse("0123456789abcdef").is_err(), "a legacy key needs the username");
+        let token = KaggleCredentials::parse(" KGAT_0123456789abcdef0123456789abcdef ").unwrap();
+        assert!(token.is_token());
+        assert_eq!(token.key, "KGAT_0123456789abcdef0123456789abcdef");
+        assert!(!toml::to_string(&token).unwrap().contains("username"));
+        assert_eq!(toml::from_str::<KaggleCredentials>("key = \"KGAT_0123456789abcdef\"").unwrap(), KaggleCredentials::token("KGAT_0123456789abcdef"));
         assert!(KaggleCredentials::parse(":0123456789abcdef").is_err());
         assert!(KaggleCredentials::parse(r#"{"username":"deniz"}"#).is_err());
     }

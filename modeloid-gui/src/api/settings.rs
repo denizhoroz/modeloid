@@ -67,9 +67,10 @@ pub fn validate_credential(service: ServiceId, value: &str) -> Result<(), String
                 Err("That isn't a valid kaggle.json. It needs \"username\" and \"key\".".into())
             }
         }
+        ServiceId::Kaggle if value.starts_with("KGAT_") => validate_api_key(value),
         ServiceId::Kaggle => match value.split_once(':') {
             Some((user, key)) if !user.trim().is_empty() => validate_api_key(key),
-            _ => Err("Paste the contents of kaggle.json, or username:key.".into()),
+            _ => Err("Kaggle API tokens start with KGAT_. A legacy key needs your username too: username:key, or the contents of kaggle.json.".into()),
         },
         _ => validate_api_key(value),
     }

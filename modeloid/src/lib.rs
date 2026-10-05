@@ -9,7 +9,7 @@ pub mod core;
 pub use models::dataset::{Dataset, Lineage, ParentRef};
 pub use models::parameters::ParameterSet;
 pub use models::workspace::{ConvertSummary, ImportMode, Output, validate_dataset_name};
-pub use models::settings::{AppearancePrefs, KaggleCredentials, Service, Settings, validate_api_key, HF_TOKEN_ENV, KAGGLE_KEY_ENV, KAGGLE_USERNAME_ENV, ROBOFLOW_KEY_ENV};
+pub use models::settings::{AppearancePrefs, KaggleCredentials, Service, Settings, validate_api_key, HF_TOKEN_ENV, KAGGLE_KEY_ENV, KAGGLE_TOKEN_ENV, KAGGLE_TOKEN_PREFIX, KAGGLE_USERNAME_ENV, ROBOFLOW_KEY_ENV};
 pub use models::workspace::Workspace;
 pub use core::download::{AlreadyExists, DownloadOptions, Downloader, Inspected, NoVersions, Source, SourceInfo};
 pub use core::scan::{DatasetStats, scan_dataset};
