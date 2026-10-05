@@ -35,8 +35,9 @@ cu130 = [
 [tool.uv]
 package = false
 # Albumentations asks for opencv-python-headless; Ultralytics brings
-# opencv-python. Both install the same cv2 module, so only one is kept.
-override-dependencies = ["opencv-python-headless; sys_platform == 'never'"]
+# opencv-python. Both install the same cv2 module, so only one is kept:
+# the headless one, which leaves out the GUI (Qt on Linux) Modeloid never uses.
+override-dependencies = ["opencv-python; sys_platform == 'never'"]
 conflicts = [
     [
         { extra = "cpu" },

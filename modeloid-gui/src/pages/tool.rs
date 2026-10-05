@@ -34,7 +34,7 @@ pub fn Tool(section: String, tool: String) -> Element {
         ("dataset", "classes-merge") => return rsx! { ClassesMerge {} },
         ("dataset", "split-balance") => return rsx! { SplitBalance {} },
         ("dataset", "convert") => return rsx! { Convert {} },
-        ("dataset", "transform") => return rsx! { Transform {} },
+        ("dataset", "augmentation") => return rsx! { Transform {} },
         ("training", "parameters") => return rsx! { Parameters {} },
         ("training", "train") => return rsx! { TrainModel {} },
         ("training", "performance") => return rsx! { Performance {} },

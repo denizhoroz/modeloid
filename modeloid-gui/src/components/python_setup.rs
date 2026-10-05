@@ -18,8 +18,9 @@ use crate::api::pyenv::{
 use crate::components::{set_if_newer, use_job, JobProgress};
 use crate::routes::Route;
 
-/// Sizes on Windows with Python 3.12, estimated from the 2 GB CUDA torch wheel.
-const GPU_DOWNLOAD_NOTE: &str = "Much faster training. About 2.2 GB to download, around 5 GB on disk.";
+/// Sizes on Windows with Python 3.12, measured with the CUDA 13.0 torch build
+/// (uv's download cache is cleared after installing).
+const GPU_DOWNLOAD_NOTE: &str = "Much faster training. About 2.2 GB to download, around 3.5 GB on disk.";
 
 fn status_text(status: &EnvStatus) -> (&'static str, &'static str) {
     match status {

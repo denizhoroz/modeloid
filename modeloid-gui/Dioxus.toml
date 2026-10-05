@@ -5,6 +5,10 @@
 # HTML title tag content
 title = "Modeloid"
 
+# Release builds shrink the browser app for size rather than speed
+[web.wasm_opt]
+level = "z"
+
 # include `assets` in web platform
 [web.resource]
 

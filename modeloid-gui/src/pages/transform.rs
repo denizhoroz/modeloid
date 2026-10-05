@@ -1,4 +1,4 @@
-//! Dataset Manager > Transform: augmented copies of the images of the dataset
+//! Dataset Manager > Augmentation: augmented copies of the images of the dataset
 //! selected in the panel, made with Albumentations. Choose which images get
 //! copies (splits, classes, share, copies each), the augmentations in a
 //! table (on/off, chance, settings), see the resulting counts, and save a
@@ -32,10 +32,10 @@ pub fn Transform() -> Element {
     let selected = use_selected_datasets();
 
     rsx! {
-        document::Title { "Transform · Modeloid" }
+        document::Title { "Augmentation · Modeloid" }
         div { class: "page page-wide",
             p { class: "page-eyebrow", "Dataset Manager" }
-            h1 { "Transform" }
+            h1 { "Augmentation" }
             p { class: "page-lead",
                 "Add augmented copies of a dataset's images: flips, crops, color changes, blur, weather and more. Boxes and outlines move with the pixels."
             }
@@ -43,7 +43,7 @@ pub fn Transform() -> Element {
                 (Some(_), Some(id)) => rsx! { TransformForm { key: "{id}", id, selected_count: selected.read().len() } },
                 (Some(_), None) => rsx! { SelectDatasetHint {} },
                 (None, _) if !checked() => rsx! {},
-                (None, _) => rsx! { NoWorkspace { text: "Transform works on a workspace's datasets." } },
+                (None, _) => rsx! { NoWorkspace { text: "Augmentation works on a workspace's datasets." } },
             }
         }
     }
@@ -577,7 +577,7 @@ fn RunCard(plan: TransformPlan, can_run: bool, name: String) -> Element {
             }
             div { class: "form-actions",
                 button { class: "button", r#type: "submit", disabled: !can_run || running || python_missing,
-                    if running { "Working…" } else { "Transform" }
+                    if running { "Working…" } else { "Augment" }
                 }
                 if !can_run {
                     span { class: "form-actions-note", "Resolve the problems in Result first." }

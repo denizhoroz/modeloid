@@ -44,7 +44,7 @@ pub const NAV: &[NavCategory] = &[
             item("Classes & Merge", "classes-merge"),
             item("Split & Balance", "split-balance"),
             item("Convert", "convert"),
-            item("Transform", "transform"),
+            item("Augmentation", "augmentation"),
         ],
     },
     NavCategory {

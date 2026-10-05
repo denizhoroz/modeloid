@@ -12,7 +12,7 @@ conflicts = [[
 ]]
 
 [manifest]
-overrides = [{ name = "opencv-python-headless", marker = "sys_platform == 'never'" }]
+overrides = [{ name = "opencv-python", marker = "sys_platform == 'never'" }]
 
 [[package]]
 name = "albucore"
@@ -20,7 +20,7 @@ version = "0.0.24"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy" },
-    { name = "opencv-python-headless", marker = "sys_platform == 'never' or (extra == 'extra-18-modeloid-pyservice-cpu' and extra == 'extra-18-modeloid-pyservice-cu130')" },
+    { name = "opencv-python-headless" },
     { name = "simsimd" },
     { name = "stringzilla" },
 ]
@@ -36,7 +36,7 @@ source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "albucore" },
     { name = "numpy" },
-    { name = "opencv-python-headless", marker = "sys_platform == 'never' or (extra == 'extra-18-modeloid-pyservice-cpu' and extra == 'extra-18-modeloid-pyservice-cu130')" },
+    { name = "opencv-python-headless" },
     { name = "pydantic" },
     { name = "pyyaml" },
     { name = "scipy" },
@@ -696,7 +696,7 @@ name = "opencv-python"
 version = "5.0.0.93"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy" },
+    { name = "numpy", marker = "(sys_platform != 'darwin' and sys_platform != 'win32') or (sys_platform == 'darwin' and extra == 'extra-18-modeloid-pyservice-cpu' and extra == 'extra-18-modeloid-pyservice-cu130') or (sys_platform == 'win32' and extra == 'extra-18-modeloid-pyservice-cpu' and extra == 'extra-18-modeloid-pyservice-cu130')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/79/4c/a438d23e09ce2033c09f7b784ad2fbdb0adf529e434101ed28f142226f98/opencv_python-5.0.0.93.tar.gz", hash = "sha256:66aac3e5b5faa48d4025816592f3af19e4bfc2c68dec067bae2dbb4ca10aa9e2", size = 81802749, upload-time = "2026-07-02T06:59:53.815Z" }
 wheels = [
@@ -715,7 +715,7 @@ name = "opencv-python-headless"
 version = "5.0.0.93"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy", marker = "(sys_platform != 'darwin' and sys_platform != 'win32') or (sys_platform == 'darwin' and extra == 'extra-18-modeloid-pyservice-cpu' and extra == 'extra-18-modeloid-pyservice-cu130') or (sys_platform == 'win32' and extra == 'extra-18-modeloid-pyservice-cpu' and extra == 'extra-18-modeloid-pyservice-cu130')" },
+    { name = "numpy" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/1d/99/76b7c80252aa83c1af16393454aafd125a0287101afe8deb0a6821af0e30/opencv_python_headless-5.0.0.93.tar.gz", hash = "sha256:b82f9831daab90b725c7c1ee1b36cb5732c367096ac76d119e64e14eb70d5f3c", size = 81817738, upload-time = "2026-07-02T07:01:06.039Z" }
 wheels = [
@@ -1230,7 +1230,7 @@ dependencies = [
     { name = "matplotlib" },
     { name = "numpy" },
     { name = "nvidia-ml-py" },
-    { name = "opencv-python" },
+    { name = "opencv-python", marker = "sys_platform == 'never' or (extra == 'extra-18-modeloid-pyservice-cpu' and extra == 'extra-18-modeloid-pyservice-cu130')" },
     { name = "pillow" },
     { name = "polars" },
     { name = "psutil" },

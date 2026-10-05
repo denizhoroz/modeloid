@@ -6,3 +6,41 @@ members = [
 ]
 default-members = ["modeloid-gui"]
 resolver = "3"
+
+# Release builds are what users download, so they're kept small.
+# `dx bundle --release` builds the server with `server-release` and the
+# browser app with `wasm-release`.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = true
+
+# The server: small code, except the crates doing the heavy work (images,
+# archives, datasets), which stay fully optimised.
+[profile.server-release]
+inherits = "release"
+opt-level = "s"
+
+[profile.server-release.package.modeloid]
+opt-level = 3
+[profile.server-release.package.image]
+opt-level = 3
+[profile.server-release.package.zune-jpeg]
+opt-level = 3
+[profile.server-release.package.png]
+opt-level = 3
+[profile.server-release.package.image-webp]
+opt-level = 3
+[profile.server-release.package.tiff]
+opt-level = 3
+[profile.server-release.package.fdeflate]
+opt-level = 3
+[profile.server-release.package.zip]
+opt-level = 3
+[profile.server-release.package.miniz_oxide]
+opt-level = 3
+
+# The browser app is downloaded on every fresh load: small code.
+[profile.wasm-release]
+inherits = "release"
+opt-level = "z"

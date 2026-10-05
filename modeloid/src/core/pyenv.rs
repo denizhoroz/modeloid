@@ -279,6 +279,17 @@ impl PyEnv {
         let info = self.check(variant, step.as_ref(), reporter)?;
         step.finish();
         fs::write(self.env_file(), serde_json::to_vec_pretty(&info)?)?;
+
+        // The environment's files are hardlinks into (or copies of) the
+        // cache, so it can go: that drops PyTorch builds left from earlier
+        // installs, and file managers stop counting the libraries twice.
+        let step = reporter.start("Cleaning up", Unit::Steps);
+        let mut cmd = self.uv(uv);
+        cmd.args(["cache", "clean"]);
+        if let Err(e) = run(cmd, step.as_ref(), reporter) {
+            reporter.message(&format!("Couldn't clear uv's download cache: {e}"));
+        }
+        step.finish();
         Ok(info)
     }
 
