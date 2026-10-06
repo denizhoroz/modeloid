@@ -78,14 +78,15 @@ mod backend {
         open(purpose, show, |file| file.parent().unwrap_or(file).to_path_buf()).await
     }
 
-    /// Shows a dialog on a blocking thread, starting in the purpose's last
-    /// folder, and remembers where the user went (`remember` maps the pick to a folder).
+    /// Shows a dialog off the async runtime (on the main thread on macOS, which
+    /// needs it there), starting in the purpose's last folder, and remembers
+    /// where the user went (`remember` maps the pick to a folder).
     async fn open(
         purpose: DialogPurpose,
         show: impl FnOnce(FileDialog) -> Option<PathBuf> + Send + 'static,
         remember: impl FnOnce(&Path) -> PathBuf + Send + 'static,
     ) -> Result<Option<PathBuf>, ServerFnError> {
-        tokio::task::spawn_blocking(move || {
+        crate::main_thread::run(move || {
             let mut dialog = FileDialog::new();
             if let Some(dir) = Settings::load_default().last_folder(purpose.key()) {
                 dialog = dialog.set_directory(dir);
@@ -110,7 +111,7 @@ mod backend {
             picked
         })
         .await
-        .map_err(|e| ServerFnError::new(e.to_string()))
+        .map_err(ServerFnError::new)
     }
 }
 

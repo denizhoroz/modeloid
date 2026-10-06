@@ -2,6 +2,8 @@ use dioxus::prelude::*;
 
 mod api;
 mod components;
+#[cfg(feature = "server")]
+mod main_thread;
 mod nav;
 mod pages;
 mod routes;
@@ -23,8 +25,11 @@ fn main() {
     modeloid::Settings::load_default().apply_system();
 
     // The server adds plain file routes (dataset images) next to the app.
+    // On macOS it runs off the main thread, which native dialogs need.
     #[cfg(feature = "server")]
-    dioxus::serve(|| async move { Ok(dioxus::server::router(App).merge(api::files::routes())) });
+    main_thread::serve(|| {
+        dioxus::serve(|| async move { Ok(dioxus::server::router(App).merge(api::files::routes())) })
+    });
 
     #[cfg(not(feature = "server"))]
     dioxus::launch(App);
