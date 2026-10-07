@@ -19,6 +19,12 @@ toml = "1.1.6"
 url = "2.5.8"
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 
+# Memory of this computer, for the jobs-at-once limit (see core/limits.rs)
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_System_SystemInformation"] }
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = "0.2"
+
 # Unpacking uv's .tar.gz download (Windows gets a zip)
 [target.'cfg(not(windows))'.dependencies]
 flate2 = "1"

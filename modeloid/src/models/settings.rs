@@ -228,11 +228,11 @@ impl Settings {
 
     /// System settings: the saved ones, or the defaults.
     pub fn system(&self) -> SystemPrefs {
-        self.system.unwrap_or_default().normalized(limits::cores())
+        self.system.unwrap_or_default().normalized(limits::machine())
     }
 
     pub fn set_system(&mut self, prefs: SystemPrefs) {
-        self.system = Some(prefs.normalized(limits::cores()));
+        self.system = Some(prefs.normalized(limits::machine()));
     }
 
     /// Puts the system settings to use in this process (`core::limits`).
@@ -299,8 +299,8 @@ mod tests {
         assert_eq!(loaded.system(), SystemPrefs { threads: 1, download_connections: 32, max_jobs: 2, thumb_size: 240 });
 
         // A file that names only one setting keeps the defaults for the rest.
-        let partial: Settings = toml::from_str("[system]\nmax_jobs = 3\n").unwrap();
-        assert_eq!(partial.system(), SystemPrefs { max_jobs: 3, ..Default::default() });
+        let partial: Settings = toml::from_str("[system]\nmax_jobs = 2\n").unwrap();
+        assert_eq!(partial.system(), SystemPrefs { max_jobs: 2, ..Default::default() });
     }
 
     #[test]

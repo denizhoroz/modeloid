@@ -18,9 +18,45 @@ pub fn cores() -> u32 {
     thread::available_parallelism().map_or(4, |n| n.get() as u32)
 }
 
+/// Bytes of memory in this computer; `None` when the OS doesn't say.
+pub fn memory() -> Option<u64> {
+    total_memory().filter(|&bytes| bytes > 0)
+}
+
+/// What this computer has, for the settings' limits.
+pub fn machine() -> Machine {
+    Machine { cores: cores(), memory: memory() }
+}
+
+#[cfg(windows)]
+fn total_memory() -> Option<u64> {
+    use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+    // SAFETY: MEMORYSTATUSEX is plain data; the call only writes into it.
+    let mut status: MEMORYSTATUSEX = unsafe { std::mem::zeroed() };
+    status.dwLength = size_of::<MEMORYSTATUSEX>() as u32;
+    (unsafe { GlobalMemoryStatusEx(&mut status) } != 0).then_some(status.ullTotalPhys)
+}
+
+#[cfg(target_os = "macos")]
+fn total_memory() -> Option<u64> {
+    let mut bytes = 0u64;
+    let mut len = size_of::<u64>();
+    // SAFETY: hw.memsize is a u64; `len` tells sysctl the buffer's size.
+    let ok = unsafe { libc::sysctlbyname(c"hw.memsize".as_ptr(), (&raw mut bytes).cast(), &mut len, std::ptr::null_mut(), 0) } == 0;
+    ok.then_some(bytes)
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+fn total_memory() -> Option<u64> {
+    // "MemTotal:       16318412 kB"
+    let info = std::fs::read_to_string("/proc/meminfo").ok()?;
+    let kb = info.lines().find_map(|line| line.strip_prefix("MemTotal:"))?.trim().strip_suffix("kB")?.trim().parse::<u64>().ok()?;
+    Some(kb * 1024)
+}
+
 /// Makes `prefs` (pulled into range) the limits in use.
 pub fn apply(prefs: SystemPrefs) {
-    let prefs = prefs.normalized(cores());
+    let prefs = prefs.normalized(machine());
     THREADS.store(prefs.threads, Relaxed);
     DOWNLOAD_CONNECTIONS.store(prefs.download_connections, Relaxed);
     MAX_RUNNING_JOBS.store(prefs.max_jobs, Relaxed);

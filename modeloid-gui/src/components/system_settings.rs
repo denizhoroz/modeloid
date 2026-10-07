@@ -1,7 +1,7 @@
 use dioxus::prelude::*;
 
 use crate::api::error_message;
-use crate::api::system::{cache_size, clear_cache, get_system, save_system, SystemView, MAX_DOWNLOAD_CONNECTIONS, MAX_JOBS, THUMB_SIZES};
+use crate::api::system::{cache_size, clear_cache, get_system, save_system, SystemView, MAX_DOWNLOAD_CONNECTIONS, THUMB_SIZES};
 use crate::components::{use_toasts, InfoTip, Slider, ToastKind};
 use crate::state::use_workspace;
 use crate::util::format_bytes;
@@ -28,7 +28,9 @@ fn SystemForm(view: SystemView) -> Element {
     let mut prefs = use_signal(|| view.prefs);
     let mut saving = use_signal(|| false);
     let mut error = use_signal(|| None::<String>);
-    let cores = view.cores;
+    let cores = view.machine.cores;
+    let max_jobs = view.machine.max_jobs();
+    let memory = view.machine.memory.map(|bytes| format!(" and {} of memory", format_bytes(bytes))).unwrap_or_default();
     let current = prefs();
     let changed = current != stored();
 
@@ -87,10 +89,10 @@ fn SystemForm(view: SystemView) -> Element {
                     "Jobs at once "
                     InfoTip {
                         label: "About jobs at once",
-                        text: "With more than one, a second tool can start while another works, e.g. a download during a Health Check. Each tool still runs one job at a time, and a job waits while another one uses the same dataset. Every job uses the worker threads above.",
+                        text: "With more than one, a second tool can start while another works, e.g. a download during a Health Check. Each tool still runs one job at a time, and a job waits while another one uses the same dataset. Every job uses the worker threads above. This computer ({cores} CPU cores{memory}) allows up to {max_jobs}: one per 2 cores and per 4 GB of memory.",
                     }
                 }
-                Slider { value: current.max_jobs, label: "Jobs at once", min: 1, max: MAX_JOBS, onchange: move |n| prefs.write().max_jobs = n }
+                Slider { value: current.max_jobs, label: "Jobs at once", min: 1, max: max_jobs, onchange: move |n| prefs.write().max_jobs = n }
             }
 
             div { class: "field",

@@ -3512,6 +3512,7 @@ dependencies = [
  "futures-util",
  "image",
  "imagesize",
+ "libc",
  "modeloid-types",
  "reqwest",
  "serde",
@@ -3520,6 +3521,7 @@ dependencies = [
  "tokio",
  "toml 1.1.6+spec-1.1.0",
  "url",
+ "windows-sys 0.61.2",
  "zip",
 ]
 

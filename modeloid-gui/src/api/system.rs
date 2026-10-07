@@ -5,14 +5,14 @@
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
-pub use modeloid_types::system::{SystemPrefs, MAX_DOWNLOAD_CONNECTIONS, MAX_JOBS, THUMB_SIZES};
+pub use modeloid_types::system::{Machine, SystemPrefs, MAX_DOWNLOAD_CONNECTIONS, THUMB_SIZES};
 
 /// The settings in use and what this computer has.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct SystemView {
     pub prefs: SystemPrefs,
-    /// CPU cores of the computer the server runs on.
-    pub cores: u32,
+    /// The computer the server runs on.
+    pub machine: Machine,
 }
 
 #[get("/api/settings/system")]
@@ -48,7 +48,7 @@ mod backend {
     use crate::api::workspace;
 
     pub fn view() -> SystemView {
-        SystemView { prefs: limits::current(), cores: limits::cores() }
+        SystemView { prefs: limits::current(), machine: limits::machine() }
     }
 
     pub fn save(prefs: SystemPrefs) -> Result<SystemView, String> {
