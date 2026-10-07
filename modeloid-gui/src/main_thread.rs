@@ -2,7 +2,8 @@
 //!
 //! macOS only shows native dialogs on the main thread when no app event loop
 //! is running (our server is a background process), so there the server runs
-//! on a side thread and the main thread waits for jobs. Other systems run the
+//! on a side thread and the main thread waits for jobs, handling window events
+//! meanwhile. Other systems run the
 //! server on the main thread and the work on a blocking worker thread.
 
 /// Runs the server (`run` never returns while it serves), keeping the main
@@ -27,9 +28,12 @@ pub async fn run<R: Send + 'static>(f: impl FnOnce() -> R + Send + 'static) -> R
 
 #[cfg(target_os = "macos")]
 mod imp {
-    use std::sync::mpsc::{channel, RecvTimeoutError, Sender};
+    use std::sync::mpsc::{channel, Sender, TryRecvError};
     use std::sync::{Mutex, OnceLock};
-    use std::time::Duration;
+
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::{NSApplication, NSEventMask};
+    use objc2_foundation::{NSDate, NSDefaultRunLoopMode};
 
     type Job = Box<dyn FnOnce() + Send>;
 
@@ -39,12 +43,24 @@ mod imp {
         let (tx, rx) = channel::<Job>();
         let _ = QUEUE.set(Mutex::new(tx));
         let server = std::thread::spawn(run);
+        let app = NSApplication::sharedApplication(MainThreadMarker::new().expect("serve runs on the main thread"));
 
         loop {
-            match rx.recv_timeout(Duration::from_millis(100)) {
+            match rx.try_recv() {
                 Ok(job) => job(),
-                Err(RecvTimeoutError::Timeout) => {}
-                Err(RecvTimeoutError::Disconnected) => break,
+                Err(TryRecvError::Empty) => {}
+                Err(TryRecvError::Disconnected) => break,
+            }
+            // Handle window events while waiting (up to 100ms). A closed dialog
+            // only leaves the screen once its events are handled; without this
+            // macOS sees a hung app and shows a busy cursor where it was.
+            let until = NSDate::dateWithTimeIntervalSinceNow(0.1);
+            // SAFETY: reading an AppKit constant.
+            let mode = unsafe { NSDefaultRunLoopMode };
+            while let Some(event) =
+                app.nextEventMatchingMask_untilDate_inMode_dequeue(NSEventMask::Any, Some(&until), mode, true)
+            {
+                app.sendEvent(&event);
             }
             // The server stopped (or panicked): don't keep the process alive.
             if server.is_finished() {

@@ -28,12 +28,29 @@ windows-sys = { version = "0.61", optional = true, features = [
     "Win32_UI_WindowsAndMessaging",
 ] }
 
+# Keeps the main thread's event queue drained after a dialog (see main_thread.rs)
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { version = "0.6", optional = true }
+objc2-app-kit = { version = "0.3", optional = true, default-features = false, features = [
+    "std",
+    "NSApplication",
+    "NSEvent",
+    "NSResponder",
+] }
+objc2-foundation = { version = "0.3", optional = true, default-features = false, features = [
+    "std",
+    "NSDate",
+    "NSObjCRuntime",
+    "NSRunLoop",
+    "NSString",
+] }
+
 [features]
 default = ["web"]
 web = ["dioxus/web"]
 desktop = ["dioxus/desktop"]
 mobile = ["dioxus/mobile"]
-server = ["dioxus/server", "dep:modeloid", "dep:rfd", "dep:tokio", "dep:futures-util", "dep:raw-window-handle", "dep:windows-sys"]
+server = ["dioxus/server", "dep:modeloid", "dep:rfd", "dep:tokio", "dep:futures-util", "dep:raw-window-handle", "dep:windows-sys", "dep:objc2", "dep:objc2-app-kit", "dep:objc2-foundation"]
 
 [dev-dependencies]
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time"] }
