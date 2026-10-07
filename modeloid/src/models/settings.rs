@@ -457,9 +457,9 @@ mod tests {
 
     #[test]
     fn parses_kaggle_credentials() {
-        let json = KaggleCredentials::parse(r#"{"username":"deniz","key":"0123456789abcdef"}"#).unwrap();
-        assert_eq!(json, KaggleCredentials { username: "deniz".into(), key: "0123456789abcdef".into() });
-        assert_eq!(KaggleCredentials::parse(" deniz:0123456789abcdef ").unwrap(), json);
+        let json = KaggleCredentials::parse(r#"{"username":"someone","key":"0123456789abcdef"}"#).unwrap();
+        assert_eq!(json, KaggleCredentials { username: "someone".into(), key: "0123456789abcdef".into() });
+        assert_eq!(KaggleCredentials::parse(" someone:0123456789abcdef ").unwrap(), json);
         assert!(KaggleCredentials::parse("0123456789abcdef").is_err(), "a legacy key needs the username");
         let token = KaggleCredentials::parse(" KGAT_0123456789abcdef0123456789abcdef ").unwrap();
         assert!(token.is_token());
@@ -467,7 +467,7 @@ mod tests {
         assert!(!toml::to_string(&token).unwrap().contains("username"));
         assert_eq!(toml::from_str::<KaggleCredentials>("key = \"KGAT_0123456789abcdef\"").unwrap(), KaggleCredentials::token("KGAT_0123456789abcdef"));
         assert!(KaggleCredentials::parse(":0123456789abcdef").is_err());
-        assert!(KaggleCredentials::parse(r#"{"username":"deniz"}"#).is_err());
+        assert!(KaggleCredentials::parse(r#"{"username":"someone"}"#).is_err());
     }
 
     #[test]
@@ -480,14 +480,14 @@ mod tests {
         assert_eq!(settings.credential_hint(Service::Roboflow), None);
 
         settings.set_credential(Service::Roboflow, Some(" abcdefgh1234 ")).unwrap();
-        settings.set_credential(Service::Kaggle, Some("deniz:0123456789abcdef")).unwrap();
+        settings.set_credential(Service::Kaggle, Some("someone:0123456789abcdef")).unwrap();
         settings.save(&path).unwrap();
         assert!(fs::read_to_string(&path).unwrap().contains("roboflow_api_key = \"abcdefgh1234\""));
 
         let loaded = Settings::load(&path).unwrap();
         assert_eq!(loaded.roboflow_api_key().as_deref(), Some("abcdefgh1234"));
         assert_eq!(loaded.credential_hint(Service::Roboflow).as_deref(), Some("1234"));
-        assert_eq!(loaded.credential_hint(Service::Kaggle).as_deref(), Some("deniz"));
+        assert_eq!(loaded.credential_hint(Service::Kaggle).as_deref(), Some("someone"));
         assert_eq!(loaded.download_options("coco".into()).kaggle.unwrap().key, "0123456789abcdef");
 
         assert!(settings.set_credential(Service::HuggingFace, Some("bad key")).is_err());
@@ -539,12 +539,12 @@ mod tests {
 
         // An older version's file: the keys move to the store and out of the file.
         fs::create_dir_all(&dir).unwrap();
-        fs::write(&path, "roboflow_api_key = \"abcdefgh1234\"\n[kaggle]\nusername = \"deniz\"\nkey = \"0123456789abcdef\"\n").unwrap();
+        fs::write(&path, "roboflow_api_key = \"abcdefgh1234\"\n[kaggle]\nusername = \"someone\"\nkey = \"0123456789abcdef\"\n").unwrap();
         let mut settings = Settings::load_with(&path, store.clone()).unwrap();
         let text = fs::read_to_string(&path).unwrap();
-        assert!(!text.contains("abcdefgh1234") && !text.contains("deniz"), "{text}");
+        assert!(!text.contains("abcdefgh1234") && !text.contains("someone"), "{text}");
         assert_eq!(entries.lock().unwrap().get("roboflow-api-key").map(String::as_str), Some("abcdefgh1234"));
-        assert_eq!(settings.kaggle().unwrap().username, "deniz");
+        assert_eq!(settings.kaggle().unwrap().username, "someone");
         assert_eq!(settings.credential_store(), Some("the test store"));
 
         // New ones go straight to the store; saving never writes them.

@@ -61,6 +61,17 @@ def event(name, **data):
     print("@modeloid " + json.dumps({"event": name, **data}), flush=True)
 
 
+def forget_git():
+    """Ultralytics saves the git repo above its install folder (Modeloid's own,
+    in development) into every checkpoint: its path, branch, last commit message
+    and remote. None of it belongs in the user's models."""
+    from ultralytics.utils import GIT
+
+    for cached in ("head", "branch", "commit", "message", "origin"):
+        GIT.__dict__.pop(cached, None)
+    GIT.root = GIT.gitdir = GIT.refdir = None
+
+
 def check():
     import torch
     import torchvision
@@ -113,6 +124,7 @@ def train(config_path):
 
     from ultralytics import RTDETR, YOLO
 
+    forget_git()
     if config.get("rtdetr"):
         model = RTDETR(config["model"])
     else:
@@ -216,6 +228,7 @@ def tune(config_path):
     import optuna
     from ultralytics import RTDETR, YOLO
 
+    forget_git()
     space = config["space"]
     trials = int(config["trials"])
     base = dict(config["args"])

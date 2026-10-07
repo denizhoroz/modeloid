@@ -142,10 +142,10 @@ mod tests {
 
     #[test]
     fn validates_kaggle_credentials() {
-        assert!(validate_credential(ServiceId::Kaggle, "deniz:0123456789abcdef").is_ok());
-        assert!(validate_credential(ServiceId::Kaggle, r#"{"username":"deniz","key":"0123456789abcdef"}"#).is_ok());
+        assert!(validate_credential(ServiceId::Kaggle, "someone:0123456789abcdef").is_ok());
+        assert!(validate_credential(ServiceId::Kaggle, r#"{"username":"someone","key":"0123456789abcdef"}"#).is_ok());
         assert!(validate_credential(ServiceId::Kaggle, "0123456789abcdef").is_err());
-        assert!(validate_credential(ServiceId::Kaggle, r#"{"username":"deniz"}"#).is_err());
+        assert!(validate_credential(ServiceId::Kaggle, r#"{"username":"someone"}"#).is_err());
         assert!(validate_credential(ServiceId::HuggingFace, "hf_0123456789abcdef").is_ok());
     }
 }
@@ -166,15 +166,15 @@ mod server_tests {
         assert_eq!(status.saved_hint.as_deref(), Some("1234"));
         assert_eq!(status.fallback, None);
 
-        let status = backend::set(&path, ServiceId::Kaggle, Some("deniz:0123456789abcdef".into())).unwrap();
-        assert_eq!(status.saved_hint.as_deref(), Some("deniz"));
+        let status = backend::set(&path, ServiceId::Kaggle, Some("someone:0123456789abcdef".into())).unwrap();
+        assert_eq!(status.saved_hint.as_deref(), Some("someone"));
 
         assert!(backend::set(&path, ServiceId::HuggingFace, Some("bad key".into())).is_err());
 
         let status = backend::set(&path, ServiceId::Roboflow, None).unwrap();
         assert_eq!(status.saved_hint, None);
         let text = std::fs::read_to_string(&path).unwrap();
-        assert!(!text.contains("roboflow") && text.contains("deniz"));
+        assert!(!text.contains("roboflow") && text.contains("someone"));
 
         let _ = std::fs::remove_dir_all(&dir);
     }

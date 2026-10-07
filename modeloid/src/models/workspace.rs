@@ -222,13 +222,6 @@ impl Workspace {
         self.seed
     }
 
-    pub fn display_info(&self) -> Result<(), crate::Error> {
-        let contents = toml::to_string(self)?;
-        println!("{contents}");
-
-        Ok(())
-    }
-
     fn _create_workspace_file(&self, root_dir: &PathBuf) -> Result<(), crate::Error> {
         let file = &WorkspaceFile { workspace: self };
         let contents = toml::to_string(file)?;
