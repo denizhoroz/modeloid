@@ -3,7 +3,7 @@
 //! A run lives in `training/trains/<name>/`:
 //!
 //! ```text
-//! train.toml        TrainRecord: dataset, parameters, device, status, best weights
+//! train.toml        TrainRecord: dataset, parameters, device, status, best weights, end summary
 //! parameters.toml   the parameter set as it was when the run started
 //! data.yaml         the dataset for Ultralytics (or dataset/data.yaml when converted)
 //! dataset/          YOLO copy of a COCO / VOC dataset (YOLO datasets are used in place)
@@ -433,6 +433,7 @@ pub fn run(env: &PyEnv, prepared: &PreparedTrain, reporter: &dyn Reporter) -> Re
     let mut done_epochs = 0u32;
     let mut total_epochs = record.epochs;
     let mut best: Option<String> = None;
+    let mut summary: Option<RunSummary> = None;
     let mut last_error: Option<String> = None;
 
     let cmd = env.service_command([std::ffi::OsStr::new("train"), prepared.config.as_os_str()])?;
@@ -446,6 +447,11 @@ pub fn run(env: &PyEnv, prepared: &PreparedTrain, reporter: &dyn Reporter) -> Re
                             epochs.set_total(total);
                             total_epochs = total as u32;
                         }
+                        // Saved now, so pages show it while the run trains.
+                        if let Some(name) = event["device_name"].as_str().filter(|n| !n.is_empty()) {
+                            record.device_name = Some(name.to_string());
+                            let _ = save_record(&prepared.dir, &record);
+                        }
                     }
                     Some("epoch") => {
                         // Ultralytics also reports its final validation as an epoch end.
@@ -455,7 +461,10 @@ pub fn run(env: &PyEnv, prepared: &PreparedTrain, reporter: &dyn Reporter) -> Re
                             done_epochs = epoch;
                         }
                     }
-                    Some("done") => best = event["best"].as_str().filter(|b| !b.is_empty()).map(str::to_string),
+                    Some("done") => {
+                        best = event["best"].as_str().filter(|b| !b.is_empty()).map(str::to_string);
+                        summary = serde_json::from_value::<RunSummary>(event["summary"].clone()).ok().filter(|s| !s.is_empty());
+                    }
                     Some("error") => last_error = event["error"].as_str().map(str::to_string),
                     _ => {}
                 }
@@ -481,6 +490,7 @@ pub fn run(env: &PyEnv, prepared: &PreparedTrain, reporter: &dyn Reporter) -> Re
         let path = prepared.dir.join(RUNS_NAME).join("weights").join("best.pt");
         path.is_file().then(|| path.display().to_string())
     });
+    record.summary = summary;
     record.status = match &result {
         Ok(()) => TrainStatus::Done,
         Err(e) if e.downcast_ref::<crate::Cancelled>().is_some() => TrainStatus::Stopped,

@@ -16,6 +16,11 @@ pub fn format_bytes(bytes: u64) -> String {
     }
 }
 
+/// "2026-09-28 14:03" from an RFC 3339 time.
+pub fn short_time(rfc3339: &str) -> String {
+    rfc3339.get(..16).map(|s| s.replace('T', " ")).unwrap_or_else(|| rfc3339.to_string())
+}
+
 /// Number with thousands separators, e.g. `12,345`.
 pub fn format_count(n: impl Into<u64>) -> String {
     let digits = n.into().to_string();

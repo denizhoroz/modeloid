@@ -15,7 +15,7 @@ use crate::api::health::{health_report, health_summaries, start_health_check, st
 use crate::api::jobs::JobKind;
 use crate::components::{set_if_newer, use_job, InfoTip, JobProgress, NoWorkspace, OutputChoice, OutputSelect, SelectDatasetHint};
 use crate::state::{use_datasets_version, use_selected_datasets, use_workspace, use_workspace_checked};
-use crate::util::{format_count, plural};
+use crate::util::{format_count, plural, short_time};
 
 #[component]
 pub fn HealthCheck() -> Element {
@@ -724,9 +724,4 @@ fn count_selected(f: &HealthFixes) -> usize {
     .iter()
     .filter(|on| **on)
     .count()
-}
-
-/// "2026-09-28 14:03" from an RFC 3339 time.
-fn short_time(rfc3339: &str) -> String {
-    rfc3339.get(..16).map(|s| s.replace('T', " ")).unwrap_or_else(|| rfc3339.to_string())
 }

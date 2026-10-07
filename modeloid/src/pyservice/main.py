@@ -10,7 +10,8 @@ Commands:
                    "args": {Ultralytics train() arguments}}.
                   Ultralytics' own output passes through (the console Modeloid
                   shows); progress events are lines starting with
-                  "@modeloid " followed by JSON: start, epoch, done, error.
+                  "@modeloid " followed by JSON: start, epoch, done (with a
+                  summary: final scores, speed, model size, peak memory), error.
   tune <config>   Tunes hyperparameters with Optuna:
                   {"model", "task", "rtdetr", "args" (Ultralytics train()
                    arguments shared by every trial), "trials": 20,
@@ -41,6 +42,7 @@ Errors exit non-zero; `check` prints {"error": "..."}, the others an error event
 """
 
 import json
+import math
 import os
 import platform
 import shutil
@@ -114,7 +116,7 @@ def train(config_path):
         model = YOLO(config["model"], task=config.get("task"))
 
     def on_train_start(trainer):
-        event("start", epochs=trainer.epochs, save_dir=str(trainer.save_dir))
+        event("start", epochs=trainer.epochs, save_dir=str(trainer.save_dir), device_name=device_name(trainer.device))
 
     def on_fit_epoch_end(trainer):
         metrics = {k: float(v) for k, v in (trainer.metrics or {}).items() if isinstance(v, (int, float))}
@@ -126,7 +128,75 @@ def train(config_path):
 
     trainer = model.trainer
     best = trainer.best if trainer.best and trainer.best.exists() else trainer.last
-    event("done", save_dir=str(trainer.save_dir), best=str(best) if best else "")
+    event("done", save_dir=str(trainer.save_dir), best=str(best) if best else "", summary=run_summary(model, trainer))
+
+
+def device_name(device):
+    """The name of the hardware training runs on, e.g. "NVIDIA GeForce RTX 3060",
+    or "" when it can't be read."""
+    try:
+        if device.type == "cuda":
+            import torch
+
+            return torch.cuda.get_device_name(device)
+        # CPU, and Apple GPUs (part of the chip): the processor's name.
+        from ultralytics.utils.torch_utils import get_cpu_info
+
+        return get_cpu_info()
+    except Exception:
+        return ""
+
+
+def finite(value):
+    """`value` as a float, or None when it isn't a finite number (JSON has no NaN)."""
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return None
+    return value if math.isfinite(value) else None
+
+
+def peak_ram():
+    """Most memory this process used, in bytes, or None."""
+    try:
+        if sys.platform == "win32":
+            import psutil
+
+            return int(psutil.Process().memory_info().peak_wset)
+        import resource
+
+        peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        return int(peak if sys.platform == "darwin" else peak * 1024)  # bytes on macOS, KiB on Linux
+    except Exception:
+        return None
+
+
+def run_summary(model, trainer):
+    """What a finished training measured: the final validation of the best
+    weights (Ultralytics runs it after the last epoch), the model's size, its
+    speed and peak memory. Parts that can't be read are left out."""
+    import torch
+
+    summary = {}
+    # After that final validation the trainer's metrics are the best weights' scores.
+    final = {k: finite(v) for k, v in (trainer.metrics or {}).items() if k.startswith("metrics/")}
+    summary["final_metrics"] = {k: v for k, v in final.items() if v is not None}
+    speed = getattr(getattr(trainer, "validator", None), "speed", None) or {}
+    summary["speed"] = {k: v for k, v in ((k, finite(v)) for k, v in speed.items()) if v is not None}
+    try:
+        # The trained model (train() loads the best weights back), counted like Ultralytics' summary line.
+        from ultralytics.utils.torch_utils import get_flops, get_num_params
+
+        net = model.model
+        summary["layers"] = sum(1 for m in net.modules() if len(m._modules) == 0)
+        summary["parameters"] = int(get_num_params(net))
+        summary["gflops"] = finite(get_flops(net, trainer.args.imgsz)) or None
+    except Exception:
+        pass
+    if getattr(trainer.device, "type", "") == "cuda" and torch.cuda.is_available():
+        summary["peak_gpu_bytes"] = int(torch.cuda.max_memory_reserved(trainer.device))
+    summary["peak_ram_bytes"] = peak_ram()
+    return {k: v for k, v in summary.items() if v is not None}
 
 
 def tune(config_path):

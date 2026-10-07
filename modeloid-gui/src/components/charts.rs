@@ -200,7 +200,8 @@ pub fn format_value(v: f64) -> String {
 
 /// Lines over `x` (e.g. epochs), y scaled to the values' range. Each x has a
 /// hover column with every series' value; `marker` draws a line at one x
-/// (e.g. the best epoch).
+/// (e.g. the best epoch); `reference` a dotted line at one y, named in the
+/// legend (e.g. the final score).
 #[component]
 pub fn LineChart(
     x: Vec<f64>,
@@ -210,9 +211,11 @@ pub fn LineChart(
     #[props(into, default = "".to_string())]
     x_name: String,
     #[props(default)] marker: Option<usize>,
+    #[props(default)] reference: Option<(String, f64)>,
 ) -> Element {
     let n = x.len();
-    let finite = series.iter().flat_map(|s| s.values.iter().copied()).filter(|v| v.is_finite());
+    let reference = reference.filter(|(_, v)| v.is_finite());
+    let finite = series.iter().flat_map(|s| s.values.iter().copied()).chain(reference.as_ref().map(|r| r.1)).filter(|v| v.is_finite());
     let (mut lo, mut hi) = finite.fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), v| (lo.min(v), hi.max(v)));
     if !lo.is_finite() {
         (lo, hi) = (0.0, 1.0);
@@ -243,7 +246,7 @@ pub fn LineChart(
         .collect();
     let first = x.first().copied().map(format_value).unwrap_or_default();
     let last = x.last().copied().map(format_value).unwrap_or_default();
-    let legend = series.len() > 1;
+    let legend = series.len() > 1 || reference.is_some();
 
     rsx! {
         figure { class: "line-chart", role: "img", aria_label: "{label}",
@@ -253,6 +256,9 @@ pub fn LineChart(
                 svg { class: "line-chart-svg", view_box: "0 0 100 100", preserve_aspect_ratio: "none", "aria-hidden": "true",
                     if let Some(m) = marker.filter(|m| *m < n) {
                         line { class: "line-chart-marker", x1: "{px(m):.2}", x2: "{px(m):.2}", y1: "0", y2: "100" }
+                    }
+                    if let Some((_, v)) = &reference {
+                        line { class: "line-chart-reference", x1: "0", x2: "100", y1: "{py(*v):.2}", y2: "{py(*v):.2}" }
                     }
                     for (si, (dashed, runs)) in paths.iter().enumerate() {
                         for (ri, run) in runs.iter().enumerate() {
@@ -278,6 +284,7 @@ pub fn LineChart(
                                     let v = s.values.get(i).copied().unwrap_or(f64::NAN);
                                     if legend { format!("{} {}", s.label, format_value(v)) } else { format_value(v) }
                                 })
+                                .chain(reference.iter().map(|(name, v)| format!("{name} {}", format_value(*v))))
                                 .collect();
                             let tip = format!("{x_name} {}: {}", format_value(x[i]), values.join(", "));
                             rsx! { div { key: "{i}", class: "line-chart-hit", "data-tip": "{tip.trim()}" } }
@@ -295,6 +302,12 @@ pub fn LineChart(
                         span { key: "{s.label}", class: "line-chart-key",
                             span { class: if s.dashed { "line-chart-swatch is-dashed" } else { "line-chart-swatch" } }
                             "{s.label}"
+                        }
+                    }
+                    if let Some((name, v)) = &reference {
+                        span { class: "line-chart-key",
+                            span { class: "line-chart-swatch is-reference" }
+                            "{name} {format_value(*v)}"
                         }
                     }
                 }

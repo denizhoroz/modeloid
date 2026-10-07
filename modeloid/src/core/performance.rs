@@ -1,10 +1,11 @@
 //! A trained model's results, read from its run's `runs/` folder (what
 //! Ultralytics saved): `results.csv` per epoch, plots, batches and weights.
+//! Runs from before `train.toml` kept a summary get theirs from `console.log`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::core::train::{ImageGroup, RunFile, RunImage, RunResults, RUNS_NAME};
+use crate::core::train::{ImageGroup, RunFile, RunImage, RunResults, RunSummary, CONSOLE_FILE, RUNS_NAME};
 use crate::models::workspace::Workspace;
 
 /// Picture types shown on the Performance page.
@@ -17,6 +18,16 @@ impl Workspace {
         crate::validate_dataset_name(name)?;
         let mut record = self.train_record(name)?;
         record.name = name.to_string();
+        if record.summary.is_none() || record.device_name.is_none() {
+            if let Ok(text) = fs::read_to_string(self.train_dir(name).join(CONSOLE_FILE)) {
+                if record.summary.is_none() {
+                    record.summary = Some(summary_from_console(&text)).filter(|s| !s.is_empty());
+                }
+                if record.device_name.is_none() {
+                    record.device_name = device_from_console(&text);
+                }
+            }
+        }
         let runs = self.train_dir(name).join(RUNS_NAME);
         let mut results = RunResults { record, ..Default::default() };
 
@@ -78,6 +89,123 @@ fn collect(root: &Path, dir: &Path, out: &mut Vec<(String, u64)>) {
             out.push((rel, meta.len()));
         }
     }
+}
+
+/// What a run's console says about its end (for runs whose `train.toml` has
+/// no summary): the final validation's "all" row, the speed line, the model
+/// summary line and the most GPU memory an epoch line shows. Peak RAM isn't
+/// in the console.
+fn summary_from_console(text: &str) -> RunSummary {
+    let lines: Vec<&str> = text.lines().map(str::trim).collect();
+    let mut summary = RunSummary::default();
+
+    // After the last epoch Ultralytics prints "Validating .../best.pt...", a
+    // header naming the score groups, then one row per class, "all" first.
+    if let Some(start) = lines.iter().rposition(|l| l.starts_with("Validating ")) {
+        let rest = &lines[start..];
+        let header = rest.iter().find(|l| l.contains("Instances") || l.contains("top1_acc"));
+        let all = rest.iter().map(|l| l.split_whitespace().collect::<Vec<_>>()).find(|t| t.first() == Some(&"all"));
+        if let (Some(header), Some(all)) = (header, all) {
+            let numbers: Vec<f64> = all[1..].iter().filter_map(|v| v.parse().ok()).collect();
+            if header.contains("top1_acc") {
+                for (key, value) in ["metrics/accuracy_top1", "metrics/accuracy_top5"].into_iter().zip(numbers) {
+                    summary.final_metrics.insert(key.into(), value);
+                }
+            } else {
+                // Groups in header order, e.g. "Box(P R mAP50 mAP50-95) Mask(P ...)"; images and instances come first.
+                let mut groups: Vec<(usize, &str)> =
+                    [("Box(", "B"), ("Mask(", "M"), ("Pose(", "P")].into_iter().filter_map(|(g, k)| header.find(g).map(|at| (at, k))).collect();
+                groups.sort_unstable();
+                let scores = numbers.get(2..).unwrap_or_default();
+                for ((_, kind), values) in groups.iter().zip(scores.chunks(4)) {
+                    for (name, value) in ["precision", "recall", "mAP50", "mAP50-95"].into_iter().zip(values) {
+                        summary.final_metrics.insert(format!("metrics/{name}({kind})"), *value);
+                    }
+                }
+            }
+        }
+    }
+
+    // "Speed: 0.1ms preprocess, 1.6ms inference, 0.0ms loss, 0.7ms postprocess per image"
+    if let Some(line) = lines.iter().rev().find_map(|l| l.strip_prefix("Speed:")) {
+        for part in line.split(',') {
+            let mut words = part.split_whitespace();
+            if let (Some(ms), Some(name)) = (words.next().and_then(|w| w.strip_suffix("ms")).and_then(|v| v.parse().ok()), words.next()) {
+                summary.speed.insert(name.to_string(), ms);
+            }
+        }
+    }
+
+    // "YOLO26n summary: 260 layers, 2,505,750 parameters, 2,505,750 gradients, 5.9 GFLOPs"
+    // (the model as trained; the "(fused)" one after training is smaller).
+    if let Some(line) = lines.iter().find_map(|l| l.split_once(" summary: ").map(|(_, rest)| rest).filter(|r| r.contains("parameters"))) {
+        for part in line.split(", ") {
+            if let Some((value, unit)) = part.trim().split_once(' ') {
+                let number = value.replace(',', "");
+                match unit {
+                    "layers" => summary.layers = number.parse().ok(),
+                    "parameters" => summary.parameters = number.parse().ok(),
+                    "GFLOPs" => summary.gflops = number.parse().ok(),
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    // Epoch lines: "96/100  2.98G  0.4326 ..." (GPU memory reserved, in GiB).
+    let peak_gib = lines
+        .iter()
+        .filter_map(|l| {
+            let mut t = l.split_whitespace();
+            let (epoch, of) = t.next()?.split_once('/')?;
+            if epoch.parse::<u32>().is_err() || of.parse::<u32>().is_err() {
+                return None;
+            }
+            t.next()?.strip_suffix('G')?.parse::<f64>().ok()
+        })
+        .fold(0.0, f64::max);
+    if peak_gib > 0.0 {
+        summary.peak_gpu_bytes = Some((peak_gib * (1u64 << 30) as f64) as u64);
+    }
+    summary
+}
+
+/// The hardware named in Ultralytics' first line, e.g. "Ultralytics 8.4.171
+/// Python-3.12.13 torch-2.14.1 CUDA:0 (NVIDIA GeForce RTX 3060, 12288MiB)"
+/// → "NVIDIA GeForce RTX 3060"; "CPU (Intel Core i7-12700)" → the processor.
+fn device_from_console(text: &str) -> Option<String> {
+    let line = text.lines().map(str::trim).find(|l| l.starts_with("Ultralytics "))?;
+    let mut names: Vec<&str> = Vec::new();
+    for (at, _) in line.match_indices(" (") {
+        let device = line[..at].rsplit(' ').next().unwrap_or_default();
+        if !(device == "CPU" || device == "MPS" || device.starts_with("CUDA:")) {
+            continue;
+        }
+        // To the matching ")": CPU names can hold their own, e.g. "Core(TM)".
+        let rest = &line[at + 2..];
+        let mut depth = 0;
+        let Some(end) = rest.char_indices().find_map(|(i, c)| match c {
+            '(' => {
+                depth += 1;
+                None
+            }
+            ')' if depth == 0 => Some(i),
+            ')' => {
+                depth -= 1;
+                None
+            }
+            _ => None,
+        }) else {
+            continue;
+        };
+        let inside = &rest[..end];
+        // GPUs carry their memory after the name.
+        let name = inside.rsplit_once(", ").filter(|(_, memory)| memory.ends_with("MiB")).map_or(inside, |(name, _)| name).trim();
+        if !name.is_empty() && !names.contains(&name) {
+            names.push(name);
+        }
+    }
+    (!names.is_empty()).then(|| names.join(", "))
 }
 
 /// `results.csv`: trimmed headers, and rows of numbers (NaN where a cell isn't one).
@@ -185,5 +313,46 @@ mod tests {
         assert!(ws.run_image("../ws", "runs/results.png").is_err());
         assert!(ws.train_results("missing").is_err());
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn reads_the_end_of_a_console() {
+        let console = "\
+YOLO26n summary: 260 layers, 2,505,750 parameters, 2,505,750 gradients, 5.9 GFLOPs
+      Epoch    GPU_mem   box_loss   cls_loss    l1_loss  Instances       Size
+      1/2      2.5G     0.4326     0.1807   0.009338         15        640: 100% 187/187 9.1it/s 20.6s
+      2/2      2.98G     0.4197     0.1753   0.009031         17        640: 100% 187/187 9.0it/s 20.7s
+                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 100% 14/14 8.8it/s 1.6s
+                   all        427        598      0.973      0.901      0.954      0.783
+
+Validating runs\\weights\\best.pt...
+YOLO26n summary (fused): 120 layers, 2,375,811 parameters, 0 gradients, 5.3 GFLOPs
+                 Class     Images  Instances      Box(P          R      mAP50  mAP50-95): 100% 14/14 6.6it/s 2.1s
+                   all        427        598      0.974      0.902      0.954      0.785
+                   bus        115        158      0.974      0.941      0.978      0.875
+Speed: 0.1ms preprocess, 1.6ms inference, 0.0ms loss, 0.7ms postprocess per image
+";
+        let s = summary_from_console(console);
+        assert_eq!(s.final_metrics.get("metrics/precision(B)"), Some(&0.974));
+        assert_eq!(s.final_metrics.get("metrics/mAP50-95(B)"), Some(&0.785));
+        assert_eq!(s.final_metrics.len(), 4);
+        assert_eq!(s.speed.get("inference"), Some(&1.6));
+        assert!((s.inference_ms().unwrap() - 2.4).abs() < 1e-9);
+        assert_eq!((s.layers, s.parameters, s.gflops), (Some(260), Some(2_505_750), Some(5.9)));
+        assert_eq!(s.peak_gpu_bytes, Some((2.98 * (1u64 << 30) as f64) as u64));
+        assert_eq!(s.peak_ram_bytes, None);
+
+        let segment = "Validating best.pt...\n Class Images Instances Box(P R mAP50 mAP50-95) Mask(P R mAP50 mAP50-95): 100%\n all 10 20 0.9 0.8 0.7 0.6 0.5 0.4 0.3 0.2\n";
+        let s = summary_from_console(segment);
+        assert_eq!(s.final_metrics.get("metrics/mAP50(M)"), Some(&0.3));
+        assert!(summary_from_console("nothing useful").is_empty());
+
+        let gpu = "New version available\nUltralytics 8.4.171  Python-3.12.13 torch-2.14.1+cu130 CUDA:0 (NVIDIA GeForce RTX 3060, 12288MiB)\n";
+        assert_eq!(device_from_console(gpu).as_deref(), Some("NVIDIA GeForce RTX 3060"));
+        let cpu = "Ultralytics 8.4.171  Python-3.12.13 torch-2.14.1+cpu CPU (13th Gen Intel Core(TM) i7-13700H)\n";
+        assert_eq!(device_from_console(cpu).as_deref(), Some("13th Gen Intel Core(TM) i7-13700H"));
+        let gpus = "Ultralytics 8.4.171 torch-2.14.1 CUDA:0 (RTX 3060, 12288MiB), CUDA:1 (RTX 3060, 12288MiB)\n";
+        assert_eq!(device_from_console(gpus).as_deref(), Some("RTX 3060"));
+        assert_eq!(device_from_console("no header"), None);
     }
 }

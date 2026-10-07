@@ -1,6 +1,8 @@
 //! Training a model: what the page shows before starting (`TrainPreview`)
 //! and the record each run keeps in `training/trains/<name>/train.toml`.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 /// Checked before starting: where it goes, what runs, and what's in the way.
@@ -63,6 +65,10 @@ pub struct TrainRecord {
     pub model: String,
     pub task: String,
     pub device: String,
+    /// The hardware's own name, e.g. "NVIDIA GeForce RTX 3060" (runs from
+    /// before it was saved have none).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_name: Option<String>,
     pub epochs: u32,
     #[serde(default)]
     pub epochs_done: u32,
@@ -76,6 +82,48 @@ pub struct TrainRecord {
     pub best: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// What the run measured at its end; runs from before it was saved have none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<RunSummary>,
+}
+
+/// The end of a run: the final validation of the best weights, the model's
+/// size, its speed and the memory training took. Every part is optional:
+/// Ultralytics versions and devices differ in what they give.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct RunSummary {
+    /// Official final scores (best weights validated once more), by
+    /// `results.csv` column, e.g. "metrics/mAP50-95(B)" → 0.785.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub final_metrics: BTreeMap<String, f64>,
+    /// Milliseconds per image in that validation: "preprocess", "inference",
+    /// "loss", "postprocess".
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub speed: BTreeMap<String, f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layers: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parameters: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gflops: Option<f64>,
+    /// Most GPU memory reserved while training.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peak_gpu_bytes: Option<u64>,
+    /// Most RAM the training process used.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peak_ram_bytes: Option<u64>,
+}
+
+impl RunSummary {
+    pub fn is_empty(&self) -> bool {
+        *self == RunSummary::default()
+    }
+
+    /// Milliseconds per image from input to result (everything but the loss).
+    pub fn inference_ms(&self) -> Option<f64> {
+        let parts: Vec<f64> = ["preprocess", "inference", "postprocess"].iter().filter_map(|k| self.speed.get(*k).copied()).collect();
+        (!parts.is_empty()).then(|| parts.iter().sum())
+    }
 }
 
 /// A piece of a run's console output, read from `offset` on.

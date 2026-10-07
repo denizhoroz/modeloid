@@ -1,5 +1,6 @@
 //! Training → Performance: how a trained model did, from what Ultralytics
-//! saved in its run's `runs/` folder (results.csv, plots, batches, weights).
+//! saved in its run's `runs/` folder (results.csv, plots, batches, weights)
+//! and what the run measured at its end (final scores, speed, size, memory).
 //! The side panel opens on the Models table; the model selected last shows.
 
 use dioxus::prelude::*;
@@ -7,10 +8,11 @@ use dioxus::prelude::*;
 use crate::api::error_message;
 use crate::components::{IconName, TitleIcon};
 use crate::api::jobs::JobKind;
-use crate::api::train::{column_title, run_results, ImageGroup, RunImage, RunResults, TrainStatus};
+use crate::api::train::{column_title, run_results, ImageGroup, RunImage, RunResults, TrainRecord, TrainStatus};
 use crate::components::{format_value, status_label, use_job, LineChart, LineSeries, NoWorkspace, SelectModelHint, StatTile};
 use crate::state::{use_models_version, use_selected_models, use_workspace, use_workspace_checked};
-use crate::util::{encode_url_path, format_bytes};
+use crate::util::{encode_url_path, format_bytes, format_count, short_time};
+use modeloid_types::parameters::Task;
 
 #[component]
 pub fn Performance() -> Element {
@@ -89,7 +91,10 @@ fn Report(results: RunResults) -> Element {
     let best = results.best_row();
     let best_epoch = best.and_then(|b| epochs.get(b).copied());
     let metrics: Vec<&String> = results.columns.iter().filter(|c| c.starts_with("metrics/")).collect();
+    let summary = record.summary.clone().unwrap_or_default();
     let charts = chart_specs(&results);
+    let has_final = !summary.final_metrics.is_empty();
+    let facts = run_facts(&results);
     let groups: Vec<ImageGroup> = {
         let mut g: Vec<ImageGroup> = results.images.iter().map(|i| i.group).collect();
         g.dedup();
@@ -103,7 +108,7 @@ fn Report(results: RunResults) -> Element {
             div { class: "explore-title",
                 h2 { class: "explore-name", "{record.name}" }
                 span { class: "run-status is-{status}", "{status}" }
-                span { class: "section-card-meta", "{record.model} on {record.dataset_name} · {record.device} · started {record.started}" }
+                span { class: "section-card-meta", "{record.model} on {record.dataset_name}" }
             }
         }
         if record.status == TrainStatus::Running {
@@ -139,17 +144,66 @@ fn Report(results: RunResults) -> Element {
                         let values = results.column(column).unwrap_or_default();
                         let at_best = best.and_then(|b| values.get(b).copied()).unwrap_or(f64::NAN);
                         let last = values.last().copied().unwrap_or(f64::NAN);
+                        // The official score is the final validation of best.pt, when the run got that far.
+                        let (value, detail) = match summary.final_metrics.get(column.as_str()) {
+                            Some(v) => (*v, format!("final, best.pt · last epoch {}", format_value(last))),
+                            None => (at_best, format!("best epoch · last {}", format_value(last))),
+                        };
                         rsx! {
                             StatTile {
                                 key: "{column}",
                                 label: column_title(column),
-                                value: format_value(at_best),
-                                detail: Some(format!("best epoch · last {}", format_value(last))),
+                                value: format_value(value),
+                                detail: Some(detail),
                             }
                         }
                     }
                 }
+                if let Some(ms) = summary.inference_ms() {
+                    StatTile {
+                        label: "Inference",
+                        value: format!("{ms:.1} ms"),
+                        detail: Some(match summary.speed.get("inference") {
+                            Some(model) => format!("per image · model {model:.1} ms"),
+                            None => "per image".to_string(),
+                        }),
+                    }
+                }
+                if let Some(parameters) = summary.parameters {
+                    StatTile {
+                        label: "Parameters",
+                        value: format_millions(parameters),
+                        detail: Some(
+                            [summary.layers.map(|l| format!("{} layers", format_count(l))), summary.gflops.map(|g| format!("{g:.1} GFLOPs"))]
+                                .into_iter()
+                                .flatten()
+                                .collect::<Vec<_>>()
+                                .join(" · "),
+                        ),
+                    }
+                }
+                match (summary.peak_gpu_bytes, summary.peak_ram_bytes) {
+                    (Some(gpu), ram) => rsx! {
+                        StatTile { label: "Peak GPU memory", value: format_bytes(gpu), detail: ram.map(|r| format!("RAM {}", format_bytes(r))) }
+                    },
+                    (None, Some(ram)) => rsx! {
+                        StatTile { label: "Peak RAM", value: format_bytes(ram), detail: Some("training process".to_string()) }
+                    },
+                    (None, None) => rsx! {},
+                }
             }
+        }
+
+        section { class: "section-card", aria_labelledby: "perf-run-title",
+            h2 { id: "perf-run-title", class: "section-card-title", TitleIcon { name: IconName::Activity } "Run" }
+            dl { class: "perf-facts",
+                for (label, value) in facts {
+                    div { key: "{label}", dt { "{label}" } dd { "{value}" } }
+                }
+            }
+        }
+
+        if !results.rows.is_empty() {
 
             section { class: "section-card", aria_labelledby: "perf-curves-title",
                 div { class: "section-card-header",
@@ -157,25 +211,20 @@ fn Report(results: RunResults) -> Element {
                     span { class: "section-card-meta",
                         "from runs/results.csv"
                         if best_epoch.is_some() { " · the line marks the best epoch" }
+                        if has_final { " · dotted: final score of best.pt" }
                     }
                 }
                 div { class: "chart-grid perf-chart-grid",
                     for chart in charts {
-                        {
-                            let series: Vec<LineSeries> = chart
-                                .columns
-                                .iter()
-                                .map(|(label, column, dashed)| LineSeries {
-                                    label: label.to_string(),
-                                    values: results.column(column).unwrap_or_default(),
-                                    dashed: *dashed,
-                                })
-                                .collect();
-                            rsx! {
-                                div { key: "{chart.title}", class: "perf-chart",
-                                    h3 { class: "chart-caption perf-chart-title", "{chart.title}" }
-                                    LineChart { x: epochs.clone(), series, label: "{chart.title} per epoch", x_name: "Epoch", marker: best }
-                                }
+                        div { key: "{chart.title}", class: "perf-chart",
+                            h3 { class: "chart-caption perf-chart-title", "{chart.title}" }
+                            LineChart {
+                                x: epochs.clone(),
+                                series: chart.series,
+                                label: "{chart.title} per epoch",
+                                x_name: "Epoch",
+                                marker: best,
+                                reference: chart.reference,
                             }
                         }
                     }
@@ -286,37 +335,135 @@ fn RunImageDetail(image: RunImage, src: String, position: String, on_close: Even
     }
 }
 
-/// One small chart: its title and its lines as (legend label, column, dashed).
+/// One small chart: its title, its lines and an optional level line (the
+/// final score).
 struct ChartSpec {
     title: String,
-    columns: Vec<(&'static str, String, bool)>,
+    series: Vec<LineSeries>,
+    reference: Option<(String, f64)>,
 }
 
-/// Losses (train solid, val dashed, same chart), then each metric, then the
-/// learning rate.
+/// Losses (train solid, val dashed, same chart), then each metric (with the
+/// final score of best.pt), then the time per epoch and the learning rate.
 fn chart_specs(results: &RunResults) -> Vec<ChartSpec> {
+    let line = |label: &str, values: Vec<f64>, dashed: bool| LineSeries { label: label.to_string(), values, dashed };
+    let column = |name: &str| results.column(name).unwrap_or_default();
+    let chart = |title: String, series: Vec<LineSeries>| ChartSpec { title, series, reference: None };
+    let finals = results.record.summary.as_ref().map(|s| &s.final_metrics);
+
     let mut charts = Vec::new();
-    for column in results.columns.iter().filter(|c| c.starts_with("train/")) {
-        let val = format!("val/{}", &column["train/".len()..]);
-        let mut columns = vec![("train", column.clone(), false)];
+    for train in results.columns.iter().filter(|c| c.starts_with("train/")) {
+        let val = format!("val/{}", &train["train/".len()..]);
+        let mut series = vec![line("train", column(train), false)];
         if results.columns.contains(&val) {
-            columns.push(("val", val, true));
+            series.push(line("val", column(&val), true));
         }
-        charts.push(ChartSpec { title: column_title(column), columns });
+        charts.push(chart(column_title(train), series));
     }
     // Validation losses without a training one.
-    for column in results.columns.iter().filter(|c| c.starts_with("val/")) {
-        if !results.columns.contains(&format!("train/{}", &column["val/".len()..])) {
-            charts.push(ChartSpec { title: format!("{} (val)", column_title(column)), columns: vec![("val", column.clone(), true)] });
+    for val in results.columns.iter().filter(|c| c.starts_with("val/")) {
+        if !results.columns.contains(&format!("train/{}", &val["val/".len()..])) {
+            charts.push(chart(format!("{} (val)", column_title(val)), vec![line("val", column(val), true)]));
         }
     }
-    for column in results.columns.iter().filter(|c| c.starts_with("metrics/")) {
-        charts.push(ChartSpec { title: column_title(column), columns: vec![("value", column.clone(), false)] });
+    for metric in results.columns.iter().filter(|c| c.starts_with("metrics/")) {
+        let reference = finals.and_then(|f| f.get(metric.as_str())).map(|v| ("final (best.pt)".to_string(), *v));
+        charts.push(ChartSpec { title: column_title(metric), series: vec![line("value", column(metric), false)], reference });
+    }
+    if let Some(seconds) = epoch_seconds(results) {
+        charts.push(chart("Seconds per epoch".into(), vec![line("value", seconds, false)]));
     }
     if let Some(lr) = results.columns.iter().find(|c| c.starts_with("lr/")) {
-        charts.push(ChartSpec { title: "Learning rate".into(), columns: vec![("value", lr.clone(), false)] });
+        charts.push(chart("Learning rate".into(), vec![line("value", column(lr), false)]));
     }
     charts
+}
+
+/// How long each epoch took: Ultralytics' `time` column counts seconds since
+/// training started.
+fn epoch_seconds(results: &RunResults) -> Option<Vec<f64>> {
+    let total = results.column("time").filter(|t| t.iter().any(|v| v.is_finite()))?;
+    let mut before = 0.0;
+    Some(
+        total
+            .iter()
+            .map(|t| {
+                let took = t - before;
+                if t.is_finite() {
+                    before = *t;
+                }
+                took
+            })
+            .collect(),
+    )
+}
+
+/// The run's facts for the Run card: what ran and how long it took.
+fn run_facts(results: &RunResults) -> Vec<(&'static str, String)> {
+    let record: &TrainRecord = &results.record;
+    let task = Task::ALL.iter().find(|t| t.id() == record.task).map_or(record.task.clone(), |t| t.label().to_string());
+    let mut facts = vec![
+        ("Task", task),
+        ("Parameter set", record.parameters.clone()),
+        ("Device", record.device_name.clone().unwrap_or_else(|| record.device.clone())),
+        ("Started", short_time(&record.started)),
+    ];
+    match &record.finished {
+        Some(finished) => {
+            facts.push(("Finished", short_time(finished)));
+            if let (Some(start), Some(end)) = (unix_seconds(&record.started), unix_seconds(finished)) {
+                facts.push(("Total duration", format_duration((end - start) as f64)));
+            }
+        }
+        None if record.status == TrainStatus::Running => facts.push(("Finished", "Still training".into())),
+        None => {}
+    }
+    // Epochs only: the whole run also loads the data and validates best.pt at the end.
+    if let Some(seconds) = epoch_seconds(results) {
+        if let Some(total) = results.column("time").and_then(|t| t.into_iter().rev().find(|v| v.is_finite())) {
+            facts.push(("Training time", format_duration(total)));
+        }
+        let done: Vec<f64> = seconds.into_iter().filter(|s| s.is_finite()).collect();
+        if !done.is_empty() {
+            facts.push(("Time per epoch", format!("{:.1} s on average", done.iter().sum::<f64>() / done.len() as f64)));
+        }
+    }
+    facts
+}
+
+/// Seconds since 1970 of a UTC time as runs save it ("2026-10-07T10:00:54Z").
+fn unix_seconds(time: &str) -> Option<i64> {
+    let (date, clock) = time.trim_end_matches('Z').split_once('T')?;
+    let mut d = date.split('-').map(|p| p.parse::<i64>().ok());
+    let (y, m, day) = (d.next()??, d.next()??, d.next()??);
+    let mut c = clock.get(..8)?.split(':').map(|p| p.parse::<i64>().ok());
+    let (h, min, s) = (c.next()??, c.next()??, c.next()??);
+    // Days since 1970 of a calendar date (H. Hinnant's days_from_civil).
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let doy = (153 * ((m + 9) % 12) + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    Some((era * 146_097 + doe - 719_468) * 86_400 + h * 3600 + min * 60 + s)
+}
+
+/// "45 s", "12 min 5 s", "1 h 4 min".
+fn format_duration(seconds: f64) -> String {
+    let s = seconds.max(0.0).round() as u64;
+    match s {
+        0..60 => format!("{s} s"),
+        60..3600 => format!("{} min {} s", s / 60, s % 60),
+        _ => format!("{} h {} min", s / 3600, s % 3600 / 60),
+    }
+}
+
+/// "2.51M", "870K", "950".
+fn format_millions(n: u64) -> String {
+    match n {
+        0..1_000 => n.to_string(),
+        1_000..1_000_000 => format!("{:.0}K", n as f64 / 1e3),
+        _ => format!("{:.2}M", n as f64 / 1e6),
+    }
 }
 
 #[cfg(test)]
@@ -334,6 +481,21 @@ mod tests {
         let charts = chart_specs(&results);
         let titles: Vec<&str> = charts.iter().map(|c| c.title.as_str()).collect();
         assert_eq!(titles, ["Box loss", "Class loss", "mAP50 (boxes)", "Learning rate"]);
-        assert_eq!(charts[0].columns[1], ("val", "val/box_loss".to_string(), true));
+        assert_eq!((charts[0].series[1].label.as_str(), charts[0].series[1].dashed), ("val", true));
+    }
+
+    #[test]
+    fn times_epochs_and_runs() {
+        let results = RunResults {
+            columns: vec!["epoch".into(), "time".into()],
+            rows: vec![vec![1.0, 100.0], vec![2.0, 180.0], vec![3.0, 270.0]],
+            ..Default::default()
+        };
+        assert_eq!(epoch_seconds(&results), Some(vec![100.0, 80.0, 90.0]));
+        assert_eq!(unix_seconds("2026-10-07T10:43:50Z").unwrap() - unix_seconds("2026-10-07T10:00:54Z").unwrap(), 2576);
+        assert_eq!(unix_seconds("1970-01-02T00:00:00Z"), Some(86_400));
+        assert_eq!(format_duration(2576.0), "42 min 56 s");
+        assert_eq!(format_duration(3720.0), "1 h 2 min");
+        assert_eq!(format_millions(2_505_750), "2.51M");
     }
 }
