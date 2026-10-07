@@ -518,6 +518,9 @@ pub struct RunConfig {
     /// Stop after this many hours (overrides epochs).
     pub time: Option<f64>,
     pub plots: bool,
+    /// A stopped run of these settings may be continued from its last
+    /// epoch (Ultralytics' `last.pt`) instead of starting over.
+    pub resume: bool,
 }
 
 impl Default for RunConfig {
@@ -532,6 +535,7 @@ impl Default for RunConfig {
             save_period: None,
             time: None,
             plots: true,
+            resume: true,
         }
     }
 }
@@ -709,6 +713,7 @@ mod tests {
         assert_eq!(p.training.imgsz, 640);
         assert_eq!(p.augmentation, AugmentationConfig::default());
         assert_eq!(p.model.weights, Weights::Pretrained);
+        assert!(p.run.resume, "older sets allow resuming");
     }
 
     #[test]

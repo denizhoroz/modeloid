@@ -22,6 +22,18 @@ pub async fn start_training(dataset: u32, parameters: String, name: String) -> R
     backend::start(dataset, parameters, name).map_err(ServerFnError::new)
 }
 
+/// What continuing stopped run `name` from its last epoch would do, and what's in the way.
+#[post("/api/train/resume/preview")]
+pub async fn resume_preview(name: String) -> Result<TrainPreview, ServerFnError> {
+    backend::resume_preview(name).await.map_err(ServerFnError::new)
+}
+
+/// Continues stopped run `name` (a `Train` job with one item, named after the model).
+#[post("/api/train/resume")]
+pub async fn resume_training(name: String) -> Result<Job, ServerFnError> {
+    backend::resume(name).map_err(ServerFnError::new)
+}
+
 /// Trained models (training runs) of the workspace, by start time, and a
 /// warning for each run folder that couldn't be read.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -119,6 +131,48 @@ pub(crate) mod backend {
         jobs::start(JobKind::Train, vec![name.clone()], jobs::Touches::Datasets(vec![dataset]), move |ctx| {
             let reporter = ctx.reporter();
             let prepared = ws.prepare_train(dataset, &set, &name, choice, reporter.as_ref()).map_err(|e| e.to_string())?;
+            let record = train::run(&env, &prepared, reporter.as_ref()).map_err(|e| e.to_string())?;
+            Ok(Some(match record.best {
+                Some(best) => format!("Best weights: {best}"),
+                None => format!("Results in {}", prepared.dir.display()),
+            }))
+        })
+    }
+
+    pub async fn resume_preview(name: String) -> Result<TrainPreview, String> {
+        activity::track("train-preview", "Checking the training setup", move |_| {
+            let ws = open()?;
+            let env = PyEnv::locate().map_err(|e| e.to_string())?;
+            let mut preview = ws.resume_preview(&name, device_choice(&env)).map_err(|e| e.to_string())?;
+            if !env.status().usable() {
+                preview.problems.insert(0, "The training libraries (PyTorch, Ultralytics) aren't installed.".into());
+            }
+            Ok(preview)
+        })
+        .await
+    }
+
+    pub fn resume(name: String) -> Result<Job, String> {
+        let ws = open()?;
+        let env = PyEnv::locate().map_err(|e| e.to_string())?;
+        if !env.status().usable() {
+            return Err("The training libraries (PyTorch, Ultralytics) aren't installed. Install them in Settings → Python environment.".into());
+        }
+        let choice = device_choice(&env);
+        // Checked now, so a mistake shows at once instead of as a failed job.
+        let preview = ws.resume_preview(&name, choice).map_err(|e| e.to_string())?;
+        if let Some(problem) = preview.problems.first() {
+            return Err(problem.clone());
+        }
+        // The record keeps the dataset's name; ids change as datasets come and go.
+        let record = ws.train_record(&name).map_err(|e| e.to_string())?;
+        let touches = match ws.list_datasets().map_err(|e| e.to_string())?.iter().find(|(_, d)| d.name() == record.dataset_name) {
+            Some((_, d)) => jobs::Touches::Datasets(vec![d.id()]),
+            None => jobs::Touches::Nothing,
+        };
+        jobs::start(JobKind::Train, vec![name.clone()], touches, move |ctx| {
+            let reporter = ctx.reporter();
+            let prepared = ws.prepare_resume(&name, choice).map_err(|e| e.to_string())?;
             let record = train::run(&env, &prepared, reporter.as_ref()).map_err(|e| e.to_string())?;
             Ok(Some(match record.best {
                 Some(best) => format!("Best weights: {best}"),

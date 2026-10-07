@@ -695,6 +695,8 @@ fn RunSection(form: Signal<ParameterSet>, p: UltralyticsParams) -> Element {
                     onchange: move |v| edit(form, |p| p.run.deterministic = v) }
                 BoolField { label: "Save plots", tip: "Save training curves and example predictions.", value: r.plots,
                     onchange: move |v| edit(form, |p| p.run.plots = v) }
+                BoolField { label: "Resume", tip: "A stopped run with these parameters can be continued from its last finished epoch: select it in the Models table on Train Model.", value: r.resume,
+                    onchange: move |v| edit(form, |p| p.run.resume = v) }
             }
         }
     }

@@ -12,6 +12,9 @@ Commands:
                   shows); progress events are lines starting with
                   "@modeloid " followed by JSON: start, epoch, done (with a
                   summary: final scores, speed, model size, peak memory), error.
+                  With "resume": true, "model" is a stopped run's last.pt and
+                  training continues from it (its saved settings; "args" may
+                  only change the device).
   tune <config>   Tunes hyperparameters with Optuna:
                   {"model", "task", "rtdetr", "args" (Ultralytics train()
                    arguments shared by every trial), "trials": 20,
@@ -124,7 +127,14 @@ def train(config_path):
 
     model.add_callback("on_train_start", on_train_start)
     model.add_callback("on_fit_epoch_end", on_fit_epoch_end)
-    model.train(**config["args"])
+    args = config["args"]
+    if config.get("resume"):
+        # Without them Ultralytics quietly starts a new run with default settings instead.
+        ckpt = getattr(model, "ckpt", None) or {}
+        if ckpt.get("epoch", -1) < 0 or ckpt.get("optimizer") is None:
+            raise RuntimeError("last.pt has no training state to continue from (its run may have finished)")
+        args = {**args, "resume": True}
+    model.train(**args)
 
     trainer = model.trainer
     best = trainer.best if trainer.best and trainer.best.exists() else trainer.last

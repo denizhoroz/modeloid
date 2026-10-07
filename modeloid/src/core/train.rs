@@ -8,6 +8,7 @@
 //! data.yaml         the dataset for Ultralytics (or dataset/data.yaml when converted)
 //! dataset/          YOLO copy of a COCO / VOC dataset (YOLO datasets are used in place)
 //! config.json       what main.py gets: model, task, Ultralytics arguments
+//! resume.json       what main.py gets to continue a stopped run from runs/weights/last.pt
 //! console.log       Ultralytics' output, finished lines only
 //! runs/             Ultralytics' results: weights/best.pt, plots, results.csv
 //! ```
@@ -27,6 +28,7 @@ use crate::models::workspace::Workspace;
 pub use modeloid_types::train::*;
 
 const RECORD_FILE: &str = "train.toml";
+const PARAMETERS_FILE: &str = "parameters.toml";
 pub(crate) const CONSOLE_FILE: &str = "console.log";
 /// Ultralytics' run folder name inside a run (`project` = the run folder).
 pub(crate) const RUNS_NAME: &str = "runs";
@@ -218,7 +220,7 @@ impl Workspace {
             &config,
             serde_json::to_vec_pretty(&json!({ "model": p.model_name(), "task": p.model.task.id(), "rtdetr": rtdetr, "args": args }))?,
         )?;
-        fs::write(dir.join("parameters.toml"), toml::to_string(set)?)?;
+        fs::write(dir.join(PARAMETERS_FILE), toml::to_string(set)?)?;
 
         let record = TrainRecord {
             name: name.to_string(),
@@ -234,6 +236,64 @@ impl Workspace {
         };
         save_record(&dir, &record)?;
         let _ = plan.dataset_dir;
+        Ok(PreparedTrain { dir, config, record })
+    }
+
+    /// Checks continuing stopped run `name` from its last epoch: the run, its
+    /// saved parameters (Resume on) and `last.pt`.
+    fn resume_plan(&self, name: &str, choice: TrainDevice) -> Result<(TrainPreview, TrainRecord, ParameterSet), crate::Error> {
+        let dir = self.train_dir(name);
+        let record = self.train_record(name)?;
+        let set: ParameterSet = toml::from_str(&fs::read_to_string(dir.join(PARAMETERS_FILE)).map_err(|e| format!("{name} has no saved parameters: {e}"))?)?;
+        let device = resolve_device(&set, choice);
+        let mut preview = TrainPreview { run_dir: dir.display().to_string(), model: record.model.clone(), device: device_label(&device), ..Default::default() };
+        if record.status != TrainStatus::Stopped {
+            preview.problems.push(format!("Only a stopped run can be continued; {name} is {}.", status_word(record.status)));
+        } else if !ultra(&set).run.resume {
+            preview.problems.push(format!("Resume is off in its parameters ({}).", set.name));
+        } else if !last_weights(&dir).is_file() {
+            preview.problems.push("It stopped before its first epoch ended, so there's nothing to continue from. Train it again instead.".into());
+        } else {
+            preview.notes.push(format!("Continues from epoch {} of {}, with the learning rate and optimizer where they were.", record.epochs_done, record.epochs));
+        }
+        Ok((preview, record, set))
+    }
+
+    /// What continuing stopped run `name` would do, and what's in the way.
+    pub fn resume_preview(&self, name: &str, choice: TrainDevice) -> Result<TrainPreview, crate::Error> {
+        Ok(self.resume_plan(name, choice)?.0)
+    }
+
+    /// Readies stopped run `name` to continue: `resume.json` for main.py, the
+    /// record back to running. Its dataset copy and settings are the ones
+    /// saved in `last.pt`; only the device may change.
+    pub fn prepare_resume(&self, name: &str, choice: TrainDevice) -> Result<PreparedTrain, crate::Error> {
+        let (preview, mut record, set) = self.resume_plan(name, choice)?;
+        if let Some(problem) = preview.problems.first() {
+            return Err(problem.clone().into());
+        }
+        let dir = self.train_dir(name);
+        let p = ultra(&set);
+        let device = resolve_device(&set, choice);
+        let config = dir.join("resume.json");
+        fs::write(
+            &config,
+            serde_json::to_vec_pretty(&json!({
+                "model": last_weights(&dir).display().to_string(),
+                "task": p.model.task.id(),
+                "rtdetr": p.model.family == Family::RtDetr,
+                "resume": true,
+                "args": { "device": device },
+            }))?,
+        )?;
+        let mut console = File::options().create(true).append(true).open(dir.join(CONSOLE_FILE))?;
+        writeln!(console, "\n[modeloid] Continuing from epoch {} of {}\n", record.epochs_done, record.epochs)?;
+
+        record.status = TrainStatus::Running;
+        record.device = device_label(&device);
+        record.finished = None;
+        record.error = None;
+        save_record(&dir, &record)?;
         Ok(PreparedTrain { dir, config, record })
     }
 
@@ -319,6 +379,20 @@ pub(crate) fn read_log(path: &Path, offset: u64, max: usize) -> Result<TrainLog,
         }
     }
     Ok(TrainLog { text: String::from_utf8_lossy(&bytes).into_owned(), offset: offset + bytes.len() as u64 })
+}
+
+/// Ultralytics' checkpoint after the last finished epoch, with the optimizer state.
+fn last_weights(run_dir: &Path) -> PathBuf {
+    run_dir.join(RUNS_NAME).join("weights").join("last.pt")
+}
+
+fn status_word(status: TrainStatus) -> &'static str {
+    match status {
+        TrainStatus::Running => "still running",
+        TrainStatus::Done => "done",
+        TrainStatus::Failed => "failed",
+        TrainStatus::Stopped => "stopped",
+    }
 }
 
 fn save_record(dir: &Path, record: &TrainRecord) -> Result<(), crate::Error> {
@@ -430,7 +504,9 @@ pub fn run(env: &PyEnv, prepared: &PreparedTrain, reporter: &dyn Reporter) -> Re
     let mut console = File::options().create(true).append(true).open(prepared.dir.join(CONSOLE_FILE))?;
     let epochs = reporter.start("Epochs", Unit::Steps);
     epochs.set_total(u64::from(record.epochs));
-    let mut done_epochs = 0u32;
+    // A continued run counts on from the epochs it had.
+    let mut done_epochs = record.epochs_done;
+    epochs.add(u64::from(done_epochs));
     let mut total_epochs = record.epochs;
     let mut best: Option<String> = None;
     let mut summary: Option<RunSummary> = None;
@@ -559,6 +635,48 @@ mod tests {
         assert!(!ws.train_dir("late").exists());
         assert!(ws.delete_train("late").is_err());
         assert!(ws.delete_train("../datasets").is_err(), "only run folders");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn continues_stopped_runs() {
+        let dir = std::env::temp_dir().join(format!("modeloid-train-resume-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let ws = Workspace::new("ws".into(), dir.clone());
+        ws.make_to_dir().unwrap();
+        let run = ws.train_dir("cars");
+        fs::create_dir_all(&run).unwrap();
+        let mut set = ParameterSet::new("base");
+        fs::write(run.join(PARAMETERS_FILE), toml::to_string(&set).unwrap()).unwrap();
+        let mut record = TrainRecord { name: "cars".into(), model: "yolo26n.pt".into(), epochs: 100, epochs_done: 12, status: TrainStatus::Done, ..Default::default() };
+        save_record(&run, &record).unwrap();
+        let problems = |ws: &Workspace| ws.resume_preview("cars", TrainDevice::Cpu).unwrap().problems;
+
+        assert!(problems(&ws)[0].contains("is done"), "only stopped runs");
+        record.status = TrainStatus::Stopped;
+        save_record(&run, &record).unwrap();
+        assert!(problems(&ws)[0].contains("nothing to continue"), "no last.pt yet");
+        fs::create_dir_all(last_weights(&run).parent().unwrap()).unwrap();
+        fs::write(last_weights(&run), b"ckpt").unwrap();
+        let FrameworkParams::Ultralytics(p) = &mut set.params;
+        p.run.resume = false;
+        fs::write(run.join(PARAMETERS_FILE), toml::to_string(&set).unwrap()).unwrap();
+        assert!(problems(&ws)[0].contains("Resume is off"));
+        let FrameworkParams::Ultralytics(p) = &mut set.params;
+        p.run.resume = true;
+        fs::write(run.join(PARAMETERS_FILE), toml::to_string(&set).unwrap()).unwrap();
+        let preview = ws.resume_preview("cars", TrainDevice::Cpu).unwrap();
+        assert!(preview.can_run(), "{:?}", preview.problems);
+        assert!(preview.notes[0].contains("epoch 12 of 100"));
+
+        let prepared = ws.prepare_resume("cars", TrainDevice::Cpu).unwrap();
+        let config: Value = serde_json::from_slice(&fs::read(&prepared.config).unwrap()).unwrap();
+        assert_eq!(config["resume"], json!(true));
+        assert!(config["model"].as_str().unwrap().ends_with("last.pt"));
+        assert_eq!(config["args"]["device"], json!("cpu"));
+        assert_eq!(ws.train_record("cars").unwrap().status, TrainStatus::Running);
+        assert_eq!(prepared.record.epochs_done, 12, "counts on from where it stopped");
         let _ = fs::remove_dir_all(&dir);
     }
 

@@ -1,21 +1,23 @@
 //! Training → Train Model: train a model on the dataset chosen in the
 //! Datasets table with the parameter set chosen in the Parameters table.
 //! The run goes to `training/trains/<model name>/`; Ultralytics' console
-//! output shows live.
+//! output shows live. A stopped run selected in the Models table can be
+//! continued from its last epoch instead.
 
 use dioxus::prelude::*;
 
 use crate::api::datasets::list_datasets;
 use crate::components::{IconName, TitleIcon};
 use crate::api::error_message;
-use crate::api::jobs::{ItemStatus, JobKind};
+use crate::api::jobs::{ItemStatus, Job, JobKind};
 use crate::api::parameters::{list_parameters, Batch, FrameworkParams, ParameterSet};
 use crate::api::pyenv::python_env_overview;
-use crate::api::train::{list_models, name_taken_message, start_training, train_log, train_preview};
+use crate::api::train::{list_models, name_taken_message, resume_preview, resume_training, start_training, train_log, train_preview, TrainRecord, TrainStatus};
 use crate::api::tune::tune_log;
 use crate::components::{set_if_newer, use_job, use_panel_table, InfoTip, JobProgress, LibrariesMissing, NoWorkspace, PanelTable};
 use crate::state::{
-    use_datasets_version, use_models_version, use_parameters_version, use_primary_dataset, use_primary_parameters, use_workspace, use_workspace_checked,
+    use_datasets_version, use_models_version, use_parameters_version, use_primary_dataset, use_primary_parameters, use_selected_models, use_workspace,
+    use_workspace_checked,
 };
 use crate::util::format_count;
 
@@ -102,8 +104,10 @@ fn TrainForm() -> Element {
 
     // Model name: "<dataset>-<model>", the next free one, until the user types one.
     let models_version = use_models_version();
+    // A run that starts or ends changes the list (and its status) at once.
+    let train_state = use_memo(move || job.read().as_ref().map(|j| (j.finished, j.items.first().map(|i| i.label.clone()))));
     let models = use_resource(move || async move {
-        let _ = models_version();
+        let _ = (models_version(), train_state());
         list_models().await
     });
     let mut taken: Vec<String> = models.read().as_ref().and_then(|r| r.as_ref().ok()).map(|l| l.models.iter().map(|m| m.name.clone()).collect()).unwrap_or_default();
@@ -120,6 +124,13 @@ fn TrainForm() -> Element {
     let own_run = job_run.as_deref() == Some(name.as_str());
 
     let running = job.read().as_ref().is_some_and(|j| !j.finished);
+    // The model last selected in the Models table, when it's a stopped run (not the one training now).
+    let selected_models = use_selected_models();
+    let stopped: Option<TrainRecord> = selected_models.read().last().and_then(|name| {
+        let list = models.read();
+        let record = list.as_ref()?.as_ref().ok()?.models.iter().find(|m| &m.name == name)?.clone();
+        (record.status == TrainStatus::Stopped && !(running && job_run.as_deref() == Some(name.as_str()))).then_some(record)
+    });
     let finished_version = use_memo(move || job.read().as_ref().filter(|j| j.finished).map(|j| j.version));
 
     let preview = use_resource(use_reactive((&dataset_ready, &params_ready, &name_for_preview), move |(ds, ps, name)| async move {
@@ -209,6 +220,10 @@ fn TrainForm() -> Element {
                 }
             }
 
+            if let Some(run) = stopped {
+                ContinueRun { key: "{run.name}-{run.epochs_done}", run, running, job }
+            }
+
             section { class: "section-card", aria_labelledby: "train-output-title",
                 h2 { id: "train-output-title", class: "section-card-title", TitleIcon { name: IconName::Save } "Output" }
                 div { class: "field",
@@ -266,6 +281,77 @@ fn TrainForm() -> Element {
             }
             if let Some(run) = job_run {
                 TrainConsole { key: "{run}", run, version: job_version, live: live_line }
+            }
+        }
+    }
+}
+
+/// Continuing stopped run `run` from its last finished epoch, with the
+/// settings and dataset it started with.
+#[component]
+fn ContinueRun(run: TrainRecord, running: bool, job: Signal<Option<Job>>) -> Element {
+    let name = run.name.clone();
+    let preview = use_resource(use_reactive((&name,), |(name,)| async move { resume_preview(name).await }));
+    let mut libraries_missing = use_signal(|| false);
+    let mut start_error = use_signal(|| None::<String>);
+    let can_run = !running && matches!(&*preview.read(), Some(Ok(p)) if p.can_run());
+
+    let start = move |_| {
+        let name = name.clone();
+        async move {
+            start_error.set(None);
+            if !matches!(python_env_overview().await, Ok(ov) if ov.status.usable()) {
+                libraries_missing.set(true);
+                return;
+            }
+            libraries_missing.set(false);
+            match resume_training(name).await {
+                Ok(started) => set_if_newer(job, started),
+                Err(e) => start_error.set(Some(error_message(&e))),
+            }
+        }
+    };
+
+    rsx! {
+        section { class: "section-card", aria_labelledby: "train-continue-title",
+            h2 { id: "train-continue-title", class: "section-card-title",
+                TitleIcon { name: IconName::History }
+                "Continue training "
+                InfoTip {
+                    label: "About continuing",
+                    text: "Picks up the run selected in the Models table where it stopped: same dataset, parameters and folder, with the learning rate and optimizer as they were. To train it anew instead, use Train below with another name.",
+                }
+            }
+            div { class: "train-input-chosen",
+                span { class: "train-input-name", "{run.name}" }
+                span { class: "train-input-detail", "{run.dataset_name} · {run.model} · stopped at epoch {run.epochs_done} of {run.epochs}" }
+            }
+            match &*preview.read() {
+                Some(Ok(p)) => rsx! {
+                    if p.problems.is_empty() {
+                        p { class: "field-hint", "Continues on {p.device}." }
+                    } else {
+                        ul { class: "param-problems", aria_label: "Can't continue",
+                            for problem in p.problems.iter() {
+                                li { key: "{problem}", class: "field-error", "{problem}" }
+                            }
+                        }
+                    }
+                    for note in p.notes.iter() {
+                        p { key: "{note}", class: "field-hint", "{note}" }
+                    }
+                },
+                Some(Err(e)) => rsx! { p { class: "form-error", role: "alert", "{error_message(e)}" } },
+                None => rsx! {},
+            }
+            if libraries_missing() {
+                LibrariesMissing { on_close: move |_| libraries_missing.set(false) }
+            }
+            if let Some(message) = start_error() {
+                p { class: "form-error", role: "alert", "{message}" }
+            }
+            div { class: "form-actions",
+                button { class: "button", r#type: "button", disabled: !can_run, onclick: start, "Continue" }
             }
         }
     }
