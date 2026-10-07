@@ -1,6 +1,7 @@
 //! App settings, stored by the core (`modeloid::Settings`) on the server machine
 //! in the user's config folder (e.g. `%APPDATA%\modeloid\settings.toml`), shared
-//! by every workspace. Secrets never go back to the browser in full; the UI only gets a `KeyStatus`.
+//! by every workspace; the credentials themselves in the system's credential
+//! store. Secrets never go back to the browser in full; the UI only gets a `KeyStatus`.
 
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -50,8 +51,9 @@ pub struct KeyStatus {
     pub saved_hint: Option<String>,
     /// Nothing saved, but this is used instead, e.g. "ROBOFLOW_API_KEY env var".
     pub fallback: Option<String>,
-    /// Where the settings file lives, shown to the user.
-    pub settings_path: String,
+    /// Where saved credentials are kept, e.g. "Windows Credential Manager", or
+    /// the settings file's path when there's no credential store.
+    pub stored_in: String,
 }
 
 pub use modeloid_types::validate_api_key;
@@ -117,11 +119,12 @@ mod backend {
     }
 
     pub fn status(path: &Path, service: ServiceId) -> Result<KeyStatus, String> {
-        let saved_hint = load(path)?.credential_hint(core(service));
+        let settings = load(path)?;
+        let saved_hint = settings.credential_hint(core(service));
         Ok(KeyStatus {
             fallback: if saved_hint.is_none() { core(service).fallback() } else { None },
             saved_hint,
-            settings_path: path.display().to_string(),
+            stored_in: settings.credential_store().map_or_else(|| path.display().to_string(), str::to_string),
         })
     }
 

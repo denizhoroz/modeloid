@@ -44,7 +44,7 @@ pub fn Settings() -> Element {
             section { class: "settings-section", aria_labelledby: "settings-api-keys",
                 h2 { id: "settings-api-keys", class: "settings-section-title", TitleIcon { name: IconName::Key } "API Keys" }
                 p { class: "settings-section-lead",
-                    "Keys for the services Modeloid downloads from. Stored on this computer in your user config folder."
+                    "Keys for the services Modeloid downloads from. Stored on this computer in its credential store (Windows Credential Manager, the macOS Keychain or the system keyring)."
                 }
                 div { class: "settings-card",
                     for service in ServiceId::ALL {

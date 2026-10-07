@@ -89,8 +89,8 @@ pub fn CredentialField(service: ServiceId) -> Element {
                     InfoTip { label: "About the {service.label()} credential", text: help_text }
                 }
                 match &current {
-                    Some(KeyStatus { saved_hint: Some(_), .. }) => rsx! {
-                        span { class: "badge badge-ok", "Saved" }
+                    Some(KeyStatus { saved_hint: Some(_), stored_in, .. }) => rsx! {
+                        span { class: "badge badge-ok", title: "Saved in {stored_in}", "Saved" }
                     },
                     Some(KeyStatus { fallback: Some(source), .. }) => rsx! {
                         span { class: "badge", title: "{source}", "Using {source}" }
