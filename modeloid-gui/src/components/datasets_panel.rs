@@ -199,9 +199,6 @@ fn DatasetsTable(rows: Vec<DatasetRow>, sort: Signal<Sort>) -> Element {
                         td { class: "num muted", "{id}" }
                         th { class: "name", scope: "row",
                             span { class: "name-with-tag",
-                                if !row.linked_to.is_empty() {
-                                    span { class: "badge link-badge", title: "Linked to {linked}: its images are theirs", "Link" }
-                                }
                                 // Keyboard access; the click bubbles to the row.
                                 button {
                                     class: "row-pick",
@@ -209,6 +206,9 @@ fn DatasetsTable(rows: Vec<DatasetRow>, sort: Signal<Sort>) -> Element {
                                     title: "Select only {row.name}",
                                     aria_pressed: if is_selected { "true" } else { "false" },
                                     "{row.name}"
+                                }
+                                if !row.linked_to.is_empty() {
+                                    span { class: "badge link-badge", title: "Linked to {linked}: its images are theirs", "Link" }
                                 }
                             }
                         }
