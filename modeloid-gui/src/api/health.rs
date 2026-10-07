@@ -150,12 +150,12 @@ mod backend {
         let names = names_of(&ws, &ids)?;
         // Catch bad output names now instead of as failed items.
         for (id, target) in &targets {
-            resolve_output(target.clone(), &[*id])?;
+            resolve_output(target.clone(), &[*id], false)?;
         }
 
         jobs::start(JobKind::HealthFix, names, jobs::Touches::Datasets(ids), move |ctx| {
             let (id, target) = targets[ctx.index()].clone();
-            let output = resolve_output(target, &[id])?;
+            let output = resolve_output(target, &[id], false)?;
             // Reasons to leave a dataset alone end the item as skipped, not failed.
             let skip = |why: &str| {
                 ctx.skip();

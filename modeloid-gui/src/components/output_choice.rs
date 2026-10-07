@@ -4,10 +4,20 @@ use crate::api::datasets::{validate_dataset_name, OutputTarget};
 use crate::components::{IconName, TitleIcon};
 use crate::components::InfoTip;
 
+/// Where an `OutputSelect` sends the result.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum OutputMode {
+    #[default]
+    New,
+    Overwrite,
+    /// A dataset link: a new dataset sharing the source's images (Classes & Merge).
+    Link,
+}
+
 /// What the user chose in an `OutputSelect`.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct OutputChoice {
-    pub overwrite: bool,
+    pub mode: OutputMode,
     /// Typed name; `None` until the user edits it, so the suggestion is used.
     pub name: Option<String>,
     /// Ticked "replace the source" confirmation.
@@ -22,7 +32,7 @@ impl OutputChoice {
 
     pub fn resolve(&self, suggested: &str, can_overwrite: bool) -> Result<OutputTarget, String> {
         // Overwrite falls back to "new" when it isn't possible (the form shows it that way).
-        if self.overwrite && can_overwrite {
+        if self.mode == OutputMode::Overwrite && can_overwrite {
             if !self.confirmed {
                 return Err("Confirm that the source dataset will be replaced.".into());
             }
@@ -30,12 +40,13 @@ impl OutputChoice {
         }
         let name = self.name_or(suggested).to_string();
         validate_dataset_name(&name)?;
-        Ok(OutputTarget::New { name })
+        Ok(if self.mode == OutputMode::Link { OutputTarget::Link { name } } else { OutputTarget::New { name } })
     }
 }
 
 /// Reusable "where does the result go" section: a new dataset (name prefilled
-/// from `suggested_name`) or overwrite the source, which needs a confirmation.
+/// from `suggested_name`), a dataset link (with `allow_link`) or overwrite the
+/// source, which needs a confirmation.
 #[component]
 pub fn OutputSelect(
     choice: Signal<OutputChoice>,
@@ -50,13 +61,19 @@ pub fn OutputSelect(
     #[props(default)]
     show_errors: bool,
     #[props(default)] disabled: bool,
+    /// Offer "Create dataset link" (a new dataset sharing the source's images).
+    #[props(default)]
+    allow_link: bool,
     /// Prefix of the element ids; give each `OutputSelect` on a page its own.
     #[props(into, default = "output".to_string())]
     id: String,
 ) -> Element {
     let mut choice = choice;
     let can_overwrite = source_name.is_some();
-    let overwrite = choice.read().overwrite && can_overwrite;
+    let mode = choice.read().mode;
+    let overwrite = mode == OutputMode::Overwrite && can_overwrite;
+    let link = mode == OutputMode::Link && allow_link;
+    let new = !overwrite && !link;
     let name = choice.read().name_or(&suggested_name).to_string();
 
     let edited = choice.read().name.is_some();
@@ -67,17 +84,37 @@ pub fn OutputSelect(
             legend { class: "section-card-title", TitleIcon { name: IconName::Save } "Output" }
 
             div { class: "choice-list",
-                label { class: if !overwrite { "choice is-selected" } else { "choice" },
+                label { class: if new { "choice is-selected" } else { "choice" },
                     input {
                         r#type: "radio",
                         name: "{id}-select",
-                        checked: !overwrite,
-                        onchange: move |_| choice.write().overwrite = false,
+                        checked: new,
+                        onchange: move |_| choice.write().mode = OutputMode::New,
                     }
                     span { class: "choice-body",
                         span { class: "choice-label",
                             "Save as new dataset "
                             InfoTip { label: "About saving as new", text: "The source stays as it is." }
+                        }
+                    }
+                }
+
+                if allow_link {
+                    label { class: if link { "choice is-selected" } else { "choice" },
+                        input {
+                            r#type: "radio",
+                            name: "{id}-select",
+                            checked: link,
+                            onchange: move |_| choice.write().mode = OutputMode::Link,
+                        }
+                        span { class: "choice-body",
+                            span { class: "choice-label",
+                                "Create dataset link "
+                                InfoTip {
+                                    label: "About dataset links",
+                                    text: "A new dataset that shares the source's image files instead of copying them (hard links: no extra storage), with its own labels and class names. Images dropped here are left out. Deleting or changing the source later doesn't affect it. Needs a drive that supports hard links.",
+                                }
+                            }
                         }
                     }
                 }
@@ -88,7 +125,7 @@ pub fn OutputSelect(
                         name: "{id}-select",
                         checked: overwrite,
                         disabled: !can_overwrite,
-                        onchange: move |_| choice.write().overwrite = true,
+                        onchange: move |_| choice.write().mode = OutputMode::Overwrite,
                     }
                     span { class: "choice-body",
                         span { class: "choice-label", "Overwrite source" }
@@ -153,10 +190,15 @@ mod tests {
         let bad = OutputChoice { name: Some("a/b".into()), ..Default::default() };
         assert!(bad.resolve("x", true).is_err());
 
-        let unconfirmed = OutputChoice { overwrite: true, ..Default::default() };
+        let unconfirmed = OutputChoice { mode: OutputMode::Overwrite, ..Default::default() };
         assert!(unconfirmed.resolve("x", true).is_err());
 
-        let confirmed = OutputChoice { overwrite: true, confirmed: true, ..Default::default() };
+        let link = OutputChoice { mode: OutputMode::Link, ..Default::default() };
+        assert_eq!(link.resolve("cats-classes", true), Ok(OutputTarget::Link { name: "cats-classes".into() }));
+        let bad_link = OutputChoice { mode: OutputMode::Link, name: Some("a/b".into()), ..Default::default() };
+        assert!(bad_link.resolve("x", true).is_err());
+
+        let confirmed = OutputChoice { mode: OutputMode::Overwrite, confirmed: true, ..Default::default() };
         assert_eq!(confirmed.resolve("x", true), Ok(OutputTarget::Overwrite));
         assert_eq!(confirmed.resolve("x", false), Ok(OutputTarget::New { name: "x".into() }));
     }

@@ -64,7 +64,7 @@ mod backend {
         let ws = open()?;
         let env = python()?;
         let name = ws.find_dataset(plan.input).map(|(_, d)| d.name().to_string()).map_err(|e| e.to_string())?;
-        let output = resolve_output(output, &[plan.input])?;
+        let output = resolve_output(output, &[plan.input], false)?;
         if let Some(problem) = plan.problems().into_iter().next() {
             return Err(problem);
         }

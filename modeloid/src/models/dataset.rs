@@ -51,6 +51,10 @@ pub struct Dataset {
     /// How this dataset was made from others. `None` for downloads and imports.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     lineage: Option<Lineage>,
+    /// A dataset link: its images are hard links to these datasets' images
+    /// (it has its own labels). An entry with id 0 is a source since deleted.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    linked_to: Vec<ParentRef>,
 }
 
 /// Where a dataset came from: the tool that made it, its inputs and settings.
@@ -114,6 +118,7 @@ impl Dataset {
             license: String::new(),
             tags: Vec::new(),
             lineage: None,
+            linked_to: Vec::new(),
         }
         .with_class_colors()
     }
@@ -174,6 +179,7 @@ impl Dataset {
     /// kept when the scanner only finds the same family or nothing.
     pub fn refresh(&mut self, stats: DatasetStats) {
         use crate::core::labels::LabelFormat;
+        let size_bytes = self.own_bytes(&stats);
         if stats.dataset_type != "unknown" {
             self.dataset_type = stats.dataset_type;
         }
@@ -187,7 +193,7 @@ impl Dataset {
         self.label_count = stats.label_count;
         self.class_names = stats.class_names;
         self.sync_class_colors();
-        self.size_bytes = stats.size_bytes;
+        self.size_bytes = size_bytes;
         self.train_count = stats.train_count;
         self.test_count = stats.test_count;
         self.val_count = stats.val_count;
@@ -296,6 +302,30 @@ impl Dataset {
         self.lineage = lineage;
     }
 
+    /// The datasets this one links to (empty for a dataset with its own images).
+    pub fn linked_to(&self) -> &[ParentRef] {
+        &self.linked_to
+    }
+
+    pub fn is_link(&self) -> bool {
+        !self.linked_to.is_empty()
+    }
+
+    /// Makes this dataset a link to `sources` (its size then leaves out the
+    /// shared images: give `stats` of the folder to recount it).
+    pub fn set_linked_to(&mut self, sources: Vec<ParentRef>) {
+        self.linked_to = sources;
+    }
+
+    pub(crate) fn set_size_bytes(&mut self, bytes: u64) {
+        self.size_bytes = bytes;
+    }
+
+    /// The bytes this dataset takes: a link shares its images with its sources.
+    fn own_bytes(&self, stats: &DatasetStats) -> u64 {
+        if self.is_link() { stats.size_bytes.saturating_sub(stats.image_bytes) } else { stats.size_bytes }
+    }
+
     pub fn set_dataset_type(&mut self, dataset_type: String) {
         self.dataset_type = dataset_type;
     }
@@ -334,6 +364,7 @@ mod tests {
             label_count: 25,
             class_names: vec!["cat".into(), "dog".into()],
             size_bytes: 5_000_000_000,
+            image_bytes: 0,
             train_count: 7,
             test_count: 1,
             val_count: 2,

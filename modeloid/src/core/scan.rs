@@ -27,6 +27,9 @@ pub struct DatasetStats {
     pub label_count: u32,
     pub class_names: Vec<String>,
     pub size_bytes: u64,
+    /// The part of `size_bytes` that is image files, when known (scans). A
+    /// dataset link's images are shared with its source, so they aren't its size.
+    pub image_bytes: u64,
     pub train_count: u32,
     pub test_count: u32,
     pub val_count: u32,
@@ -73,6 +76,7 @@ pub fn scan_dataset(dir: &Path, progress: &dyn Progress) -> io::Result<DatasetSt
             let ext = extension(&path);
             if IMAGE_EXTENSIONS.contains(&ext.as_str()) {
                 stats.image_count += 1;
+                stats.image_bytes += meta.len();
                 match Split::of_path(rel) {
                     Some(Split::Train) => stats.train_count += 1,
                     Some(Split::Val) => stats.val_count += 1,

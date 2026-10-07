@@ -152,19 +152,41 @@ pub fn read(dir: &Path, format: LabelFormat, progress: &dyn Progress) -> io::Res
 pub struct Written {
     /// Size of every file written: images, label files, `data.yaml`.
     pub bytes: u64,
+    /// The images' part of `bytes` (linked images count too: a scan does).
+    pub image_bytes: u64,
+}
+
+/// How `write` puts the images into the output.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Images {
+    Copy,
+    /// Hard links to the images where they are: no extra storage, and the
+    /// output keeps them when the originals are deleted. Same drive only.
+    HardLink,
 }
 
 /// Writes `set` into `dir` (created if missing): images are copied and labels
 /// written in `format`'s layout, one folder per split. Files are copied on
 /// the worker threads.
 pub fn write(set: &LabelSet, dir: &Path, format: LabelFormat, progress: &dyn Progress) -> io::Result<Written> {
+    write_images(set, dir, format, Images::Copy, progress)
+}
+
+/// `write` with the images hard-linked instead of copied (a dataset link);
+/// `Written.bytes` counts only the files written (labels, `data.yaml`). Fails
+/// when the drive can't make hard links.
+pub fn write_linked(set: &LabelSet, dir: &Path, format: LabelFormat, progress: &dyn Progress) -> io::Result<Written> {
+    write_images(set, dir, format, Images::HardLink, progress)
+}
+
+fn write_images(set: &LabelSet, dir: &Path, format: LabelFormat, images: Images, progress: &dyn Progress) -> io::Result<Written> {
     progress.set_total(set.images.len() as u64);
     fs::create_dir_all(dir)?;
     match format {
-        LabelFormat::Yolo => write_yolo(set, dir, progress),
-        LabelFormat::Coco => write_coco(set, dir, progress),
-        LabelFormat::Voc => write_voc(set, dir, progress),
-        LabelFormat::Via => write_via(set, dir, progress),
+        LabelFormat::Yolo => write_yolo(set, dir, images, progress),
+        LabelFormat::Coco => write_coco(set, dir, images, progress),
+        LabelFormat::Voc => write_voc(set, dir, images, progress),
+        LabelFormat::Via => write_via(set, dir, images, progress),
     }
 }
 
@@ -201,6 +223,7 @@ pub fn describe(set: &LabelSet, format: LabelFormat, written: Written) -> Option
         label_count: set.images.iter().map(|i| i.objects.len() as u32).sum(),
         class_names,
         size_bytes: written.bytes,
+        image_bytes: written.image_bytes,
         train_count: in_split(Split::Train),
         test_count: in_split(Split::Test),
         val_count: in_split(Split::Val),
@@ -246,20 +269,30 @@ struct FileJob<'a> {
     label: Option<(PathBuf, String)>,
 }
 
-/// Copies the images (and writes their label files) on the worker threads.
-/// Returns the bytes written.
-fn write_files(jobs: &[FileJob], progress: &dyn Progress) -> io::Result<u64> {
-    let bytes = AtomicU64::new(0);
+/// Copies or links the images (and writes their label files) on the worker
+/// threads. Returns the bytes now in the output, linked images included.
+fn write_files(jobs: &[FileJob], images: Images, progress: &dyn Progress) -> io::Result<Written> {
+    let (bytes, image_bytes) = (AtomicU64::new(0), AtomicU64::new(0));
     in_parallel(jobs, progress, |job| {
-        let mut written = fs::copy(job.from, &job.to)?;
+        let image = match images {
+            Images::Copy => fs::copy(job.from, &job.to)?,
+            Images::HardLink => {
+                fs::hard_link(job.from, &job.to).map_err(|e| {
+                    io::Error::new(e.kind(), format!("images can't be linked on this drive ({e}); use \"Save as new dataset\" instead"))
+                })?;
+                fs::metadata(&job.to)?.len()
+            }
+        };
+        let mut written = image;
         if let Some((path, text)) = &job.label {
             fs::write(path, text)?;
             written += text.len() as u64;
         }
         bytes.fetch_add(written, Relaxed);
+        image_bytes.fetch_add(image, Relaxed);
         Ok(())
     })?;
-    Ok(bytes.into_inner())
+    Ok(Written { bytes: bytes.into_inner(), image_bytes: image_bytes.into_inner() })
 }
 
 // ---------- YOLO ----------
@@ -351,7 +384,7 @@ fn parse_yolo_line(line: &str, width: f64, height: f64) -> Option<Object> {
     None
 }
 
-fn write_yolo(set: &LabelSet, dir: &Path, progress: &dyn Progress) -> io::Result<Written> {
+fn write_yolo(set: &LabelSet, dir: &Path, images: Images, progress: &dyn Progress) -> io::Result<Written> {
     let mut names = UniqueNames::default();
     let mut splits = BTreeSet::new();
     // Names, folders and label text first, in order; the files are then written on every thread.
@@ -372,7 +405,9 @@ fn write_yolo(set: &LabelSet, dir: &Path, progress: &dyn Progress) -> io::Result
 
     let yaml = data_yaml(&set.classes, &splits);
     fs::write(dir.join("data.yaml"), &yaml)?;
-    Ok(Written { bytes: write_files(&jobs, progress)? + yaml.len() as u64 })
+    let mut written = write_files(&jobs, images, progress)?;
+    written.bytes += yaml.len() as u64;
+    Ok(written)
 }
 
 /// The YOLO label file of `image`: a line per object, normalized to 0..1.
@@ -540,7 +575,7 @@ fn largest_polygon(segmentation: &Value) -> Option<Vec<[f64; 2]>> {
     (values.len() >= 6).then(|| values.chunks_exact(2).map(|p| [p[0], p[1]]).collect())
 }
 
-fn write_coco(set: &LabelSet, dir: &Path, progress: &dyn Progress) -> io::Result<Written> {
+fn write_coco(set: &LabelSet, dir: &Path, images: Images, progress: &dyn Progress) -> io::Result<Written> {
     let mut names = UniqueNames::default();
     let mut splits: HashMap<Option<Split>, (Vec<Value>, Vec<Value>)> = HashMap::new();
     let mut annotation_id = 0;
@@ -561,7 +596,7 @@ fn write_coco(set: &LabelSet, dir: &Path, progress: &dyn Progress) -> io::Result
             annotation_id += 1;
         }
     }
-    let mut bytes = write_files(&jobs, progress)?;
+    let mut written = write_files(&jobs, images, progress)?;
 
     let categories: Vec<Value> = set
         .classes
@@ -572,10 +607,10 @@ fn write_coco(set: &LabelSet, dir: &Path, progress: &dyn Progress) -> io::Result
     for (split, (images, annotations)) in splits {
         let file = json!({ "images": images, "annotations": annotations, "categories": categories });
         let text = serde_json::to_string(&file).map_err(io::Error::other)?;
-        bytes += text.len() as u64;
+        written.bytes += text.len() as u64;
         fs::write(split_dir(dir, split).join(COCO_FILE), text)?;
     }
-    Ok(Written { bytes })
+    Ok(written)
 }
 
 /// One COCO annotation entry for `object`.
@@ -667,7 +702,7 @@ fn read_voc(dir: &Path, progress: &dyn Progress) -> io::Result<LabelSet> {
     Ok(set)
 }
 
-fn write_voc(set: &LabelSet, dir: &Path, progress: &dyn Progress) -> io::Result<Written> {
+fn write_voc(set: &LabelSet, dir: &Path, images: Images, progress: &dyn Progress) -> io::Result<Written> {
     let mut names = UniqueNames::default();
     let mut splits = HashSet::new();
     let mut jobs = Vec::with_capacity(set.images.len());
@@ -682,7 +717,7 @@ fn write_voc(set: &LabelSet, dir: &Path, progress: &dyn Progress) -> io::Result<
         let label = split_dir.join(Path::new(&name).with_extension("xml"));
         jobs.push(FileJob { from: &image.file, to: split_dir.join(&name), label: Some((label, xml)) });
     }
-    Ok(Written { bytes: write_files(&jobs, progress)? })
+    write_files(&jobs, images, progress)
 }
 
 /// The VOC annotation file of `image`, saved under the file name `name`.
@@ -945,7 +980,7 @@ fn read_via(dir: &Path, progress: &dyn Progress) -> io::Result<LabelSet> {
 /// Writes each split's images into its folder with one `via_annotations.json`
 /// (VIA 2 export layout: outlines as polygons, the rest as rectangles, the
 /// class in the region attribute `class`).
-fn write_via(set: &LabelSet, dir: &Path, progress: &dyn Progress) -> io::Result<Written> {
+fn write_via(set: &LabelSet, dir: &Path, images: Images, progress: &dyn Progress) -> io::Result<Written> {
     let mut names = UniqueNames::default();
     let mut jobs = Vec::new();
     let mut splits: std::collections::BTreeMap<Option<Split>, serde_json::Map<String, Value>> = Default::default();
@@ -983,13 +1018,13 @@ fn write_via(set: &LabelSet, dir: &Path, progress: &dyn Progress) -> io::Result<
             json!({ "filename": name, "size": size, "regions": regions, "file_attributes": {} }),
         );
     }
-    let mut bytes = write_files(&jobs, progress)?;
+    let mut written = write_files(&jobs, images, progress)?;
     for (split, entries) in splits {
         let text = serde_json::to_string(&entries).map_err(io::Error::other)?;
-        bytes += text.len() as u64;
+        written.bytes += text.len() as u64;
         fs::write(split_dir(dir, split).join(VIA_FILE), text)?;
     }
-    Ok(Written { bytes })
+    Ok(written)
 }
 
 // ---------- shared helpers ----------
@@ -1276,7 +1311,7 @@ mod tests {
             let scanned = scan_dataset(&dir, &Silent).unwrap();
             assert_eq!(described, scanned, "{format:?}");
         }
-        assert_eq!(describe(&LabelSet::default(), LabelFormat::Yolo, Written { bytes: 0 }), None);
+        assert_eq!(describe(&LabelSet::default(), LabelFormat::Yolo, Written { bytes: 0, image_bytes: 0 }), None);
     }
 
     #[test]

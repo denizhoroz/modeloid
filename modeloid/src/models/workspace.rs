@@ -80,6 +80,9 @@ pub enum Output {
     New { name: String },
     /// Replace the dataset with this id, keeping its id, name and description.
     Overwrite { id: u32 },
+    /// A new dataset link `datasets/<name>`: its images are hard links to the
+    /// inputs' images (Classes & Merge only, see `labels::write_linked`).
+    Link { name: String },
 }
 
 pub use modeloid_types::validate_dataset_name;
@@ -632,6 +635,7 @@ impl Workspace {
         if matches!(output, Output::Overwrite { .. }) && plan.inputs.len() != 1 {
             return Err("overwriting works with exactly one input dataset".into());
         }
+        let link = matches!(output, Output::Link { .. });
         let format = LabelFormat::parse(&plan.format).ok_or_else(|| format!("unknown output format '{}'", plan.format))?;
 
         let mut sets = Vec::new();
@@ -647,8 +651,12 @@ impl Workspace {
         let (set, summary) = classes::apply(plan, sets)?;
 
         let staging = self.staging_dir("classes-merge")?;
-        let writing = reporter.start("Writing", Unit::Files);
-        let written = labels::write(&set, &staging, format, writing.as_ref());
+        let writing = reporter.start(if link { "Linking" } else { "Writing" }, Unit::Files);
+        let written = if link {
+            labels::write_linked(&set, &staging, format, writing.as_ref())
+        } else {
+            labels::write(&set, &staging, format, writing.as_ref())
+        };
         writing.finish();
         let described = match written {
             Ok(written) => labels::describe(&set, format, written),
@@ -665,6 +673,7 @@ impl Workspace {
             .with_param("split", if plan.split == SplitMode::AllTrain { "all-train" } else { "keep" })
             .with_param("removed_images", summary.removed_images as i64)
             .with_param("dropped_objects", summary.dropped_objects as i64);
+        let lineage = if link { lineage.with_param("link", true) } else { lineage };
         match self.save_described(&staging, output, lineage, described, reporter) {
             Ok(dir) => {
                 // The colours chosen for the target classes.
@@ -837,7 +846,8 @@ impl Workspace {
 
     /// Deletes dataset `id`: its folder with all images and labels, and what
     /// was cached about it. Datasets made from it stay (their history still
-    /// names it). Returns its name.
+    /// names it); links to it keep their images (hard links) and mark the
+    /// source as deleted. Returns its name.
     pub fn delete_dataset(&self, id: u32) -> Result<String, crate::Error> {
         let (dir, dataset) = self.find_dataset(id)?;
         // Only ever a folder directly inside datasets/.
@@ -850,7 +860,33 @@ impl Workspace {
         let _ = fs::remove_file(cache.join("stats").join(format!("{id}.json")));
         let _ = fs::remove_file(self.health_cache(id));
         let _ = fs::remove_dir_all(self.thumbs_dir(id));
+        // Id 0: renumbering won't point the link at whichever dataset gets this id next.
+        let _ = self.update_links(|source| {
+            if source.id == id && source.name == dataset.name() {
+                source.id = 0;
+                true
+            } else {
+                false
+            }
+        });
         Ok(dataset.name().to_string())
+    }
+
+    /// Runs `change` on every dataset link's sources and saves the datasets it
+    /// changed (it returns whether it changed one).
+    pub(crate) fn update_links(&self, mut change: impl FnMut(&mut ParentRef) -> bool) -> Result<(), crate::Error> {
+        for (dir, mut dataset) in self.list_datasets()? {
+            let mut sources = dataset.linked_to().to_vec();
+            let mut changed = false;
+            for source in sources.iter_mut() {
+                changed |= change(source);
+            }
+            if changed {
+                dataset.set_linked_to(sources);
+                dataset.save_to_dir(&dir)?;
+            }
+        }
+        Ok(())
     }
 
     /// Gives the datasets the ids 1, 2, 3… in their current order, so a
@@ -884,6 +920,13 @@ impl Workspace {
                     parents_changed = true;
                 }
             }
+            let mut linked_to = dataset.linked_to().to_vec();
+            for source in linked_to.iter_mut() {
+                if let Some(id) = renumbered(source) {
+                    source.id = id;
+                    parents_changed = true;
+                }
+            }
             if old == new && !parents_changed {
                 continue;
             }
@@ -891,6 +934,7 @@ impl Workspace {
             let old_stamp = dataset_stamp(&dir)?;
             dataset.set_id(new);
             dataset.set_lineage(lineage);
+            dataset.set_linked_to(linked_to);
             dataset.save_to_dir(&dir)?;
             let new_stamp = dataset_stamp(&dir)?;
 
@@ -1000,9 +1044,13 @@ impl Workspace {
         described: Option<DatasetStats>,
         reporter: &dyn Reporter,
     ) -> Result<PathBuf, crate::Error> {
+        // Only a result written with `labels::write_linked` is a link.
+        if matches!(output, Output::Link { .. }) && lineage.params.get("link") != Some(&toml::Value::Boolean(true)) {
+            return Err("only Classes & Merge makes dataset links".into());
+        }
         // Check the target before the (slow) scan.
         let replaced = match output {
-            Output::New { name } => {
+            Output::New { name } | Output::Link { name } => {
                 validate_dataset_name(name)?;
                 if self.datasets_dir().join(name).exists() {
                     return Err(format!("a dataset folder named '{name}' already exists").into());
@@ -1023,8 +1071,14 @@ impl Workspace {
         };
 
         let Some((dir, mut dataset)) = replaced else {
-            let Output::New { name } = output else { unreachable!() };
+            let (Output::New { name } | Output::Link { name }) = output else { unreachable!() };
+            let shared_bytes = stats.image_bytes;
             let mut dataset = Dataset::from_stats(self.next_dataset_id()?, name.clone(), stats);
+            if matches!(output, Output::Link { .. }) {
+                // The images are the sources'; the link's size is its labels.
+                dataset.set_linked_to(lineage.parents.clone());
+                dataset.set_size_bytes(dataset.size_bytes().saturating_sub(shared_bytes));
+            }
             // Classes keep the colours they had in the inputs (the first input wins).
             let mut inherited = ClassColors::new();
             for parent in lineage.parents.iter().filter_map(|p| self.find_dataset(p.id).ok().map(|(_, d)| d)) {
@@ -1323,6 +1377,7 @@ fn timestamp() -> String {
 mod tests {
     use super::*;
     use crate::core::progress::Silent;
+    use modeloid_types::edit::DatasetDetails;
 
     struct TempWorkspace(Workspace);
 
@@ -1659,6 +1714,60 @@ mod tests {
         assert!(label.starts_with("0 "), "Cars mapped to car = 0: {label}");
 
         assert!(ws.apply_class_merge(&plan, &Output::Overwrite { id: 1 }, &Silent).is_err(), "no overwrite with 2 inputs");
+    }
+
+    #[test]
+    fn links_a_dataset_with_new_classes() {
+        use crate::core::classes::{ClassAction, DropMode};
+
+        let tmp = TempWorkspace::new("link");
+        let ws = &tmp.0;
+        let yolo = tmp.staging_with(&[
+            ("data.yaml", "names: ['car', 'person']\n"),
+            ("train/labels/a.txt", "0 0.5 0.5 0.2 0.2\n"),
+            ("train/labels/b.txt", "1 0.2 0.2 0.1 0.1\n"),
+        ]);
+        fs::create_dir_all(yolo.join("train/images")).unwrap();
+        // Noise, so the images outweigh the labels.
+        let noisy = image::RgbImage::from_fn(128, 128, |x, y| image::Rgb([(x * 7 + y * 13) as u8, (x * y) as u8, (x ^ y) as u8]));
+        noisy.save(yolo.join("train/images/a.png")).unwrap();
+        noisy.save(yolo.join("train/images/b.png")).unwrap();
+        let source = ws.save_output(&yolo, &new_output("street"), Lineage::new("import", &[]), &Silent).unwrap();
+        let image_size = fs::metadata(source.join("train/images/a.png")).unwrap().len();
+
+        // car → vehicle; images with a person are left out.
+        let mut plan = ws.class_merge_suggestion(&[1], &Silent).unwrap();
+        plan.rename_target("car", "vehicle");
+        plan.remove_target("person");
+        plan.set_rule("person", ClassAction::Drop(DropMode::Images));
+        assert!(ws.class_merge_preview(&plan, &Silent).unwrap().can_run());
+        let (dir, _) = ws.apply_class_merge(&plan, &Output::Link { name: "vehicles".into() }, &Silent).unwrap();
+
+        let link = Dataset::load_from_dir(&dir).unwrap();
+        assert_eq!(link.linked_to(), [ParentRef { id: 1, name: "street".into() }]);
+        assert_eq!((link.image_count(), link.class_names()), (1, &["vehicle".to_string()][..]));
+        assert!(link.size_bytes() < image_size, "a link's size is its labels: {}", link.size_bytes());
+        assert_eq!(fs::read(dir.join("train/images/a.png")).unwrap(), fs::read(source.join("train/images/a.png")).unwrap());
+        assert!(!dir.join("train/images/b.png").exists());
+        // The source keeps its own classes and images.
+        assert_eq!(fs::read_to_string(source.join("train/labels/b.txt")).unwrap(), "1 0.2 0.2 0.1 0.1\n");
+        let rescanned = ws.rescan_dataset(2, &Silent).unwrap();
+        assert!(rescanned.size_bytes() < image_size, "still the labels after a rescan");
+
+        // Renaming the source shows in the link; deleting it keeps the link's images.
+        let details = DatasetDetails { name: "roads".into(), description: String::new(), link: String::new(), license: String::new(), tags: Vec::new() };
+        ws.edit_dataset(1, &details).unwrap();
+        assert_eq!(ws.find_dataset(2).unwrap().1.linked_to()[0].name, "roads");
+        ws.delete_dataset(1).unwrap();
+        ws.renumber_datasets().unwrap();
+        let (dir, link) = ws.find_dataset(1).unwrap();
+        assert_eq!(link.linked_to(), [ParentRef { id: 0, name: "roads".into() }], "a deleted source never takes another id");
+        assert_eq!(ws.read_labels(1, &Silent).unwrap().2.images.len(), 1);
+        assert!(dir.join("train/images/a.png").is_file());
+
+        // Only Classes & Merge writes links.
+        let staging = tmp.staging_with(&[("data.yaml", "names: ['x']\n")]);
+        assert!(ws.save_output(&staging, &Output::Link { name: "fake".into() }, Lineage::new("import", &[]), &Silent).is_err());
     }
 
     #[test]

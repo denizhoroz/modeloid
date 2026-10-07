@@ -15,6 +15,10 @@ pub struct DatasetRow {
     pub images: u32,
     pub labels: u32,
     pub classes: usize,
+    /// What this dataset links to (its images are theirs); empty for a
+    /// dataset with its own images. A deleted source reads "<name> (removed)".
+    #[serde(default)]
+    pub linked_to: Vec<String>,
     pub size_bytes: u64,
 }
 
@@ -25,6 +29,8 @@ pub enum OutputTarget {
     New { name: String },
     /// Replace the (single) input dataset.
     Overwrite,
+    /// A new dataset link with this folder name (Classes & Merge).
+    Link { name: String },
 }
 
 pub use modeloid_types::validate_dataset_name;
@@ -91,14 +97,20 @@ mod backend {
         })
     }
 
-    /// Core `Output` for a tool run on `inputs`. Overwriting needs exactly one input.
+    /// Core `Output` for a tool run on `inputs`. Overwriting needs exactly one
+    /// input; a dataset link only where the tool makes them (`allow_link`).
     #[allow(dead_code)] // used by the tools still to come
-    pub fn resolve_output(target: OutputTarget, inputs: &[u32]) -> Result<Output, String> {
+    pub fn resolve_output(target: OutputTarget, inputs: &[u32], allow_link: bool) -> Result<Output, String> {
         match (target, inputs) {
             (OutputTarget::New { name }, _) => {
                 modeloid::validate_dataset_name(&name)?;
                 Ok(Output::New { name })
             }
+            (OutputTarget::Link { name }, _) if allow_link => {
+                modeloid::validate_dataset_name(&name)?;
+                Ok(Output::Link { name })
+            }
+            (OutputTarget::Link { .. }, _) => Err("Only Classes & Merge makes dataset links.".into()),
             (OutputTarget::Overwrite, &[id]) => Ok(Output::Overwrite { id }),
             (OutputTarget::Overwrite, _) => Err("Overwriting works with exactly one input dataset.".into()),
         }
@@ -129,6 +141,11 @@ mod backend {
                 images: d.image_count(),
                 labels: d.label_count(),
                 classes: d.class_names().len(),
+                linked_to: d
+                    .linked_to()
+                    .iter()
+                    .map(|s| if s.id == 0 { format!("{} (removed)", s.name) } else { s.name.clone() })
+                    .collect(),
                 size_bytes: d.size_bytes(),
             })
             .collect())
@@ -145,9 +162,12 @@ mod tests {
         use modeloid::Output;
 
         let new = OutputTarget::New { name: "cats".into() };
-        assert_eq!(resolve_output(new, &[1, 2]), Ok(Output::New { name: "cats".into() }));
-        assert_eq!(resolve_output(OutputTarget::Overwrite, &[3]), Ok(Output::Overwrite { id: 3 }));
-        assert!(resolve_output(OutputTarget::Overwrite, &[1, 2]).is_err());
-        assert!(resolve_output(OutputTarget::New { name: "a/b".into() }, &[1]).is_err());
+        assert_eq!(resolve_output(new, &[1, 2], false), Ok(Output::New { name: "cats".into() }));
+        assert_eq!(resolve_output(OutputTarget::Overwrite, &[3], false), Ok(Output::Overwrite { id: 3 }));
+        assert!(resolve_output(OutputTarget::Overwrite, &[1, 2], false).is_err());
+        assert!(resolve_output(OutputTarget::New { name: "a/b".into() }, &[1], false).is_err());
+        let link = OutputTarget::Link { name: "cars".into() };
+        assert_eq!(resolve_output(link.clone(), &[1], true), Ok(Output::Link { name: "cars".into() }));
+        assert!(resolve_output(link, &[1], false).is_err(), "only where the tool makes links");
     }
 }

@@ -163,7 +163,16 @@ impl Workspace {
             }
             fsio::rename(&dir, &target)?;
             dir = target;
+            let old_name = dataset.name().to_string();
             dataset.set_name(details.name.clone());
+            // Links to it show its new name.
+            self.update_links(|source| {
+                let renamed = source.id == id && source.name == old_name;
+                if renamed {
+                    source.name = details.name.clone();
+                }
+                renamed
+            })?;
         }
         dataset.set_description(details.description.trim().to_string());
         dataset.set_dataset_link(details.link.trim().to_string());

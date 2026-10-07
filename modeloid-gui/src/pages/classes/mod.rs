@@ -15,7 +15,7 @@ use crate::components::{IconName, TitleIcon};
 use crate::api::datasets::{list_datasets, DatasetRow};
 use crate::api::error_message;
 use crate::api::jobs::JobKind;
-use crate::components::{ColorPicker, FormatSelect, FormatUse, InfoTip, NoWorkspace, set_if_newer, use_job, Bar, BarList, JobProgress, OutputChoice, OutputSelect, SelectDatasetHint, WarningTip};
+use crate::components::{ColorPicker, FormatSelect, FormatUse, InfoTip, NoWorkspace, set_if_newer, use_job, Bar, BarList, JobProgress, OutputChoice, OutputMode, OutputSelect, SelectDatasetHint, WarningTip};
 use crate::state::{use_batch_selected, use_datasets_version, use_selected_datasets, use_workspace, use_workspace_checked};
 use crate::util::{format_count, plural};
 
@@ -699,7 +699,13 @@ fn RunCard(plan: MergePlan, preview: MergePreview, names: Vec<String>, taken: Ve
     let running = job.read().as_ref().is_some_and(|j| !j.finished);
 
     let single = names.len() == 1;
-    let suggested = if single { format!("{}-classes", names[0]) } else { free_name("new-dataset", &taken) };
+    // A link is named for what it is: `<source>-link` (numbered when taken).
+    let suggested = match (output.read().mode == OutputMode::Link, single) {
+        (true, true) => free_name(&format!("{}-link", names[0]), &taken),
+        (true, false) => free_name("new-dataset-link", &taken),
+        (false, true) => format!("{}-classes", names[0]),
+        (false, false) => free_name("new-dataset", &taken),
+    };
     let source_name = single.then(|| names[0].clone());
     let can_run = preview.can_run() && !running;
     let progress_title = if single { "Applying" } else { "Merging" };
@@ -727,7 +733,7 @@ fn RunCard(plan: MergePlan, preview: MergePreview, names: Vec<String>, taken: Ve
 
     rsx! {
         form { class: "section-stack", novalidate: true, onsubmit: submit,
-            OutputSelect { choice: output, suggested_name: suggested, source_name, show_errors: submitted(), disabled: running }
+            OutputSelect { choice: output, suggested_name: suggested, source_name, show_errors: submitted(), disabled: running, allow_link: true }
             if !single {
                 label { class: "check",
                     input {

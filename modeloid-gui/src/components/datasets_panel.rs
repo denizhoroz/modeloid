@@ -161,13 +161,15 @@ pub fn DatasetsPanel(table: Signal<PanelTable>) -> Element {
 fn DatasetsTable(rows: Vec<DatasetRow>, sort: Signal<Sort>) -> Element {
     let selected = use_selected_datasets();
     let mut batch = use_batch_selected();
+    // "Linked to" only while the workspace has a dataset link.
+    let links = rows.iter().any(|r| !r.linked_to.is_empty());
 
     rsx! {
         table { class: "data-table",
             thead {
                 tr {
                     CheckHeader {}
-                    for (column, def) in COLUMNS.into_iter().enumerate() {
+                    for (column, def) in columns(links).into_iter().enumerate() {
                         SortHeader { key: "{column}", column, def, sort }
                     }
                 }
@@ -177,6 +179,7 @@ fn DatasetsTable(rows: Vec<DatasetRow>, sort: Signal<Sort>) -> Element {
                     {
                         let id = row.id;
                         let is_selected = selected.read().contains(&id);
+                        let linked = row.linked_to.join(", ");
                         rsx! {
                     tr {
                         key: "{id}",
@@ -195,14 +198,22 @@ fn DatasetsTable(rows: Vec<DatasetRow>, sort: Signal<Sort>) -> Element {
                         }
                         td { class: "num muted", "{id}" }
                         th { class: "name", scope: "row",
-                            // Keyboard access; the click bubbles to the row.
-                            button {
-                                class: "row-pick",
-                                r#type: "button",
-                                title: "Select only {row.name}",
-                                aria_pressed: if is_selected { "true" } else { "false" },
-                                "{row.name}"
+                            span { class: "name-with-tag",
+                                if !row.linked_to.is_empty() {
+                                    span { class: "badge link-badge", title: "Linked to {linked}: its images are theirs", "Link" }
+                                }
+                                // Keyboard access; the click bubbles to the row.
+                                button {
+                                    class: "row-pick",
+                                    r#type: "button",
+                                    title: "Select only {row.name}",
+                                    aria_pressed: if is_selected { "true" } else { "false" },
+                                    "{row.name}"
+                                }
                             }
+                        }
+                        if links {
+                            td { class: "muted linked-to", title: "{linked}", "{linked}" }
                         }
                         td { title: "{row.task}", "{short_task(&row.task)}" }
                         td { class: "num", "{format_count(row.images)}" }
@@ -219,35 +230,44 @@ fn DatasetsTable(rows: Vec<DatasetRow>, sort: Signal<Sort>) -> Element {
     }
 }
 
-/// The Datasets table's sortable columns, in order.
-const COLUMNS: [Column; 8] = [
-    Column::id(),
-    Column::text("Name"),
-    Column::text("Task"),
-    Column::number("Images"),
-    Column::number("Labels"),
-    Column::number("Classes"),
-    Column::text("Format"),
-    Column::number("Size"),
-];
+/// The Datasets table's sortable columns, in order; "Linked to" after the
+/// name when `links` (the workspace has a dataset link).
+fn columns(links: bool) -> Vec<Column> {
+    let mut columns = vec![Column::id(), Column::text("Name")];
+    if links {
+        columns.push(Column::text("Linked to"));
+    }
+    columns.extend([
+        Column::text("Task"),
+        Column::number("Images"),
+        Column::number("Labels"),
+        Column::number("Classes"),
+        Column::text("Format"),
+        Column::number("Size"),
+    ]);
+    columns
+}
 
-/// Sorts `rows` by `sort`'s column; equal rows stay in id order.
+/// Sorts `rows` by `sort`'s column (by its label, so "Linked to" coming and
+/// going doesn't change what the others sort by); equal rows stay in id order.
 fn sort_rows(sort: Sort, rows: &mut [DatasetRow]) {
-    let text = |r: &DatasetRow| match sort.column {
-        1 => r.name.to_lowercase(),
-        2 => short_task(&r.task).to_lowercase(),
-        6 => r.format.to_lowercase(),
+    let links = rows.iter().any(|r| !r.linked_to.is_empty());
+    let column = columns(links).get(sort.column).copied().unwrap_or(Column::id());
+    let text = |r: &DatasetRow| match column.label {
+        "Name" => r.name.to_lowercase(),
+        "Linked to" => r.linked_to.join(", ").to_lowercase(),
+        "Task" => short_task(&r.task).to_lowercase(),
+        "Format" => r.format.to_lowercase(),
         _ => String::new(),
     };
-    let number = |r: &DatasetRow| match sort.column {
-        0 => u64::from(r.id),
-        3 => u64::from(r.images),
-        4 => u64::from(r.labels),
-        5 => r.classes as u64,
-        7 => r.size_bytes,
-        _ => 0,
+    let number = |r: &DatasetRow| match column.label {
+        "Images" => u64::from(r.images),
+        "Labels" => u64::from(r.labels),
+        "Classes" => r.classes as u64,
+        "Size" => r.size_bytes,
+        _ => u64::from(r.id),
     };
-    let numeric = COLUMNS.get(sort.column).is_some_and(|c| c.numeric);
+    let numeric = column.numeric;
     rows.sort_by(|a, b| {
         let order = if numeric { number(a).cmp(&number(b)) } else { text(a).cmp(&text(b)) };
         sort.directed(order).then(a.id.cmp(&b.id))
@@ -281,6 +301,7 @@ mod tests {
             images,
             labels: 0,
             classes: 0,
+            linked_to: Vec::new(),
             size_bytes: 0,
         }
     }
@@ -296,6 +317,21 @@ mod tests {
         assert_eq!(ids(&rows), [2, 1, 3], "ties stay in id order");
         sort_rows(Sort { column: 0, ascending: false }, &mut rows);
         assert_eq!(ids(&rows), [3, 2, 1]);
+    }
+
+    #[test]
+    fn linked_to_column_comes_and_goes() {
+        assert_eq!(columns(false).iter().map(|c| c.label).collect::<Vec<_>>()[1..3], ["Name", "Task"]);
+        assert_eq!(columns(true).iter().map(|c| c.label).collect::<Vec<_>>()[1..4], ["Name", "Linked to", "Task"]);
+
+        let mut rows = vec![row(1, "b", 5), row(2, "a", 9), row(3, "c", 1)];
+        rows[0].linked_to = vec!["zebra".into()];
+        rows[2].linked_to = vec!["apple".into()];
+        let ids = |rows: &[DatasetRow]| rows.iter().map(|r| r.id).collect::<Vec<_>>();
+        sort_rows(Sort { column: 2, ascending: true }, &mut rows);
+        assert_eq!(ids(&rows), [2, 3, 1], "by source; none first");
+        sort_rows(Sort { column: 4, ascending: false }, &mut rows);
+        assert_eq!(ids(&rows), [2, 1, 3], "Images moved one to the right");
     }
 
     #[test]

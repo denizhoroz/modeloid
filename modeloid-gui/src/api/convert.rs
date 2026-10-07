@@ -76,7 +76,7 @@ mod backend {
     pub fn run(plan: ConvertPlan, output: OutputTarget) -> Result<Job, String> {
         let ws = open()?;
         let name = name_of(&ws, plan.input)?;
-        let output = resolve_output(output, &[plan.input])?;
+        let output = resolve_output(output, &[plan.input], false)?;
         // Cached statistics: the job checks again on the labels it reads.
         let preview = ws.convert_preview(&plan, &Silent).map_err(|e| e.to_string())?;
         if let Some(problem) = preview.problems.first().or(preview.unchanged.as_ref()) {

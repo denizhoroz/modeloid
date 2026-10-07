@@ -63,7 +63,7 @@ mod backend {
         }
         let ws = open()?;
         let name = name_of(&ws, plan.input)?;
-        let output = resolve_output(output, &[plan.input])?;
+        let output = resolve_output(output, &[plan.input], false)?;
         if let Some(problem) = plan.problems().into_iter().next() {
             return Err(problem);
         }

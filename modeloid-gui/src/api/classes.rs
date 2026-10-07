@@ -100,7 +100,7 @@ mod backend {
         if delete_inputs && (plan.inputs.len() < 2 || matches!(output, OutputTarget::Overwrite)) {
             return Err("Deleting the inputs works only when merging several datasets into a new one.".into());
         }
-        let output = resolve_output(output, &plan.inputs)?;
+        let output = resolve_output(output, &plan.inputs, true)?;
         let preview = ws.class_merge_preview(&plan, &Silent).map_err(|e| e.to_string())?;
         if let Some(problem) = preview.problems.first() {
             return Err(problem.clone());

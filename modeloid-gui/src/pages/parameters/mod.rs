@@ -705,7 +705,7 @@ mod tests {
     use super::*;
 
     fn row(task: &str) -> DatasetRow {
-        DatasetRow { id: 1, name: "cars".into(), task: task.into(), format: "coco".into(), images: 10, labels: 20, classes: 2, size_bytes: 0 }
+        DatasetRow { id: 1, name: "cars".into(), task: task.into(), format: "coco".into(), images: 10, labels: 20, classes: 2, linked_to: Vec::new(), size_bytes: 0 }
     }
 
     #[test]
