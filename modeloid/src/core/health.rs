@@ -130,7 +130,7 @@ struct Scan {
 pub fn check(
     dir: &Path,
     set: &LabelSet,
-    orphans: Vec<PathBuf>,
+    orphans: &[PathBuf],
     stamp: String,
     cache: &ImageCache,
     progress: &dyn Progress,
@@ -432,7 +432,7 @@ mod tests {
             // A gradient whose direction depends on the seed, so different seeds look different.
             // Brightness rises left to right for even seeds and falls for odd ones.
             let img = image::RgbImage::from_fn(64, 48, |x, _| {
-                let v = (if seed % 2 == 0 { x * 4 } else { 255 - x * 4 }) as u8;
+                let v = (if seed.is_multiple_of(2) { x * 4 } else { 255 - x * 4 }) as u8;
                 image::Rgb([v, seed * 10, v])
             });
             img.save(path).unwrap();
@@ -465,7 +465,7 @@ mod tests {
     fn checked(tmp: &TempDir) -> (LabelSet, HealthReport) {
         let set = labels::read(&tmp.0, LabelFormat::Yolo, &Silent).unwrap();
         let orphans = labels::orphan_labels(&tmp.0, LabelFormat::Yolo).unwrap();
-        let report = check(&tmp.0, &set, orphans, "stamp".into(), &ImageCache::default(), &Silent).unwrap();
+        let report = check(&tmp.0, &set, &orphans, "stamp".into(), &ImageCache::default(), &Silent).unwrap();
         (set, report)
     }
 
@@ -476,7 +476,7 @@ mod tests {
         let file = tmp.0.join("cache/checked.json");
         let run = || {
             let cache = ImageCache::load(&file);
-            let report = check(&tmp.0, &set, Vec::new(), "stamp".into(), &cache, &Silent).unwrap();
+            let report = check(&tmp.0, &set, &[], "stamp".into(), &cache, &Silent).unwrap();
             cache.save(&file).unwrap();
             (report, cache.hits())
         };

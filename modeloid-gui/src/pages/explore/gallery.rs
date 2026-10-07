@@ -141,7 +141,7 @@ pub fn Gallery(id: u32, classes: Vec<String>, stats: ExploreStats, filter: Signa
                             ImageDetail {
                                 id,
                                 image,
-                                classes: classes.clone(),
+                                classes: classes,
                                 colors: page.colors.clone(),
                                 position: format!("{} of {}", format_count((page.offset + i + 1) as u32), format_count(total as u32)),
                                 on_close: move |_| open.set(None),
@@ -194,7 +194,11 @@ fn Overlay(objects: Vec<GalleryObject>, colors: Vec<String>, highlight: Option<u
                     let style = colors.get(o.class).map(|c| format!("--shape-color: {c}")).unwrap_or_default();
                     match &o.polygon {
                         Some(points) => {
-                            let points: String = points.iter().map(|[x, y]| format!("{x},{y} ")).collect();
+                            let points: String = points.iter().fold(String::new(), |mut all, [x, y]| {
+                                use std::fmt::Write;
+                                let _ = write!(all, "{x},{y} ");
+                                all
+                            });
                             rsx! { polygon { key: "{i}", class, style, points } }
                         }
                         None => rsx! {

@@ -18,7 +18,7 @@ pub async fn convert_preview(plan: ConvertPlan) -> Result<ConvertPreview, Server
 /// Starts writing the converted dataset.
 #[post("/api/convert/run")]
 pub async fn start_convert(plan: ConvertPlan, output: OutputTarget) -> Result<Job, ServerFnError> {
-    backend::run(plan, output).map_err(ServerFnError::new)
+    crate::api::blocking(move || backend::run(plan, output)).await
 }
 
 /// Where a batch conversion puts each result.
@@ -40,7 +40,7 @@ pub async fn convert_batch_preview(plan: ConvertPlan, inputs: Vec<u32>) -> Resul
 /// job item each. Datasets where nothing would change are skipped.
 #[post("/api/convert/run-batch")]
 pub async fn start_convert_batch(plan: ConvertPlan, inputs: Vec<u32>, output: BatchOutput) -> Result<Job, ServerFnError> {
-    backend::run_batch(plan, inputs, output).map_err(ServerFnError::new)
+    crate::api::blocking(move || backend::run_batch(plan, inputs, output)).await
 }
 
 #[cfg(feature = "server")]
@@ -51,12 +51,9 @@ mod backend {
     use super::{BatchOutput, ConvertPlan, ConvertPreview};
     use crate::api::datasets::{resolve_output, OutputTarget};
     use crate::api::jobs::{self, Job, JobKind};
-    use crate::api::{activity, workspace};
+    use crate::api::activity;
 
-    fn open() -> Result<Workspace, String> {
-        let dir = workspace::current_dir().ok_or("Load or create a workspace first.")?;
-        Workspace::load_from_dir(&dir).map_err(|e| format!("Couldn't open the workspace: {e}"))
-    }
+    use crate::api::workspace::open;
 
     fn name_of(ws: &Workspace, id: u32) -> Result<String, String> {
         ws.find_dataset(id).map(|(_, d)| d.name().to_string()).map_err(|e| e.to_string())

@@ -30,7 +30,7 @@ pub async fn class_merge_preview(plan: MergePlan) -> Result<MergePreview, Server
 /// the input datasets once the new one is written (merges into a new dataset only).
 #[post("/api/classes/run")]
 pub async fn start_class_merge(plan: MergePlan, output: OutputTarget, delete_inputs: bool) -> Result<Job, ServerFnError> {
-    backend::run(plan, output, delete_inputs).map_err(ServerFnError::new)
+    crate::api::blocking(move || backend::run(plan, output, delete_inputs)).await
 }
 
 #[get("/api/classes/lists")]
@@ -43,7 +43,7 @@ pub async fn save_class_list(list: ClassList) -> Result<(), ServerFnError> {
     backend::blocking(move |ws| {
         ws.save_class_list(&list).map_err(|e| e.to_string())?;
         #[cfg(feature = "server")]
-        crate::api::history::record("Dataset Manager", "Classes & Merge", "Save class list", list.name.clone(), None);
+        crate::api::history::record("Dataset Manager", "Classes & Merge", "Save class list", list.name, None);
         Ok(())
     })
     .await
@@ -54,7 +54,7 @@ pub async fn delete_class_list(name: String) -> Result<(), ServerFnError> {
     backend::blocking(move |ws| {
         ws.delete_class_list(&name).map_err(|e| e.to_string())?;
         #[cfg(feature = "server")]
-        crate::api::history::record("Dataset Manager", "Classes & Merge", "Delete class list", name.clone(), None);
+        crate::api::history::record("Dataset Manager", "Classes & Merge", "Delete class list", name, None);
         Ok(())
     })
     .await
@@ -68,12 +68,9 @@ mod backend {
     use super::MergePlan;
     use crate::api::datasets::{resolve_output, OutputTarget};
     use crate::api::jobs::{self, Job, JobKind};
-    use crate::api::{activity, workspace};
+    use crate::api::activity;
 
-    fn open() -> Result<Workspace, String> {
-        let dir = workspace::current_dir().ok_or("Load or create a workspace first.")?;
-        Workspace::load_from_dir(&dir).map_err(|e| format!("Couldn't open the workspace: {e}"))
-    }
+    use crate::api::workspace::open;
 
     /// Like `blocking`, but listed in the status bar and cancelled by a newer
     /// call in the same `slot`. For reads only: a cancelled write would be lost.

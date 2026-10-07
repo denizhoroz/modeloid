@@ -247,7 +247,7 @@ fn write_yolo_names(dir: &Path, set: &LabelSet) -> Result<(), crate::Error> {
         }
     }
     let data_yaml_file = yamls.iter().find(|p| p.file_name().is_some_and(|n| n == "data.yaml"));
-    match named.or(data_yaml_file.copied()) {
+    match named.or_else(|| data_yaml_file.copied()) {
         Some(path) => fs::write(path, replace_yaml_names(&read_lossy(path)?, &set.classes))?,
         None => {
             let splits = set.images.iter().map(|i| i.split).collect();

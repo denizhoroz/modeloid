@@ -80,24 +80,27 @@ pub fn validate_credential(service: ServiceId, value: &str) -> Result<(), String
 
 #[post("/api/settings/credentials/status")]
 pub async fn credential_status(service: ServiceId) -> Result<KeyStatus, ServerFnError> {
-    backend::status(&backend::settings_path()?, service).map_err(ServerFnError::new)
+    crate::api::blocking(move || backend::status(&backend::settings_path()?, service)).await
 }
 
 #[post("/api/settings/credentials/save")]
 pub async fn save_credential(service: ServiceId, value: String) -> Result<KeyStatus, ServerFnError> {
-    backend::set(&backend::settings_path()?, service, Some(value)).map_err(ServerFnError::new)
+    crate::api::blocking(move || backend::set(&backend::settings_path()?, service, Some(value))).await
 }
 
 #[post("/api/settings/credentials/remove")]
 pub async fn remove_credential(service: ServiceId) -> Result<KeyStatus, ServerFnError> {
-    backend::set(&backend::settings_path()?, service, None).map_err(ServerFnError::new)
+    crate::api::blocking(move || backend::set(&backend::settings_path()?, service, None)).await
 }
+
+#[cfg(feature = "server")]
+pub use backend::settings_path;
 
 #[cfg(feature = "server")]
 mod backend {
     use std::path::{Path, PathBuf};
 
-    use dioxus::prelude::ServerFnError;
+    
     use modeloid::{Service, Settings};
 
     use super::{KeyStatus, ServiceId};
@@ -110,8 +113,9 @@ mod backend {
         }
     }
 
-    pub fn settings_path() -> Result<PathBuf, ServerFnError> {
-        Settings::default_path().ok_or_else(|| ServerFnError::new("Couldn't find a config folder on this computer."))
+    /// Where the settings live (`Settings::default_path`).
+    pub fn settings_path() -> Result<PathBuf, String> {
+        Settings::default_path().ok_or_else(|| "Couldn't find a config folder on this computer.".into())
     }
 
     fn load(path: &Path) -> Result<Settings, String> {

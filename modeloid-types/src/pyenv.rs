@@ -182,11 +182,6 @@ impl EnvStatus {
     pub fn usable(&self) -> bool {
         self.info().is_some()
     }
-
-    /// Python itself is set up (with or without the libraries).
-    pub fn has_python(&self) -> bool {
-        matches!(self, EnvStatus::NoLibraries(_) | EnvStatus::Ready(_) | EnvStatus::Outdated(_))
-    }
 }
 
 /// Everything the setup screen needs.
@@ -251,7 +246,7 @@ mod tests {
         );
         assert_eq!(gpu.cuda_problem(), None);
         assert!(Gpu { driver: "560.94".into(), ..gpu.clone() }.cuda_problem().is_some(), "old driver");
-        assert!(Gpu { compute_cap: Some("6.1".into()), ..gpu.clone() }.cuda_problem().is_some(), "GTX 10-series");
+        assert!(Gpu { compute_cap: Some("6.1".into()), ..gpu }.cuda_problem().is_some(), "GTX 10-series");
         assert_eq!(Gpu::parse_smi_line("Old smi, 4096 MiB, 590.10").unwrap().compute_cap, None);
         assert_eq!(Gpu::parse_smi_line(""), None);
         assert_eq!(Gpu::parse_smi_line("No devices were found"), None);
@@ -291,7 +286,7 @@ mod tests {
         assert_eq!(overview.device(), TrainDevice::Cpu, "no GPU to train on");
 
         overview.status = EnvStatus::NoLibraries("3.12.13".into());
-        assert!(overview.status.has_python() && !overview.status.usable());
+        assert!(!overview.status.usable());
         assert!(!overview.installed(TrainDevice::Cpu), "Python alone can't train");
     }
 }

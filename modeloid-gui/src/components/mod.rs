@@ -43,7 +43,6 @@ pub use job_progress::{set_if_newer, use_job, JobProgress};
 pub use layout::{AppLayout, PanelWidth, PANEL_MIN_WIDTH};
 pub use number_input::NumberInput;
 pub use output_choice::{OutputChoice, OutputMode, OutputSelect};
-#[allow(unused_imports)] // LibrariesMissing and open_python_settings: for Train Model
 pub use python_setup::{open_python_settings, LibrariesMissing, PythonAutoSetup, PythonNotice, PythonSetupCard};
 pub use resize_handle::ResizeHandle;
 pub use side_panel::{status_label, use_panel_table, PanelSwitcher, PanelTable, PanelTableState, SidePanel};

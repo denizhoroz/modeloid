@@ -85,26 +85,24 @@ impl Appearance {
 
 #[post("/api/settings/appearance")]
 pub async fn get_appearance() -> Result<Appearance, ServerFnError> {
-    backend::get(&backend::settings_path()?).map_err(ServerFnError::new)
+    crate::api::blocking(|| backend::get(&backend::settings_path()?)).await
 }
 
 #[post("/api/settings/appearance/save")]
 pub async fn save_appearance(appearance: Appearance) -> Result<(), ServerFnError> {
-    backend::save(&backend::settings_path()?, appearance).map_err(ServerFnError::new)
+    crate::api::blocking(move || backend::save(&backend::settings_path()?, appearance)).await
 }
 
 #[cfg(feature = "server")]
 mod backend {
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
 
-    use dioxus::prelude::ServerFnError;
+    
     use modeloid::{AppearancePrefs, Settings};
 
     use super::Appearance;
 
-    pub fn settings_path() -> Result<PathBuf, ServerFnError> {
-        Settings::default_path().ok_or_else(|| ServerFnError::new("Couldn't find a config folder on this computer."))
-    }
+    pub use crate::api::settings::settings_path;
 
     pub fn get(path: &Path) -> Result<Appearance, String> {
         let settings = Settings::load(path).map_err(|e| format!("Couldn't read the settings: {e}"))?;

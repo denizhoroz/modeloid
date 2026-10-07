@@ -19,7 +19,7 @@ pub async fn train_preview(dataset: u32, parameters: String, name: String) -> Re
 /// Starts training (a `Train` job with one item, named after the model).
 #[post("/api/train/start")]
 pub async fn start_training(dataset: u32, parameters: String, name: String) -> Result<Job, ServerFnError> {
-    backend::start(dataset, parameters, name).map_err(ServerFnError::new)
+    crate::api::blocking(move || backend::start(dataset, parameters, name)).await
 }
 
 /// What continuing stopped run `name` from its last epoch would do, and what's in the way.
@@ -31,7 +31,7 @@ pub async fn resume_preview(name: String) -> Result<TrainPreview, ServerFnError>
 /// Continues stopped run `name` (a `Train` job with one item, named after the model).
 #[post("/api/train/resume")]
 pub async fn resume_training(name: String) -> Result<Job, ServerFnError> {
-    backend::resume(name).map_err(ServerFnError::new)
+    crate::api::blocking(move || backend::resume(name)).await
 }
 
 /// Trained models (training runs) of the workspace, by start time, and a
@@ -79,15 +79,12 @@ pub(crate) mod backend {
 
     use super::{ModelList, RunResults, TrainLog, TrainPreview};
     use crate::api::jobs::{self, Job, JobKind};
-    use crate::api::{activity, workspace};
+    use crate::api::activity;
 
     /// Most console text sent in one answer.
     const LOG_CHUNK: usize = 256 * 1024;
 
-    pub fn open() -> Result<Workspace, String> {
-        let dir = workspace::current_dir().ok_or("Load or create a workspace first.")?;
-        Workspace::load_from_dir(&dir).map_err(|e| format!("Couldn't open the workspace: {e}"))
-    }
+    pub use crate::api::workspace::open;
 
     pub fn parameter_set(ws: &Workspace, name: &str) -> Result<ParameterSet, String> {
         let (sets, _) = ws.parameter_sets().map_err(|e| e.to_string())?;

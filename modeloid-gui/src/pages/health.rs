@@ -76,7 +76,7 @@ fn HealthPage(ids: Vec<u32>) -> Element {
     });
 
     let rows: Vec<HealthSummary> = summaries.read().as_ref().and_then(|r| r.as_ref().ok()).cloned().unwrap_or_default();
-    let name_of = |id: u32| rows.iter().find(|r| r.id == id).map_or(format!("Dataset #{id}"), |r| r.name.clone());
+    let name_of = |id: u32| crate::util::dataset_name(rows.iter().find(|r| r.id == id).map(|r| r.name.clone()), id);
     let checking = check_job.read().as_ref().is_some_and(|j| !j.finished);
     let fixing = fix_job.read().as_ref().is_some_and(|j| !j.finished);
     let any_checked = rows.iter().any(|r| r.checked.is_some());
@@ -138,7 +138,7 @@ fn HealthPage(ids: Vec<u32>) -> Element {
         }
 
         if many {
-            SummaryTable { rows: rows.clone(), ids: ids.clone(), focus }
+            SummaryTable { rows: rows.clone(), ids: ids, focus }
         }
 
         match &*view.read() {
@@ -172,7 +172,7 @@ fn SummaryTable(rows: Vec<HealthSummary>, ids: Vec<u32>, focus: Signal<u32>) -> 
     // Selection order; a dataset whose summary hasn't arrived yet still gets a row.
     let ordered: Vec<HealthSummary> = ids
         .iter()
-        .map(|&id| rows.iter().find(|r| r.id == id).cloned().unwrap_or(HealthSummary { id, name: format!("Dataset #{id}"), checked: None }))
+        .map(|&id| rows.iter().find(|r| r.id == id).cloned().unwrap_or_else(|| HealthSummary { id, name: crate::util::dataset_name(None, id), checked: None }))
         .collect();
     let checked: Vec<&HealthCounts> = ordered.iter().filter_map(|r| r.checked.as_ref().map(|c| &c.counts)).collect();
     let overall = HealthCounts::sum(checked.iter().copied());
@@ -333,7 +333,7 @@ fn Report(id: u32, name: Option<String>, view: HealthView) -> Element {
             }
             Finding { title: "Unknown class ids", count: counts.unknown_classes, problem: true,
                 hint: "Objects whose class id isn't in data.yaml's class list.",
-                BoxIssues { id, items: report.unknown_classes.clone(), total: counts.unknown_classes, classes: classes.clone(), thumbs }
+                BoxIssues { id, items: report.unknown_classes.clone(), total: counts.unknown_classes, classes: classes, thumbs }
             }
             Finding { title: "Image size differs from labels", count: counts.size_mismatches, problem: true,
                 hint: "The annotation file assumes another image size, so boxes may be misplaced. Not fixed automatically.",
@@ -349,7 +349,7 @@ fn Report(id: u32, name: Option<String>, view: HealthView) -> Element {
             }
             Finding { title: "Images without labels", count: counts.unlabeled_images, problem: false,
                 hint: "Background images can help against false positives, so these are kept unless you choose to remove them.",
-                ImageList { id, items: report.unlabeled_images.clone(), total: counts.unlabeled_images, thumbs }
+                ImageList { id, items: report.unlabeled_images, total: counts.unlabeled_images, thumbs }
             }
         }
     }

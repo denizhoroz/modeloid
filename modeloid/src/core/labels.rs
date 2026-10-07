@@ -120,6 +120,25 @@ pub struct LabelSet {
     pub declared_classes: Option<usize>,
 }
 
+/// `LabelSet::class_index` through a map, for readers that ask once per
+/// object: a linear search each time is slow with thousands of classes.
+struct ClassIds(HashMap<String, usize>);
+
+impl ClassIds {
+    fn of(set: &LabelSet) -> Self {
+        ClassIds(set.classes.iter().enumerate().map(|(i, name)| (name.clone(), i)).collect())
+    }
+
+    fn get(&mut self, set: &mut LabelSet, name: &str) -> usize {
+        if let Some(&i) = self.0.get(name) {
+            return i;
+        }
+        let i = set.class_index(name);
+        self.0.insert(name.to_string(), i);
+        i
+    }
+}
+
 impl LabelSet {
     /// Index of `name` in `classes`, adding it if missing.
     pub fn class_index(&mut self, name: &str) -> usize {
@@ -377,7 +396,7 @@ fn parse_yolo_line(line: &str, width: f64, height: f64) -> Option<Object> {
         let bbox = BBox { x: (cx - w / 2.0) * width, y: (cy - h / 2.0) * height, w: w * width, h: h * height };
         return Some(Object { class, bbox, polygon: None });
     }
-    if values.len() >= 6 && values.len() % 2 == 0 {
+    if values.len() >= 6 && values.len().is_multiple_of(2) {
         let points: Vec<[f64; 2]> = values.chunks(2).map(|p| [p[0] * width, p[1] * height]).collect();
         return Some(Object { class, bbox: BBox::around(&points), polygon: Some(points) });
     }
@@ -441,7 +460,7 @@ pub fn data_yaml(classes: &[String], splits: &BTreeSet<Option<Split>>) -> String
     };
     let unsplit = splits.contains(&None);
     let pick = |s: Split| splits.contains(&Some(s)).then(|| path(Some(s)));
-    let train = pick(Split::Train).or(unsplit.then(|| path(None)));
+    let train = pick(Split::Train).or_else(|| unsplit.then(|| path(None)));
     // Ultralytics needs a val entry; fall back to train images.
     let val = pick(Split::Val).or_else(|| train.clone());
 
@@ -690,11 +709,12 @@ fn read_voc(dir: &Path, progress: &dyn Progress) -> io::Result<LabelSet> {
         }
         Ok(Some((image, objects)))
     })?;
+    let mut ids = ClassIds::of(&set);
     for (found, warnings) in read {
         set.warnings.extend(warnings);
         let Some((mut image, objects)) = found else { continue };
         for (name, bbox) in objects {
-            let class = set.class_index(&name);
+            let class = ids.get(&mut set, &name);
             image.objects.push(Object { class, bbox, polygon: None });
         }
         set.images.push(image);
@@ -765,7 +785,11 @@ fn unescape_xml(text: &str) -> String {
 /// relative to `dir`. Reading skips these silently; Health Check reports them.
 pub fn orphan_labels(dir: &Path, format: LabelFormat) -> io::Result<Vec<PathBuf>> {
     let files = walk(dir)?;
-    let has_image = |stem_path: &Path| IMAGE_EXTENSIONS.iter().any(|ext| stem_path.with_extension(ext).is_file());
+    // Looked up in the listing, not on disk (tens of thousands of labels). Any
+    // case matches, like reading: `IMG.JPG` is the image of `IMG.txt` on Linux too.
+    let stem_key = |p: &Path| p.with_extension("").to_string_lossy().to_lowercase();
+    let image_stems: HashSet<String> = files.iter().filter(|p| is_image(p)).map(|p| stem_key(p)).collect();
+    let has_image = |stem_path: &Path| image_stems.contains(&stem_key(stem_path));
     let rel = |p: &Path| p.strip_prefix(dir).unwrap_or(p).to_path_buf();
 
     Ok(match format {
@@ -931,6 +955,7 @@ fn read_via(dir: &Path, progress: &dyn Progress) -> io::Result<LabelSet> {
     // Each image once: its file, the split its VIA file says, its objects.
     let mut images: Vec<(PathBuf, Option<Split>, Vec<Object>)> = Vec::new();
     let mut listed = HashSet::new();
+    let mut ids = ClassIds::of(&set);
 
     for path in files.iter().filter(|p| extension(p) == "json") {
         check_cancel(progress.is_cancelled()).map_err(|e| io::Error::new(io::ErrorKind::Interrupted, e))?;
@@ -955,7 +980,7 @@ fn read_via(dir: &Path, progress: &dyn Progress) -> io::Result<LabelSet> {
                     set.warnings.push(format!("{}: a region of {name} has no class, skipped", path.display()));
                     continue;
                 };
-                objects.push(Object { class: set.class_index(&class), bbox, polygon });
+                objects.push(Object { class: ids.get(&mut set, &class), bbox, polygon });
             }
             images.push((file, split, objects));
         }
@@ -1227,7 +1252,7 @@ mod tests {
         );
         let scanned = crate::core::scan::scan_dataset(&tmp.0, &Silent).unwrap();
         assert_eq!((scanned.annotation_format.as_str(), scanned.dataset_type.as_str()), ("via", "instance-segmentation"));
-        assert_eq!((scanned.label_count, scanned.class_names.clone()), (2, vec!["dent".to_string(), "scratch".to_string()]));
+        assert_eq!((scanned.label_count, scanned.class_names), (2, vec!["dent".to_string(), "scratch".to_string()]));
 
         let set = read(&tmp.0, LabelFormat::Via, &Silent).unwrap();
         assert_eq!(set.classes, ["dent", "scratch"]);
@@ -1360,5 +1385,21 @@ mod tests {
         assert_eq!(num(1.0), "1");
         assert_eq!(num(0.1234567), "0.123457");
         assert_eq!(num(-0.0000001), "0");
+    }
+
+    #[test]
+    fn orphans_ignore_case() {
+        let tmp = TempDir::new("orphans");
+        tmp.write("train/images/IMG_1.JPG", b"x");
+        tmp.write("train/labels/IMG_1.txt", "0 0.5 0.5 0.1 0.1\n");
+        tmp.write("train/labels/gone.txt", "0 0.5 0.5 0.1 0.1\n");
+        tmp.write("voc/a.Png", b"x");
+        tmp.write("voc/a.xml", "<annotation/>");
+        tmp.write("voc/b.xml", "<annotation/>");
+
+        let yolo = orphan_labels(&tmp.0, LabelFormat::Yolo).unwrap();
+        assert_eq!(yolo, [PathBuf::from("train/labels/gone.txt")]);
+        let voc = orphan_labels(&tmp.0.join("voc"), LabelFormat::Voc).unwrap();
+        assert_eq!(voc, [PathBuf::from("b.xml")]);
     }
 }

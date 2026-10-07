@@ -53,7 +53,6 @@ pub fn ColorPicker(
                                 aria_label: "{color}",
                                 aria_pressed: if current.as_deref() == Some(color.as_str()) { "true" } else { "false" },
                                 onclick: {
-                                    let color = color.clone();
                                     move |_| {
                                         onchange.call(color.clone());
                                         open.set(false);

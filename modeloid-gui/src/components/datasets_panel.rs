@@ -147,7 +147,7 @@ pub fn DatasetsPanel(table: Signal<PanelTable>) -> Element {
                     Some(Ok(rows)) if rows.is_empty() => rsx! {
                         p { class: "panel-empty", "No datasets yet. Download one to get started." }
                     },
-                    Some(Ok(_)) => rsx! { DatasetsTable { rows: sorted.clone().unwrap_or_default(), sort } },
+                    Some(Ok(_)) => rsx! { DatasetsTable { rows: sorted.unwrap_or_default(), sort } },
                 }
             }
         }

@@ -270,7 +270,7 @@ impl Workspace {
         reading.finish();
         let (_, dataset, set) = read?;
         let format = LabelFormat::parse(dataset.annotation_format()).ok_or("unsupported label format")?;
-        let seed = plan.seed.unwrap_or(self.seed());
+        let seed = plan.seed.unwrap_or_else(|| self.seed());
         let (chosen, preview) = choose(plan, seed, &set);
         if let Some(problem) = preview.problems.first() {
             return Err(problem.clone().into());

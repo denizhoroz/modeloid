@@ -381,11 +381,11 @@ def augment_image(compose, item, out_dir):
         out = r["image"]
         oh, ow = out.shape[:2]
         found = []
-        for box, i in zip(r["bboxes"], r["box_ids"]):
+        for box, i in zip(r["bboxes"], r["box_ids"], strict=True):
             x, y, w, h = (float(v) for v in box[:4])
             found.append((int(i), {"class": objects[int(i)]["class"], "bbox": [x, y, w, h], "polygon": None}))
         outlines = {}
-        for point, i in zip(r["keypoints"], r["point_ids"]):
+        for point, i in zip(r["keypoints"], r["point_ids"], strict=True):
             outlines.setdefault(int(i), []).append((float(point[0]), float(point[1])))
         for i, outline in outlines.items():
             outline = clip_polygon(outline, float(ow), float(oh))
@@ -434,14 +434,24 @@ def augment(config_path):
 
 
 def folder_size(path):
-    """Bytes under `path`, half-written files included; unreadable ones skipped."""
+    """Bytes under `path`, half-written files included; unreadable ones skipped.
+    `scandir` entries carry their size on Windows, so no call per file there."""
     total = 0
-    for root, _, files in os.walk(path):
-        for name in files:
-            try:
-                total += os.path.getsize(os.path.join(root, name))
-            except OSError:
-                pass
+    pending = [path]
+    while pending:
+        try:
+            entries = os.scandir(pending.pop())
+        except OSError:
+            continue
+        with entries:
+            for entry in entries:
+                try:
+                    if entry.is_dir(follow_symlinks=False):
+                        pending.append(entry.path)
+                    else:
+                        total += entry.stat(follow_symlinks=False).st_size
+                except OSError:
+                    pass
     return total
 
 
@@ -450,6 +460,7 @@ def hf_download(config_path):
         config = json.load(f)
 
     import threading
+    import time
 
     from huggingface_hub import HfApi, snapshot_download
 
@@ -464,9 +475,14 @@ def hf_download(config_path):
     # huggingface_hub reports per file; the folder's size is the progress.
     finished = threading.Event()
 
+    # Counting a big folder takes a while: wait at least ten times as long
+    # as the last count, so it never competes with the download.
     def report():
-        while not finished.wait(1.0):
+        pause = 1.0
+        while not finished.wait(pause):
+            started = time.monotonic()
             event("progress", bytes=folder_size(out_dir))
+            pause = max(1.0, 10 * (time.monotonic() - started))
 
     reporter = threading.Thread(target=report, daemon=True)
     reporter.start()

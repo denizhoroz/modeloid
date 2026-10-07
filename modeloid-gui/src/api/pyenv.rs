@@ -21,7 +21,7 @@ pub async fn python_env_overview() -> Result<EnvOverview, ServerFnError> {
 /// `PythonSetup` job, or `None` when there was nothing to do.
 #[post("/api/python/prepare")]
 pub async fn prepare_python_env() -> Result<Option<Job>, ServerFnError> {
-    backend::prepare().map_err(ServerFnError::new)
+    crate::api::blocking(backend::prepare).await
 }
 
 /// Switches to `variant`'s PyTorch build (only torch and torchvision change;
@@ -29,14 +29,14 @@ pub async fn prepare_python_env() -> Result<Option<Job>, ServerFnError> {
 /// device. The GPU's "Remove" is this with the CPU build.
 #[post("/api/python/setup")]
 pub async fn start_python_setup(variant: TorchVariant) -> Result<Job, ServerFnError> {
-    backend::setup(variant).map_err(ServerFnError::new)
+    crate::api::blocking(move || backend::setup(variant)).await
 }
 
 /// Chooses what training runs on. No reinstall: the CUDA build runs on the
 /// CPU too (choosing the GPU without the CUDA build needs an install first).
 #[post("/api/python/device")]
 pub async fn set_train_device(device: TrainDevice) -> Result<(), ServerFnError> {
-    backend::update_settings(move |s| s.set_train_device(device)).map_err(ServerFnError::new)
+    crate::api::blocking(move || backend::update_settings(move |s| s.set_train_device(device))).await
 }
 
 #[cfg(feature = "server")]
@@ -100,7 +100,7 @@ mod backend {
     }
 
     pub fn update_settings(change: impl FnOnce(&mut Settings)) -> Result<(), String> {
-        let path = Settings::default_path().ok_or("Couldn't find a config folder on this computer.")?;
+        let path = crate::api::settings::settings_path()?;
         let mut settings = Settings::load(&path).map_err(|e| format!("Couldn't read the settings: {e}"))?;
         change(&mut settings);
         settings.save(&path).map_err(|e| format!("Couldn't save the settings: {e}"))

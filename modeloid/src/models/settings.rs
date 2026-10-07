@@ -519,7 +519,7 @@ mod tests {
 ").unwrap();
         assert_eq!(old.appearance(), None);
 
-        let mut settings = old.clone();
+        let mut settings = old;
         let prefs = AppearancePrefs { theme: "dracula".into(), font: "inter".into(), scale: "large".into(), hide_icons: true };
         settings.set_appearance(prefs.clone());
         let text = toml::to_string(&settings).unwrap();

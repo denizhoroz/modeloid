@@ -17,14 +17,14 @@ pub struct SystemView {
 
 #[get("/api/settings/system")]
 pub async fn get_system() -> Result<SystemView, ServerFnError> {
-    Ok(backend::view())
+    crate::api::blocking(|| Ok(backend::view())).await
 }
 
 /// Saves the settings (pulled into range) and puts them to use at once;
 /// running jobs pick up thread and connection changes at their next step.
 #[post("/api/settings/system/save")]
 pub async fn save_system(prefs: SystemPrefs) -> Result<SystemView, ServerFnError> {
-    backend::save(prefs).map_err(ServerFnError::new)
+    crate::api::blocking(move || backend::save(prefs)).await
 }
 
 /// Bytes of cached previews and statistics in the open workspace; `None` when none is open.
@@ -52,7 +52,7 @@ mod backend {
     }
 
     pub fn save(prefs: SystemPrefs) -> Result<SystemView, String> {
-        let path = Settings::default_path().ok_or("This computer has no config folder to save settings in.")?;
+        let path = crate::api::settings::settings_path()?;
         let mut settings = Settings::load(&path).map_err(|e| e.to_string())?;
         settings.set_system(prefs);
         settings.save(&path).map_err(|e| e.to_string())?;

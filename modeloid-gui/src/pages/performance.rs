@@ -50,7 +50,7 @@ fn Results(name: String) -> Element {
     let job_step = use_memo(move || {
         job.read().as_ref().filter(|j| j.items.first().is_some_and(|i| i.label == run_name)).map(|j| (j.version, j.finished))
     });
-    let fetch_name = name.clone();
+    let fetch_name = name;
     let results = use_resource(move || {
         let name = fetch_name.clone();
         async move {
@@ -401,7 +401,7 @@ fn epoch_seconds(results: &RunResults) -> Option<Vec<f64>> {
 /// The run's facts for the Run card: what ran and how long it took.
 fn run_facts(results: &RunResults) -> Vec<(&'static str, String)> {
     let record: &TrainRecord = &results.record;
-    let task = Task::ALL.iter().find(|t| t.id() == record.task).map_or(record.task.clone(), |t| t.label().to_string());
+    let task = Task::ALL.iter().find(|t| t.id() == record.task).map_or_else(|| record.task.clone(), |t| t.label().to_string());
     let mut facts = vec![
         ("Task", task),
         ("Parameter set", record.parameters.clone()),

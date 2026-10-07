@@ -30,6 +30,16 @@ pub mod workspace;
 
 use dioxus::prelude::ServerFnError;
 
+/// Runs `work` (disk, TOML, the keyring) on a thread meant for blocking, so the
+/// async threads stay free for other requests and the long-polls.
+#[cfg(feature = "server")]
+pub async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, ServerFnError> {
+    match tokio::task::spawn_blocking(work).await {
+        Ok(result) => result.map_err(ServerFnError::new),
+        Err(e) => Err(ServerFnError::new(format!("The server task failed: {e}"))),
+    }
+}
+
 /// Text to show the user for a failed server function: just the server's
 /// message, without the "error running server function" wrapper.
 pub fn error_message(error: &ServerFnError) -> String {

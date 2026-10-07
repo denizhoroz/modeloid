@@ -163,7 +163,7 @@ impl Workspace {
                 Some(LabelFormat::Yolo) if !dataset.class_names().is_empty() => match yolo_layout(&dataset_dir) {
                     Some((train, val, test)) => {
                         let val_is_train = val.is_none();
-                        let mut yaml = format!("path: {}\ntrain: {train}\nval: {}\n", quote(&dataset_dir.display().to_string()), val.unwrap_or(train.clone()));
+                        let mut yaml = format!("path: {}\ntrain: {train}\nval: {}\n", quote(&dataset_dir.display().to_string()), val.unwrap_or_else(|| train.clone()));
                         if let Some(test) = test {
                             yaml.push_str(&format!("test: {test}\n"));
                         }

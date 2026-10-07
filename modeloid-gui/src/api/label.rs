@@ -48,12 +48,9 @@ mod backend {
 
     use super::{LabelClasses, LabelImage, LabelObject, LabelSession, SavedLabels};
     use crate::api::explore::{cached_labels, edit_labels};
-    use crate::api::{activity, history, jobs, workspace};
+    use crate::api::{activity, history, jobs};
 
-    fn open() -> Result<Workspace, String> {
-        let dir = workspace::current_dir().ok_or("Load or create a workspace first.")?;
-        Workspace::load_from_dir(&dir).map_err(|e| format!("Couldn't open the workspace: {e}"))
-    }
+    use crate::api::workspace::open;
 
     fn session_of(dataset: &Dataset, set: &LabelSet, id: u32) -> LabelSession {
         LabelSession {

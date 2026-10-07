@@ -18,7 +18,7 @@ pub async fn transform_preview(plan: TransformPlan) -> Result<TransformPreview, 
 /// Starts making the augmented dataset (a `Transform` job).
 #[post("/api/transform/run")]
 pub async fn start_transform(plan: TransformPlan, output: OutputTarget) -> Result<Job, ServerFnError> {
-    backend::run(plan, output).map_err(ServerFnError::new)
+    crate::api::blocking(move || backend::run(plan, output)).await
 }
 
 /// Shown when the Python environment can't run Albumentations yet.
@@ -26,18 +26,15 @@ pub const ALBUMENTATIONS_MISSING: &str = "Albumentations isn't installed yet. Up
 
 #[cfg(feature = "server")]
 mod backend {
-    use modeloid::{PyEnv, Workspace};
+    use modeloid::PyEnv;
 
     use super::{TransformPlan, TransformPreview, ALBUMENTATIONS_MISSING};
     use crate::api::datasets::{resolve_output, OutputTarget};
     use crate::api::explore::cached_labels;
     use crate::api::jobs::{self, Job, JobKind};
-    use crate::api::{activity, workspace};
+    use crate::api::activity;
 
-    fn open() -> Result<Workspace, String> {
-        let dir = workspace::current_dir().ok_or("Load or create a workspace first.")?;
-        Workspace::load_from_dir(&dir).map_err(|e| format!("Couldn't open the workspace: {e}"))
-    }
+    use crate::api::workspace::open;
 
     /// The environment, if it has Albumentations.
     fn python() -> Result<PyEnv, String> {

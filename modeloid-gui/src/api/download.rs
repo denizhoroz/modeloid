@@ -46,7 +46,7 @@ pub fn parse_links(text: &str) -> Vec<String> {
 /// `ItemAction::RoboflowFork` offered; `download_forking` takes that offer.
 #[post("/api/download/start")]
 pub async fn start_download(links: Vec<String>, format: String) -> Result<Job, ServerFnError> {
-    backend::start(links, format).map_err(ServerFnError::new)
+    crate::api::blocking(move || backend::start(links, format)).await
 }
 
 /// Takes `ItemAction::RoboflowFork` for item `index` (`link`) of the latest
@@ -55,7 +55,7 @@ pub async fn start_download(links: Vec<String>, format: String) -> Result<Job, S
 /// job, so its other items stay listed.
 #[post("/api/download/fork")]
 pub async fn download_forking(index: usize, link: String, format: String) -> Result<Job, ServerFnError> {
-    backend::fork(index, link, format).map_err(ServerFnError::new)
+    crate::api::blocking(move || backend::fork(index, link, format)).await
 }
 
 #[cfg(feature = "server")]
@@ -63,7 +63,7 @@ mod backend {
     use modeloid::{AlreadyExists, DownloadOptions, NoVersions, PyEnv, Settings, Source, Workspace};
 
     use crate::api::jobs::{self, ItemAction, ItemCtx, Job, JobKind};
-    use crate::api::workspace;
+    
 
     const MAX_LINKS: usize = 50;
 
@@ -92,10 +92,7 @@ mod backend {
         }
     }
 
-    fn open() -> Result<Workspace, String> {
-        let dir = workspace::current_dir().ok_or("Load or create a workspace first.")?;
-        Workspace::load_from_dir(&dir).map_err(|e| format!("Couldn't open the workspace: {e}"))
-    }
+    use crate::api::workspace::open;
 
     pub fn fork(index: usize, link: String, format: String) -> Result<Job, String> {
         let format = format.trim().to_lowercase();

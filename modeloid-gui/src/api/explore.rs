@@ -40,24 +40,41 @@ mod backend {
     use modeloid::{core::stats, LabelSet, Progress, Silent, Workspace};
 
     use super::{ExploreStats, GalleryFilter, GalleryPage};
-    use crate::api::{activity, workspace};
+    use crate::api::activity;
 
-    /// Labels of the dataset last looked at, so paging and previews don't
-    /// re-read every label file. Keyed by workspace, dataset and its toml stamp.
-    static LABELS: Mutex<Option<(String, Arc<LabelSet>)>> = Mutex::new(None);
+    /// Workspace folder, dataset id and its dataset.toml's stamp.
+    type Key = (PathBuf, u32, String);
 
-    fn open() -> Result<Workspace, String> {
-        let dir = workspace::current_dir().ok_or("Load or create a workspace first.")?;
-        Workspace::load_from_dir(&dir).map_err(|e| format!("Couldn't open the workspace: {e}"))
-    }
+    /// Labels of the datasets last looked at, most recent last, so paging,
+    /// previews and going back and forth between a few datasets don't re-read
+    /// every label file.
+    static LABELS: Mutex<Vec<(Key, Arc<LabelSet>)>> = Mutex::new(Vec::new());
+    /// Label sets kept: a big dataset's labels take a lot of memory.
+    const KEPT: usize = 3;
+
+    use crate::api::workspace::open;
 
     /// Label edits one at a time, so two can't change the cached set at once.
     static EDITS: Mutex<()> = Mutex::new(());
 
     /// Cache key of dataset `id` in folder `dir`: its dataset.toml's stamp.
-    fn cache_key(ws: &Workspace, dir: &std::path::Path, id: u32) -> Result<String, String> {
+    fn cache_key(ws: &Workspace, dir: &std::path::Path, id: u32) -> Result<Key, String> {
         let meta = std::fs::metadata(dir.join("dataset.toml")).map_err(|e| e.to_string())?;
-        Ok(format!("{}|{id}|{}|{:?}", ws.path().display(), meta.len(), meta.modified().ok()))
+        Ok((ws.path().to_path_buf(), id, format!("{}|{:?}", meta.len(), meta.modified().ok())))
+    }
+
+    /// Drops what's cached for the dataset of `key`, whatever its stamp.
+    fn forget(cached: &mut Vec<(Key, Arc<LabelSet>)>, key: &Key) {
+        cached.retain(|((ws, id, _), _)| (ws, id) != (&key.0, &key.1));
+    }
+
+    fn remember(key: Key, set: Arc<LabelSet>) {
+        let mut cached = LABELS.lock().unwrap();
+        forget(&mut cached, &key);
+        cached.push((key, set));
+        if cached.len() > KEPT {
+            cached.remove(0);
+        }
     }
 
     /// Dataset `id`'s folder and labels, read only when it isn't the cached one.
@@ -65,14 +82,18 @@ mod backend {
         let (dir, _) = ws.find_dataset(id).map_err(|e| e.to_string())?;
         let key = cache_key(ws, &dir, id)?;
 
-        if let Some((cached_key, set)) = LABELS.lock().unwrap().as_ref() {
-            if *cached_key == key {
-                return Ok((dir, set.clone()));
+        {
+            let mut cached = LABELS.lock().unwrap();
+            if let Some(at) = cached.iter().position(|(k, _)| *k == key) {
+                let hit = cached.remove(at);
+                let set = hit.1.clone();
+                cached.push(hit);
+                return Ok((dir, set));
             }
         }
         let (_, _, set) = ws.read_labels(id, progress).map_err(|e| e.to_string())?;
         let set = Arc::new(set);
-        *LABELS.lock().unwrap() = Some((key, set.clone()));
+        remember(key, set.clone());
         Ok((dir, set))
     }
 
@@ -83,13 +104,12 @@ mod backend {
     pub fn edit_labels<T>(ws: &Workspace, id: u32, change: impl FnOnce(&mut LabelSet) -> Result<T, String>) -> Result<T, String> {
         let _one_at_a_time = EDITS.lock().unwrap_or_else(|e| e.into_inner());
         let (dir, set) = labels(ws, id, &Silent)?;
-        *LABELS.lock().unwrap() = None;
+        forget(&mut LABELS.lock().unwrap(), &cache_key(ws, &dir, id)?);
         // Usually the only reference now, so nothing is copied.
         let mut set = Arc::try_unwrap(set).unwrap_or_else(|shared| (*shared).clone());
         let result = change(&mut set);
         if result.is_ok() {
-            let key = cache_key(ws, &dir, id)?;
-            *LABELS.lock().unwrap() = Some((key, Arc::new(set)));
+            remember(cache_key(ws, &dir, id)?, Arc::new(set));
         }
         result
     }

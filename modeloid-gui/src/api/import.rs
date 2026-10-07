@@ -25,22 +25,21 @@ pub fn name_from_path(path: &str) -> String {
 /// Imports `path` as a new dataset called `name` in the open workspace.
 #[post("/api/import/start")]
 pub async fn start_import(path: String, kind: ImportKind, name: String) -> Result<Job, ServerFnError> {
-    backend::start(path, kind, name).map_err(ServerFnError::new)
+    crate::api::blocking(move || backend::start(path, kind, name)).await
 }
 
 #[cfg(feature = "server")]
 mod backend {
     use std::path::PathBuf;
 
-    use modeloid::{validate_dataset_name, ImportMode, Workspace};
+    use modeloid::{validate_dataset_name, ImportMode};
 
     use super::ImportKind;
     use crate::api::jobs::{self, Job, JobKind};
     use crate::api::workspace;
 
     pub fn start(path: String, kind: ImportKind, name: String) -> Result<Job, String> {
-        let dir = workspace::current_dir().ok_or("Load or create a workspace first.")?;
-        let ws = Workspace::load_from_dir(&dir).map_err(|e| format!("Couldn't open the workspace: {e}"))?;
+        let ws = workspace::open()?;
         let name = name.trim().to_string();
         validate_dataset_name(&name)?;
         let source = PathBuf::from(path.trim());

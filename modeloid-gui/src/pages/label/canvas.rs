@@ -219,7 +219,11 @@ pub fn Canvas() -> Element {
                                 let style = format!("--label-color: {}", editor.color(o.class));
                                 match &o.polygon {
                                     Some(points) => {
-                                        let points: String = points.iter().map(|[x, y]| format!("{x},{y} ")).collect();
+                                        let points: String = points.iter().fold(String::new(), |mut all, [x, y]| {
+                                use std::fmt::Write;
+                                let _ = write!(all, "{x},{y} ");
+                                all
+                            });
                                         rsx! { polygon { key: "{i}", class, style, points } }
                                     }
                                     None => rsx! {

@@ -14,13 +14,13 @@ use crate::api::jobs::Job;
 /// Creates an empty dataset in the open workspace; returns its id.
 #[post("/api/datasets/create")]
 pub async fn create_dataset(new: NewDataset) -> Result<u32, ServerFnError> {
-    backend::create(new).map_err(ServerFnError::new)
+    crate::api::blocking(move || backend::create(new)).await
 }
 
 /// The details Edit shows for dataset `id`.
 #[post("/api/datasets/details")]
 pub async fn dataset_details(id: u32) -> Result<DatasetDetails, ServerFnError> {
-    backend::details(id).map_err(ServerFnError::new)
+    crate::api::blocking(move || backend::details(id)).await
 }
 
 /// Saves `details` for dataset `id`, renaming its folder for a new name.
@@ -28,13 +28,13 @@ pub async fn dataset_details(id: u32) -> Result<DatasetDetails, ServerFnError> {
 /// a page that hasn't caught up is refused rather than changing another dataset.
 #[post("/api/datasets/save-details")]
 pub async fn save_dataset_details(id: u32, expected: String, details: DatasetDetails) -> Result<(), ServerFnError> {
-    backend::save(id, expected, details).map_err(ServerFnError::new)
+    crate::api::blocking(move || backend::save(id, expected, details)).await
 }
 
 /// Starts an upload of images; pass the token to `upload_image` and `start_add_images`.
 #[post("/api/datasets/upload/start")]
 pub async fn start_upload() -> Result<String, ServerFnError> {
-    backend::start_upload().map_err(ServerFnError::new)
+    crate::api::blocking(backend::start_upload).await
 }
 
 /// Stores one image of upload `token`.
@@ -46,7 +46,7 @@ pub async fn upload_image(token: String, file: FileStream) -> Result<(), ServerF
 /// Moves the images of upload `token` into dataset `id`, as a job.
 #[post("/api/datasets/upload/add")]
 pub async fn start_add_images(id: u32, token: String) -> Result<Job, ServerFnError> {
-    backend::add(id, token).map_err(ServerFnError::new)
+    crate::api::blocking(move || backend::add(id, token)).await
 }
 
 /// How many of dataset `id`'s images have no labels, and how many labels it has.
@@ -59,23 +59,20 @@ pub async fn label_status(id: u32) -> Result<LabelStatus, ServerFnError> {
 mod backend {
     use dioxus::fullstack::FileStream;
     use futures_util::StreamExt;
-    use modeloid::{core::edit, Workspace};
+    use modeloid::core::edit;
     use tokio::io::AsyncWriteExt;
 
     use super::{DatasetDetails, LabelStatus, NewDataset, CREATE_TYPES};
     use crate::api::jobs::{self, Job, JobKind};
-    use crate::api::{activity, explore, history, workspace};
+    use crate::api::{activity, explore, history};
     use crate::util::plural;
 
-    fn open() -> Result<Workspace, String> {
-        let dir = workspace::current_dir().ok_or("Load or create a workspace first.")?;
-        Workspace::load_from_dir(&dir).map_err(|e| format!("Couldn't open the workspace: {e}"))
-    }
+    use crate::api::workspace::open;
 
     pub fn create(new: NewDataset) -> Result<u32, String> {
         let new = NewDataset { name: new.name.trim().to_string(), ..new };
         let (_, dataset) = open()?.create_dataset(&new).map_err(|e| e.to_string())?;
-        let label = |list: &[(&str, &'static str)], key: &str| list.iter().find(|(k, _)| *k == key).map_or(key.to_string(), |(_, l)| l.to_string());
+        let label = |list: &[(&str, &'static str)], key: &str| list.iter().find(|(k, _)| *k == key).map_or_else(|| key.to_string(), |(_, l)| l.to_string());
         let detail = format!("{} · {}", label(CREATE_TYPES, &new.dataset_type), modeloid_types::formats::label(&new.annotation_format));
         history::record("Dataset Manager", "Datasets", "Create dataset", dataset.name(), Some(detail));
         Ok(dataset.id())

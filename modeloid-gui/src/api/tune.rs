@@ -19,7 +19,7 @@ pub async fn tune_preview(plan: TunePlan) -> Result<TrainPreview, ServerFnError>
 /// Starts tuning (a `Tune` job with one item, named after the run).
 #[post("/api/tune/start")]
 pub async fn start_tune(plan: TunePlan) -> Result<Job, ServerFnError> {
-    backend::start(plan).map_err(ServerFnError::new)
+    crate::api::blocking(move || backend::start(plan)).await
 }
 
 /// Tuning run `name`'s record: trials, scores, the best and where it was saved.

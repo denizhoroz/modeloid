@@ -57,7 +57,7 @@ pub async fn health_summaries(ids: Vec<u32>) -> Result<Vec<HealthSummary>, Serve
 /// Starts checking the datasets `ids`, one after another (`JobKind::HealthCheck`).
 #[post("/api/health/check")]
 pub async fn start_health_check(ids: Vec<u32>) -> Result<Job, ServerFnError> {
-    backend::check(ids).map_err(ServerFnError::new)
+    crate::api::blocking(move || backend::check(ids)).await
 }
 
 /// Starts applying `fixes` to each dataset in `targets`, writing it to its
@@ -65,14 +65,14 @@ pub async fn start_health_check(ids: Vec<u32>) -> Result<Job, ServerFnError> {
 /// since, or has nothing these fixes apply to is skipped.
 #[post("/api/health/fix")]
 pub async fn start_health_fix(targets: Vec<(u32, OutputTarget)>, fixes: HealthFixes) -> Result<Job, ServerFnError> {
-    backend::fix(targets, fixes).map_err(ServerFnError::new)
+    crate::api::blocking(move || backend::fix(targets, fixes)).await
 }
 
 /// Rebuilds every dataset's `dataset.toml` and adds folders that have none
 /// (`JobKind::Rescan`).
 #[post("/api/datasets/rescan")]
 pub async fn start_rescan() -> Result<Job, ServerFnError> {
-    backend::rescan().map_err(ServerFnError::new)
+    crate::api::blocking(backend::rescan).await
 }
 
 #[cfg(feature = "server")]
@@ -82,12 +82,9 @@ mod backend {
     use super::{Checked, HealthFixes, HealthSummary, HealthView, SHOWN};
     use crate::api::datasets::{resolve_output, OutputTarget};
     use crate::api::jobs::{self, Job, JobKind};
-    use crate::api::{activity, workspace};
+    use crate::api::activity;
 
-    fn open() -> Result<Workspace, String> {
-        let dir = workspace::current_dir().ok_or("Load or create a workspace first.")?;
-        Workspace::load_from_dir(&dir).map_err(|e| format!("Couldn't open the workspace: {e}"))
-    }
+    use crate::api::workspace::open;
 
     fn name_of(ws: &Workspace, id: u32) -> Result<String, String> {
         ws.find_dataset(id).map(|(_, d)| d.name().to_string()).map_err(|e| e.to_string())

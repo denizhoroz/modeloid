@@ -209,7 +209,8 @@ fn is_optimizer(key: &str, name: &str) -> bool {
 }
 
 /// The default search space for `task`: every hyperparameter that applies to it.
-pub fn default_space(task: Task) -> Vec<TuneParam> {
+#[cfg(test)]
+fn default_space(task: Task) -> Vec<TuneParam> {
     HYPERPARAMETERS.iter().filter(|h| h.applies.to(task)).map(TuneParam::default_for).collect()
 }
 
@@ -260,7 +261,7 @@ pub fn hyper_value(p: &UltralyticsParams, key: &str) -> Option<TuneValue> {
 pub fn set_hyper_value(p: &mut UltralyticsParams, key: &str, value: &TuneValue) -> Result<(), String> {
     if key == "optimizer" {
         let TuneValue::Text(name) = value else { return Err("optimizer: not a name".into()) };
-        p.training.optimizer = Optimizer::ALL.iter().copied().find(|o| o.id() == name).ok_or(format!("unknown optimizer {name}"))?;
+        p.training.optimizer = Optimizer::ALL.iter().copied().find(|o| o.id() == name).ok_or_else(|| format!("unknown optimizer {name}"))?;
         return Ok(());
     }
     let v = value.number().ok_or_else(|| format!("{key}: not a number"))?;

@@ -363,6 +363,7 @@ fn ContinueRun(run: TrainRecord, running: bool, job: Signal<Option<Job>>) -> Ele
 #[component]
 pub(crate) fn TrainConsole(run: String, version: u64, live: Option<String>, #[props(default)] tuning: bool) -> Element {
     let mut text = use_signal(String::new);
+    let mut line_count = use_signal(|| 0usize);
     let mut offset = use_signal(|| 0u64);
     let mut fetching = use_signal(|| false);
     let mut error = use_signal(|| None::<String>);
@@ -383,13 +384,17 @@ pub(crate) fn TrainConsole(run: String, version: u64, live: Option<String>, #[pr
                     Ok(log) => {
                         let got = !log.text.is_empty();
                         if got {
-                            let mut all = text.peek().clone();
+                            // Appended in place; only the new text is counted.
+                            let mut lines = *line_count.peek() + log.text.matches('\n').count();
+                            let mut all = text.write();
                             all.push_str(&log.text);
-                            let lines = all.lines().count();
                             if lines > CONSOLE_LINES {
-                                all = all.lines().skip(lines - CONSOLE_LINES).collect::<Vec<_>>().join("\n") + "\n";
+                                let cut = all.match_indices('\n').nth(lines - CONSOLE_LINES - 1).map_or(0, |(i, _)| i + 1);
+                                all.drain(..cut);
+                                lines = CONSOLE_LINES;
                             }
-                            text.set(all);
+                            drop(all);
+                            line_count.set(lines);
                         }
                         offset.set(log.offset);
                         if !got {

@@ -45,7 +45,7 @@ pub fn validate_workspace_name(name: &str) -> Result<(), String> {
 #[get("/api/workspace/current")]
 pub async fn current_workspace() -> Result<Option<WorkspaceInfo>, ServerFnError> {
     // Re-read it so a moved or deleted workspace isn't shown as open.
-    Ok(backend::current().and_then(|dir| backend::load(&dir).ok()))
+    crate::api::blocking(|| Ok(backend::current().and_then(|dir| backend::load(&dir).ok()))).await
 }
 
 /// Creates `<parent>/<name>/` as a new workspace and opens it.
@@ -58,13 +58,13 @@ pub async fn create_workspace(
     seed: u64,
     default_format: String,
 ) -> Result<WorkspaceInfo, ServerFnError> {
-    backend::create(&name, &description, parent.as_ref(), seed, &default_format).map_err(ServerFnError::new)
+    crate::api::blocking(move || backend::create(&name, &description, parent.as_ref(), seed, &default_format)).await
 }
 
 /// Changes the open workspace's description, seed and default label format.
 #[post("/api/workspace/update")]
 pub async fn update_workspace(description: String, seed: u64, default_format: String) -> Result<WorkspaceInfo, ServerFnError> {
-    backend::update(&description, seed, &default_format).map_err(ServerFnError::new)
+    crate::api::blocking(move || backend::update(&description, seed, &default_format)).await
 }
 
 /// Opens a folder picker and loads the chosen workspace.
@@ -75,12 +75,12 @@ pub async fn load_workspace() -> Result<Option<WorkspaceInfo>, ServerFnError> {
     let Some(dir) = pick_folder_path("Choose a workspace folder".into(), DialogPurpose::Workspace).await? else {
         return Ok(None);
     };
-    backend::load(&dir).map(Some).map_err(ServerFnError::new)
+    crate::api::blocking(move || backend::load(&dir).map(Some)).await
 }
 
 /// Folder of the open workspace, for other server functions.
 #[cfg(feature = "server")]
-pub use backend::current as current_dir;
+pub use backend::{current as current_dir, open};
 
 #[cfg(feature = "server")]
 mod backend {
@@ -98,6 +98,12 @@ mod backend {
 
     pub fn current() -> Option<PathBuf> {
         CURRENT.lock().unwrap().clone()
+    }
+
+    /// The open workspace, read again from disk.
+    pub fn open() -> Result<Workspace, String> {
+        let dir = current().ok_or("Load or create a workspace first.")?;
+        Workspace::load_from_dir(&dir).map_err(|e| format!("Couldn't open the workspace: {e}"))
     }
 
     fn set_current(dir: &Path) {

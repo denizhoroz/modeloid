@@ -159,7 +159,7 @@ fn ProgressRow(
 ) -> Element {
     let (status_class, status_text) = match item.status {
         ItemStatus::Queued => ("is-queued", "Queued".to_string()),
-        ItemStatus::Running => ("is-running", item.stage.as_ref().map_or("Starting".into(), |s| s.label.clone())),
+        ItemStatus::Running => ("is-running", item.stage.as_ref().map_or_else(|| "Starting".into(), |s| s.label.clone())),
         ItemStatus::Done => ("is-done", "Done".to_string()),
         ItemStatus::Failed => ("is-failed", "Failed".to_string()),
         ItemStatus::Warning => ("is-warning", "Warning".to_string()),

@@ -2,7 +2,6 @@
 
 use std::{
     fs,
-    hash::{Hash, Hasher},
     io::BufWriter,
     path::{Path, PathBuf},
 };
@@ -16,9 +15,9 @@ const QUALITY: u8 = 80;
 /// time, so an edited image gets a fresh preview.
 pub fn thumbnail(src: &Path, cache_dir: &Path, max: u32) -> Result<PathBuf, crate::Error> {
     let meta = fs::metadata(src).map_err(|e| format!("cannot read {}: {e}", src.display()))?;
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    (src, meta.len(), meta.modified().ok(), max).hash(&mut hasher);
-    let path = cache_dir.join(format!("{:016x}.jpg", hasher.finish()));
+    // A stable hash: the std one may change with Rust and orphan every preview.
+    let key = format!("{}|{}|{:?}|{max}", src.display(), meta.len(), meta.modified().ok());
+    let path = cache_dir.join(format!("{:016x}.jpg", crate::core::pyenv::fnv1a(key.as_bytes())));
     if path.is_file() {
         return Ok(path);
     }

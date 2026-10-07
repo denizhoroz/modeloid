@@ -205,7 +205,6 @@ fn ClassChart(plan: Signal<BalancePlan>, columns: Vec<Column>) -> Element {
                                         title: "{title}",
                                         aria_pressed: if is_in { "true" } else { "false" },
                                         onclick: {
-                                            let name = name.clone();
                                             move |_| {
                                                 let classes = &mut plan.write().drop_classes;
                                                 if is_in {

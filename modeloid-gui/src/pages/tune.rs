@@ -311,7 +311,7 @@ fn TuneForm() -> Element {
             if let Some(job) = job() {
                 JobProgress { job, title: "Tuning", noun: "run", verb: "tuned", output_label: "Result" }
             }
-            if let Some(run) = job_run.clone() {
+            if let Some(run) = job_run {
                 // Keyed by the run, so a new run starts with fresh state.
                 div { key: "{run}", class: "section-stack",
                     TuneResult { run: run.clone(), version: job_version }
@@ -539,9 +539,9 @@ fn SpaceEditor(param: TuneParam, on_change: EventHandler<TuneParam>) -> Element 
                     let numbers: Vec<f64> = values.iter().filter_map(TuneValue::number).collect();
                     match (numbers.iter().copied().reduce(f64::min), numbers.iter().copied().reduce(f64::max)) {
                         (Some(lo), Some(hi)) if lo < hi => TuneSpace::Range { low: lo, high: hi, log: false },
-                        _ => TuneParam::default_for(&h).space.clone(),
+                        _ => TuneParam::default_for(&h).space,
                     }
-                    .clone()
+                    
                 }
                 ("candidates", TuneSpace::Range { low, high, .. }) => {
                     let (low, high) = if h.integer { (low.round(), high.round()) } else { (*low, *high) };
@@ -742,7 +742,7 @@ fn SpaceEditor(param: TuneParam, on_change: EventHandler<TuneParam>) -> Element 
 /// The trials of run `run` so far, the best one and where it was saved.
 #[component]
 fn TuneResult(run: String, version: u64) -> Element {
-    let run_name = run.clone();
+    let run_name = run;
     let record = use_resource(use_reactive((&version,), move |_| {
         let name = run_name.clone();
         async move { tune_record(name).await }

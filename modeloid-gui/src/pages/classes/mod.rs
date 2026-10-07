@@ -534,7 +534,7 @@ fn MappingCard(plan: Signal<Option<MergePlan>>, preview: MergePreview) -> Elemen
                                                             select {
                                                                 class: "input select",
                                                                 aria_label: "What {name} becomes in {label}",
-                                                                value: own_choice.as_ref().map_or("same".to_string(), |c| c.value()),
+                                                                value: own_choice.as_ref().map_or_else(|| "same".to_string(), |c| c.value()),
                                                                 onchange: {
                                                                     let name = name.clone();
                                                                     move |e: FormEvent| {
@@ -574,7 +574,7 @@ fn MappingCard(plan: Signal<Option<MergePlan>>, preview: MergePreview) -> Elemen
                         aria_label: "Assign selected to",
                         value: "{bulk}",
                         onchange: move |e| bulk.set(e.value()),
-                        ChoiceOptions { targets: targets.clone(), current: Choice::Unmapped, allow_unmapped: true }
+                        ChoiceOptions { targets: targets, current: Choice::Unmapped, allow_unmapped: true }
                     }
                     button { class: "button button-sm", r#type: "button", disabled: bulk().is_empty(), onclick: apply_bulk, "Assign" }
                     button { class: "button button-ghost button-sm", r#type: "button", onclick: move |_| checked.set(Vec::new()), "Clear" }
@@ -597,7 +597,7 @@ fn OptionsCard(plan: Signal<Option<MergePlan>>, multiple: bool) -> Element {
                 label { class: "field-label", r#for: "classes-format", "Output format" }
                 FormatSelect {
                     id: "classes-format",
-                    value: current.format.clone(),
+                    value: current.format,
                     use_for: FormatUse::Write,
                     onchange: move |v| {
                         if let Some(p) = plan.write().as_mut() {

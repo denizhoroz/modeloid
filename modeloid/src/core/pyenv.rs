@@ -419,8 +419,8 @@ pub fn run(mut cmd: Command, progress: &dyn Progress, reporter: &dyn Reporter) -
     } else {
         // uv puts the reason in its last lines.
         let lines = lines.lock().unwrap();
-        let tail: Vec<&str> = lines.iter().rev().filter(|l| !l.trim().is_empty()).take(3).map(String::as_str).collect();
-        let tail: Vec<&str> = tail.into_iter().rev().collect();
+        let mut tail: Vec<&str> = lines.iter().rev().filter(|l| !l.trim().is_empty()).take(3).map(String::as_str).collect();
+        tail.reverse();
         Err(format!("{program} failed ({status}): {}", tail.join(" ")).into())
     }
 }
@@ -595,7 +595,8 @@ fn walk_find(dir: &Path, name: &str) -> Option<PathBuf> {
 }
 
 /// FNV-1a: stable across Rust versions, unlike `DefaultHasher`.
-fn fnv1a(bytes: &[u8]) -> u64 {
+/// FNV-1a: a hash that stays the same across Rust versions, for names on disk.
+pub(crate) fn fnv1a(bytes: &[u8]) -> u64 {
     bytes.iter().fold(0xcbf2_9ce4_8422_2325, |hash, &b| (hash ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3))
 }
 
@@ -642,7 +643,7 @@ mod tests {
         assert_eq!(env.pending_install(), None);
 
         fs::write(env.pyservice().join("uv.lock"), "lock v2").unwrap();
-        assert_eq!(env.status(), EnvStatus::Outdated(info.clone()));
+        assert_eq!(env.status(), EnvStatus::Outdated(info));
         assert_eq!(env.pending_install(), Some(TorchVariant::Cuda), "updated with the build it has");
 
         // An install that didn't finish (its record gone): Python stays.

@@ -81,7 +81,7 @@ fn ExploreDataset(id: u32, selected_count: usize) -> Element {
         PrimaryNote { count: selected_count }
         div { class: "explore-head",
             div { class: "explore-title",
-                h2 { class: "explore-name", {row.as_ref().map(|r| r.name.clone()).unwrap_or_else(|| format!("Dataset #{id}"))} }
+                h2 { class: "explore-name", {crate::util::dataset_name(row.as_ref().map(|r| r.name.clone()), id)} }
                 if let Some(r) = &row {
                     span { class: "section-card-meta", "#{r.id} · {r.task} · {r.format}" }
                 }

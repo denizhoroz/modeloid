@@ -59,12 +59,8 @@ fn Tabs(id: u32, selected_count: usize) -> Element {
         let _ = datasets_version();
         list_datasets().await
     });
-    let name = datasets
-        .read()
-        .as_ref()
-        .and_then(|r| r.as_ref().ok())
-        .and_then(|rows| rows.iter().find(|r| r.id == id).map(|r| r.name.clone()))
-        .unwrap_or_else(|| format!("Dataset #{id}"));
+    let found = datasets.read().as_ref().and_then(|r| r.as_ref().ok()).and_then(|rows| rows.iter().find(|r| r.id == id).map(|r| r.name.clone()));
+    let name = crate::util::dataset_name(found, id);
 
     rsx! {
         PrimaryNote { count: selected_count }

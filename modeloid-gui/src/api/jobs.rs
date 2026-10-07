@@ -405,7 +405,7 @@ mod backend {
         let job = shared.clone();
         runtime.clone().spawn_blocking(move || {
             let mut work = Some(work);
-            run_item(&job, &runtime, index, &mut |ctx| work.take().map_or(Err("already ran".into()), |work| work(ctx)));
+            run_item(&job, &runtime, index, &mut |ctx| work.take().map_or_else(|| Err("already ran".into()), |work| work(ctx)));
             finish(&job, Some(index));
         });
         Ok(shared.snapshot())

@@ -12,12 +12,10 @@
 use dioxus::prelude::*;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-#[allow(dead_code)] // Warning has no user yet
 pub enum ToastKind {
     /// A hint or something to know.
     Info,
     Success,
-    Warning,
     Error,
 }
 
@@ -79,7 +77,6 @@ pub fn ToastHost() -> Element {
                     let (class, label) = match toast.kind {
                         ToastKind::Info => ("toast is-info", "Tip"),
                         ToastKind::Success => ("toast is-success", "Done"),
-                        ToastKind::Warning => ("toast is-warning", "Warning"),
                         ToastKind::Error => ("toast is-error", "Error"),
                     };
                     let id = toast.id;

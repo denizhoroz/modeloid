@@ -96,7 +96,7 @@ fn Converter(id: u32) -> Element {
         list_datasets().await
     });
     let row = datasets.read().as_ref().and_then(|r| r.as_ref().ok()).and_then(|rows| rows.iter().find(|r| r.id == id).cloned());
-    let name = row.as_ref().map_or(format!("Dataset #{id}"), |r| r.name.clone());
+    let name = crate::util::dataset_name(row.as_ref().map(|r| r.name.clone()), id);
     let format = row.map(|r| r.format).unwrap_or_default();
 
     rsx! {
@@ -189,7 +189,7 @@ fn TargetCard(plan: Signal<ConvertPlan>, preview: ConvertPreview) -> Element {
                     label { class: "field-label", r#for: "convert-format", "Label format" }
                     FormatSelect {
                         id: "convert-format",
-                        value: current.format.clone(),
+                        value: current.format,
                         use_for: FormatUse::Write,
                         current: (!preview.source_format.is_empty()).then(|| preview.source_format.clone()),
                         onchange: move |v| plan.write().format = v,
@@ -347,7 +347,7 @@ fn BatchConverter(ids: Vec<u32>) -> Element {
         list_datasets().await
     });
     let all_rows: Vec<DatasetRow> = datasets.read().as_ref().and_then(|r| r.as_ref().ok()).cloned().unwrap_or_default();
-    let names: Vec<String> = ids.iter().map(|id| all_rows.iter().find(|r| r.id == *id).map_or(format!("Dataset #{id}"), |r| r.name.clone())).collect();
+    let names: Vec<String> = ids.iter().map(|id| crate::util::dataset_name(all_rows.iter().find(|r| r.id == *id).map(|r| r.name.clone()), *id)).collect();
     let taken: Vec<String> = all_rows.iter().map(|r| r.name.clone()).collect();
 
     rsx! {
@@ -370,7 +370,7 @@ fn BatchConverter(ids: Vec<u32>) -> Element {
                     div { class: "section-stack",
                         TargetCard { plan, preview: combined }
                         BatchResultCard { names: names.clone(), previews: list.clone() }
-                        BatchRunCard { plan: plan(), ids: ids.clone(), names, previews: list, taken }
+                        BatchRunCard { plan: plan(), ids: ids, names, previews: list, taken }
                     }
                 }
             }

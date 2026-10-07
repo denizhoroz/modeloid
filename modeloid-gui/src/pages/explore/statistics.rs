@@ -175,7 +175,7 @@ pub fn Statistics(stats: ExploreStats, on_class: EventHandler<usize>) -> Element
             section { class: "section-card chart-card", aria_labelledby: "chart-heatmap",
                 h3 { id: "chart-heatmap", class: "section-card-title", TitleIcon { name: IconName::Target } "Where objects are" }
                 p { class: "chart-caption", "Box centres across all images, top left to bottom right." }
-                Heatmap { cells: stats.heatmap.clone(), size: HEATMAP_SIZE, label: "Heatmap of box centre positions" }
+                Heatmap { cells: stats.heatmap, size: HEATMAP_SIZE, label: "Heatmap of box centre positions" }
             }
 
             section { class: "section-card chart-card", aria_labelledby: "chart-image-sizes",

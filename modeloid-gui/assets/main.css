@@ -4651,10 +4651,6 @@ button.bar-row:hover,
     border-left-color: var(--color-accent);
 }
 
-.toast.is-warning {
-    border-left-color: var(--color-warning);
-}
-
 .toast.is-error {
     border-left-color: var(--color-danger-fg);
     /* Errors wait longer */
@@ -4760,11 +4756,6 @@ button.bar-row:hover,
 
 .health-report-head {
     margin-top: var(--space-4);
-}
-
-/* Datasets > Delete: the list of what goes */
-.delete-table tbody tr {
-    cursor: default;
 }
 
 /* Datasets > Edit: drop images here, or choose them */

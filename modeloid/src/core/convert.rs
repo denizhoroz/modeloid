@@ -133,7 +133,7 @@ pub fn write_crops(
                 skipped_small.fetch_add(1, Relaxed);
                 continue;
             };
-            let folder = split_dir.join(set.classes.get(object.class).map_or("unknown".to_string(), |c| folder_name(c)));
+            let folder = split_dir.join(set.classes.get(object.class).map_or_else(|| "unknown".to_string(), |c| folder_name(c)));
             fs::create_dir_all(&folder)?;
             // RGB: every supported format can store it (JPEG has no transparency).
             pixels.crop_imm(x, y, w, h).to_rgb8().save(folder.join(format!("{stem}_{n}.{extension}")))?;
@@ -155,7 +155,7 @@ fn crop_rect(bbox: BBox, scale: (f64, f64), image: (u32, u32), padding_percent: 
     let x1 = ((bbox.x + bbox.w + pad_x) * scale.0).ceil().min(f64::from(image.0));
     let y1 = ((bbox.y + bbox.h + pad_y) * scale.1).ceil().min(f64::from(image.1));
     let smallest = f64::from(min_size.max(1));
-    (x1 - x0 >= smallest && y1 - y0 >= smallest).then(|| [x0 as u32, y0 as u32, (x1 - x0) as u32, (y1 - y0) as u32])
+    (x1 - x0 >= smallest && y1 - y0 >= smallest).then_some([x0 as u32, y0 as u32, (x1 - x0) as u32, (y1 - y0) as u32])
 }
 
 /// A class name as a folder name: characters that file systems refuse become `_`.
@@ -246,7 +246,7 @@ mod tests {
         let clipped = image::open(out.join("train/a_b/pic_1.png")).unwrap();
         assert_eq!((clipped.width(), clipped.height()), (20, 20));
 
-        let mut broken = data.clone();
+        let mut broken = data;
         broken.images[0].file = dir.join("missing.png");
         assert_eq!(write_crops(&broken, &dir.join("out2"), 0, 0, &Silent).unwrap().unreadable_images, 1);
         let _ = fs::remove_dir_all(&dir);

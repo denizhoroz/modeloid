@@ -16,7 +16,7 @@ pub fn IntField(
     rsx! {
         div { class: "field param-field",
             span { class: "field-label", "{label}" InfoTip { text: tip, label: "About {label}" } }
-            NumberInput { value, label: label.clone(), max, onchange }
+            NumberInput { value, label: label, max, onchange }
         }
     }
 }
@@ -35,7 +35,7 @@ pub fn FloatField(
     rsx! {
         div { class: "field param-field",
             span { class: "field-label", "{label}" InfoTip { text: tip, label: "About {label}" } }
-            DecimalInput { value, label: label.clone(), min, max, step, onchange }
+            DecimalInput { value, label: label, min, max, step, onchange }
         }
     }
 }

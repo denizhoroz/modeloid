@@ -199,7 +199,7 @@ fn ParameterEditor() -> Element {
             ScheduleSection { form, p: p.clone() }
             AugmentationSection { form, p: p.clone() }
             LossSection { form, p: p.clone() }
-            RunSection { form, p: p.clone() }
+            RunSection { form, p: p }
 
             section { class: "section-card", aria_labelledby: "param-output-title",
                 h2 { id: "param-output-title", class: "section-card-title", TitleIcon { name: IconName::Save } "Output" }
@@ -534,7 +534,7 @@ fn Group(#[props(into)] id: String, #[props(into)] title: String, #[props(into)]
 
 #[component]
 fn ScheduleSection(form: Signal<ParameterSet>, p: UltralyticsParams) -> Element {
-    let s = p.schedule.clone();
+    let s = p.schedule;
     let meta = if s == ScheduleConfig::default() { "defaults" } else { "changed" };
 
     rsx! {
@@ -654,7 +654,7 @@ fn LossSection(form: Signal<ParameterSet>, p: UltralyticsParams) -> Element {
 
 #[component]
 fn RunSection(form: Signal<ParameterSet>, p: UltralyticsParams) -> Element {
-    let r = p.run.clone();
+    let r = p.run;
     let meta = if r == RunConfig::default() { "defaults".to_string() } else { format!("device {}", r.device) };
 
     rsx! {

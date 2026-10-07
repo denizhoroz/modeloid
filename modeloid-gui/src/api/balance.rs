@@ -18,7 +18,7 @@ pub async fn balance_preview(plan: BalancePlan) -> Result<BalancePreview, Server
 /// (`JobKind::Split` or `JobKind::Balance`).
 #[post("/api/balance/run")]
 pub async fn start_balance(plan: BalancePlan, output: OutputTarget, kind: JobKind) -> Result<Job, ServerFnError> {
-    backend::run(plan, output, kind).map_err(ServerFnError::new)
+    crate::api::blocking(move || backend::run(plan, output, kind)).await
 }
 
 #[cfg(feature = "server")]
@@ -29,12 +29,9 @@ mod backend {
     use crate::api::datasets::{resolve_output, OutputTarget};
     use crate::api::explore::cached_labels;
     use crate::api::jobs::{self, Job, JobKind};
-    use crate::api::{activity, workspace};
+    use crate::api::activity;
 
-    fn open() -> Result<Workspace, String> {
-        let dir = workspace::current_dir().ok_or("Load or create a workspace first.")?;
-        Workspace::load_from_dir(&dir).map_err(|e| format!("Couldn't open the workspace: {e}"))
-    }
+    use crate::api::workspace::open;
 
     fn name_of(ws: &Workspace, id: u32) -> Result<String, String> {
         ws.find_dataset(id).map(|(_, d)| d.name().to_string()).map_err(|e| e.to_string())

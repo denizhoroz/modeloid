@@ -38,7 +38,7 @@ pub use modeloid_types::validate_dataset_name;
 /// Datasets of the open workspace ordered by id; empty when none is open.
 #[get("/api/datasets")]
 pub async fn list_datasets() -> Result<Vec<DatasetRow>, ServerFnError> {
-    backend::list().map_err(ServerFnError::new)
+    crate::api::blocking(backend::list).await
 }
 
 /// Starts deleting the datasets `ids` from the workspace, with all their
@@ -48,7 +48,7 @@ pub async fn list_datasets() -> Result<Vec<DatasetRow>, ServerFnError> {
 /// while a job works on one of them.
 #[post("/api/datasets/delete")]
 pub async fn start_delete(ids: Vec<u32>, names: Vec<String>) -> Result<crate::api::jobs::Job, ServerFnError> {
-    backend::delete(ids, names).map_err(ServerFnError::new)
+    crate::api::blocking(move || backend::delete(ids, names)).await
 }
 
 /// Short label for a task name, for the narrow Task column.
@@ -66,7 +66,6 @@ pub fn short_task(task: &str) -> &str {
 }
 
 #[cfg(feature = "server")]
-#[allow(unused_imports)] // used by the tools still to come
 pub use backend::resolve_output;
 #[cfg(feature = "server")]
 pub use backend::renumber;
@@ -83,8 +82,7 @@ mod backend {
         if ids.is_empty() {
             return Err("Select at least one dataset.".into());
         }
-        let dir = workspace::current_dir().ok_or("Load or create a workspace first.")?;
-        let ws = Workspace::load_from_dir(&dir).map_err(|e| format!("Couldn't open the workspace: {e}"))?;
+        let ws = workspace::open()?;
         let names: Vec<String> = ids
             .iter()
             .map(|&id| ws.find_dataset(id).map(|(_, d)| d.name().to_string()).map_err(|e| e.to_string()))
@@ -99,7 +97,6 @@ mod backend {
 
     /// Core `Output` for a tool run on `inputs`. Overwriting needs exactly one
     /// input; a dataset link only where the tool makes them (`allow_link`).
-    #[allow(dead_code)] // used by the tools still to come
     pub fn resolve_output(target: OutputTarget, inputs: &[u32], allow_link: bool) -> Result<Output, String> {
         match (target, inputs) {
             (OutputTarget::New { name }, _) => {

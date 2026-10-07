@@ -336,7 +336,7 @@ mod tests {
         assert!(apply(&unknown, data.clone()).unwrap_err().contains("\"c\""));
 
         let both = BalancePlan { filter: ClassFilter { mode: FilterMode::Remove, classes: vec!["a".into(), "b".into()] }, subset_percent: Some(1), ..keep };
-        let (out, _) = apply(&both, data.clone()).unwrap();
+        let (out, _) = apply(&both, data).unwrap();
         assert_eq!(out.images.len(), 1, "a subset keeps at least one image");
         let nothing = set(vec![(None, vec![0])]);
         assert!(apply(&both, nothing).unwrap_err().contains("No images"));

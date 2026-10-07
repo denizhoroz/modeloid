@@ -1,5 +1,10 @@
 //! Small formatting helpers shared by pages.
 
+/// A dataset's name, or "Dataset #id" while it isn't known (still loading, or gone).
+pub fn dataset_name(name: Option<String>, id: u32) -> String {
+    name.unwrap_or_else(|| format!("Dataset #{id}"))
+}
+
 /// Human-readable byte size, e.g. `12.4 MB`.
 pub fn format_bytes(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];

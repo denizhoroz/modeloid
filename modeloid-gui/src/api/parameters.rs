@@ -47,7 +47,7 @@ pub async fn delete_parameters(name: String) -> Result<(), ServerFnError> {
     backend::blocking(move |ws| {
         ws.delete_parameter_set(&name).map_err(|e| e.to_string())?;
         #[cfg(feature = "server")]
-        crate::api::history::record("Training", "Parameters", "Delete parameter set", name.clone(), None);
+        crate::api::history::record("Training", "Parameters", "Delete parameter set", name, None);
         Ok(())
     })
     .await
@@ -58,12 +58,9 @@ mod backend {
     use dioxus::prelude::ServerFnError;
     use modeloid::Workspace;
 
-    use crate::api::workspace;
+    
 
-    fn open() -> Result<Workspace, String> {
-        let dir = workspace::current_dir().ok_or("Load or create a workspace first.")?;
-        Workspace::load_from_dir(&dir).map_err(|e| format!("Couldn't open the workspace: {e}"))
-    }
+    use crate::api::workspace::open;
 
     /// Runs `f` with the open workspace on a blocking thread.
     pub async fn blocking<T: Send + 'static>(

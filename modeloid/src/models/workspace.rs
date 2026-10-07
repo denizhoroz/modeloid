@@ -1,7 +1,7 @@
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use std::{fs, path::{Path, PathBuf}, sync::Arc};
+use std::{collections::HashMap, fs, path::{Path, PathBuf}, sync::{Arc, Mutex}};
 
 use crate::core::{
     balance::{self, BalancePlan, BalancePreview, FilterMode, Resplit},
@@ -163,20 +163,20 @@ impl Workspace {
         // The stored path isn't read back (loading uses the folder itself), so keep it portable.
         let mut stored = self.clone();
         stored.path = PathBuf::from(".");
-        stored._create_workspace_file(&self.path)
+        stored.write_workspace_file(&self.path)
     }
 
     pub fn save_to_dir(&self) -> Result<(), crate::Error> {
         // Create workspace folders
         let root_dir = &self.path.join(&self.name);
-        fs::create_dir(&root_dir)?;
+        fs::create_dir(root_dir)?;
         fs::create_dir_all(root_dir.join(".cache").join("tmp"))?;
         fs::create_dir(root_dir.join("datasets"))?;
         create_training_dirs(root_dir)?;
         fs::create_dir(root_dir.join("evals"))?;
 
         // Create workspace.toml
-        self._create_workspace_file(root_dir)?;
+        self.write_workspace_file(root_dir)?;
         Ok(())
     }
 
@@ -189,7 +189,7 @@ impl Workspace {
         fs::create_dir(root_dir.join("evals"))?;
 
         // Create workspace.toml
-        self._create_workspace_file(root_dir)?;
+        self.write_workspace_file(root_dir)?;
         Ok(())
     }
 
@@ -222,7 +222,7 @@ impl Workspace {
         self.seed
     }
 
-    fn _create_workspace_file(&self, root_dir: &PathBuf) -> Result<(), crate::Error> {
+    fn write_workspace_file(&self, root_dir: &Path) -> Result<(), crate::Error> {
         let file = &WorkspaceFile { workspace: self };
         let contents = toml::to_string(file)?;
         fs::write(root_dir.join("workspace.toml"), contents)?;  
@@ -360,7 +360,7 @@ impl Workspace {
 
         let images = health::ImageCache::load(&self.image_cache());
         let checking = reporter.start("Checking images", Unit::Files);
-        let report = health::check(&dir, &set, orphans, stamp, &images, checking.as_ref());
+        let report = health::check(&dir, &set, &orphans, stamp, &images, checking.as_ref());
         checking.finish();
         let report = report?;
         // Losing the cache only costs time on the next check.
@@ -460,7 +460,7 @@ impl Workspace {
                 lists.push(toml::from_str::<ClassList>(&text).map_err(|e| format!("invalid {}: {e}", path.display()))?);
             }
         }
-        lists.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        lists.sort_by_key(|a| a.name.to_lowercase());
         Ok(lists)
     }
 
@@ -997,12 +997,20 @@ impl Workspace {
         self.path.join(".cache").join("thumbs").join(id.to_string())
     }
 
-    /// The dataset with this id and its folder.
+    /// The dataset with this id and its folder. Its last known folder is tried
+    /// first (one `dataset.toml` read instead of all of them: every gallery
+    /// image asks); every dataset is read only when it isn't there anymore.
     pub fn find_dataset(&self, id: u32) -> Result<(PathBuf, Dataset), crate::Error> {
-        self.list_datasets()?
-            .into_iter()
-            .find(|(_, d)| d.id() == id)
-            .ok_or_else(|| format!("no dataset with id {id}").into())
+        static DIRS: Mutex<Option<(PathBuf, HashMap<u32, PathBuf>)>> = Mutex::new(None);
+
+        let known = DIRS.lock().unwrap().as_ref().filter(|(ws, _)| *ws == self.path).and_then(|(_, dirs)| dirs.get(&id).cloned());
+        if let Some(found) = known.and_then(|dir| Dataset::load_from_dir(&dir).ok().filter(|d| d.id() == id).map(|d| (dir, d))) {
+            return Ok(found);
+        }
+        let datasets = self.list_datasets()?;
+        let dirs = datasets.iter().map(|(dir, d)| (d.id(), dir.clone())).collect();
+        *DIRS.lock().unwrap() = Some((self.path.clone(), dirs));
+        datasets.into_iter().find(|(_, d)| d.id() == id).ok_or_else(|| format!("no dataset with id {id}").into())
     }
 
     /// A fresh, empty folder in `.cache/tmp` for a tool to write its result
@@ -1568,6 +1576,21 @@ mod tests {
     }
 
     #[test]
+    fn finds_datasets_moved_by_hand() {
+        let tmp = TempWorkspace::new("find-moved");
+        let ws = &tmp.0;
+        let dir = ws.save_output(&tmp.staging_with(YOLO), &new_output("cats"), Lineage::new("import", &[]), &Silent).unwrap();
+        let id = ws.find_dataset(1).unwrap().1.id();
+        assert_eq!(ws.find_dataset(id).unwrap().0, dir);
+
+        // The remembered folder is gone: found again by reading them all.
+        fs::rename(&dir, ws.datasets_dir().join("dogs")).unwrap();
+        assert_eq!(ws.find_dataset(id).unwrap().0, ws.datasets_dir().join("dogs"));
+        fs::remove_dir_all(ws.datasets_dir().join("dogs")).unwrap();
+        assert!(ws.find_dataset(id).is_err());
+    }
+
+    #[test]
     fn explore_stats_are_cached_until_dataset_changes() {
         let tmp = TempWorkspace::new("stats");
         let ws = &tmp.0;
@@ -1628,7 +1651,7 @@ mod tests {
 
         // Renaming onto another set is refused
         ws.save_parameter_set(&ParameterSet::new("other"), None).unwrap();
-        let mut clash = renamed.clone();
+        let mut clash = renamed;
         clash.name = "other".into();
         assert!(ws.save_parameter_set(&clash, Some("longer")).is_err());
 
