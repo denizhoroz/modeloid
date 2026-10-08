@@ -24,11 +24,16 @@ fn main() {
     #[cfg(feature = "server")]
     modeloid::Settings::load_default().apply_system();
 
-    // The server adds plain file routes (dataset images) next to the app.
+    // The server adds plain file routes (dataset images) next to the app, and
+    // refuses requests from other sites (`api::guard`).
     // On macOS it runs off the main thread, which native dialogs need.
     #[cfg(feature = "server")]
     main_thread::serve(|| {
-        dioxus::serve(|| async move { Ok(dioxus::server::router(App).merge(api::files::routes())) })
+        dioxus::serve(|| async move {
+            Ok(dioxus::server::router(App)
+                .merge(api::files::routes())
+                .layer(dioxus::server::axum::middleware::from_fn(api::guard::local_only)))
+        })
     });
 
     #[cfg(not(feature = "server"))]

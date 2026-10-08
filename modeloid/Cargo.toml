@@ -16,6 +16,8 @@ keyring = "4"
 reqwest = { version = "0.12.28", default-features = false, features = ["json", "stream", "rustls-tls", "charset", "http2"] }
 serde = { version = "1.0.229", features = ["derive"]}
 serde_json = "1.0.151"
+# Checks the uv download against its pinned SHA-256 (see core/pyenv.rs); already in the lock via reqwest's TLS stack
+sha2 = "0.10.9"
 tokio = { version = "1.53.1", features = ["fs", "io-util", "rt", "sync", "time"] }
 toml = "1.1.6"
 url = "2.5.8"

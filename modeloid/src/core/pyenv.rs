@@ -198,6 +198,7 @@ impl PyEnv {
     /// Downloads uv `UV_VERSION` for this computer into `bin/`.
     pub async fn fetch_uv(&self, reporter: &dyn Reporter) -> Result<PathBuf, crate::Error> {
         let asset = uv_asset().ok_or("There's no uv download for this kind of computer")?;
+        let expected = uv_sha256(asset).ok_or("There's no checksum for this uv download")?;
         let url = format!("https://github.com/astral-sh/uv/releases/download/{UV_VERSION}/{asset}");
         let bin = self.root.join("bin");
         let tmp = bin.join("download");
@@ -208,6 +209,13 @@ impl PyEnv {
         let downloaded = crate::core::io::download_into(&client, &url, &archive, progress.as_ref()).await;
         progress.finish();
         downloaded?;
+        // A changed file (tampered release, broken mirror) is never unpacked or run.
+        let path = archive.clone();
+        let actual = tokio::task::spawn_blocking(move || file_sha256(&path)).await??;
+        if actual != expected {
+            let _ = tokio::fs::remove_dir_all(&tmp).await;
+            return Err(format!("The uv download doesn't match its checksum (expected {expected}, got {actual}); it wasn't installed").into());
+        }
 
         let unpacked = tmp.join("unpacked");
         if asset.ends_with(".zip") {
@@ -567,6 +575,28 @@ fn uv_asset_for(os: &str, arch: &str) -> Option<&'static str> {
     })
 }
 
+/// SHA-256 of each `UV_VERSION` release file (from the release's `.sha256`
+/// files); update together with `UV_VERSION`.
+fn uv_sha256(asset: &str) -> Option<&'static str> {
+    Some(match asset {
+        "uv-x86_64-pc-windows-msvc.zip" => "4e1278ede866be6c0bf32d2f466cc6de7a9fb399ecf20c9ce2d186e52424be47",
+        "uv-aarch64-pc-windows-msvc.zip" => "98246149741f558e25e45ecf2b0b20f34de0634269f2bf0dcb4012d4b6ba289a",
+        "uv-x86_64-unknown-linux-gnu.tar.gz" => "6426a73c3837e6e2483ee344cbc00f36394d179afcba6183cb77437e67db4af0",
+        "uv-aarch64-unknown-linux-gnu.tar.gz" => "befa1a59c91e96eb601b0fd9a97c03dd666f17baba644b2b4db9c59a767e387e",
+        "uv-x86_64-apple-darwin.tar.gz" => "922b460202707dd5f4ccacbadbe7f6a546cc46e82a99bf50ca99a7977a78eddd",
+        "uv-aarch64-apple-darwin.tar.gz" => "8f7fbf1708399b921857bce71e1d60f0d3ccf52a30caebc1c1a2f175dce13ab6",
+        _ => return None,
+    })
+}
+
+/// SHA-256 of the file at `path`, in lowercase hex.
+fn file_sha256(path: &Path) -> Result<String, crate::Error> {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut fs::File::open(path)?, &mut hasher)?;
+    Ok(hasher.finalize().iter().map(|b| format!("{b:02x}")).collect())
+}
+
 #[cfg(not(windows))]
 fn extract_tar_gz(archive: &Path, out: &Path) -> Result<(), crate::Error> {
     let file = fs::File::open(archive)?;
@@ -681,6 +711,26 @@ mod tests {
         assert_eq!(uv_asset_for("windows", "x86_64"), Some("uv-x86_64-pc-windows-msvc.zip"));
         assert_eq!(uv_asset_for("macos", "aarch64"), Some("uv-aarch64-apple-darwin.tar.gz"));
         assert_eq!(uv_asset_for("freebsd", "x86_64"), None);
+    }
+
+    #[test]
+    fn every_uv_download_has_a_checksum() {
+        for os in ["windows", "linux", "macos"] {
+            for arch in ["x86_64", "aarch64"] {
+                let asset = uv_asset_for(os, arch).unwrap();
+                assert!(uv_sha256(asset).is_some_and(|h| h.len() == 64), "{asset}");
+            }
+        }
+    }
+
+    #[test]
+    fn hashes_files_with_sha256() {
+        let dir = std::env::temp_dir().join(format!("modeloid-sha-test-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("abc");
+        fs::write(&file, b"abc").unwrap();
+        assert_eq!(file_sha256(&file).unwrap(), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

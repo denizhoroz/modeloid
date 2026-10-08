@@ -538,6 +538,11 @@ impl Workspace {
         if let Some(problem) = set.problems().into_iter().next() {
             return Err(problem.into());
         }
+        // Both names become file names in `parameters/` ("../x" would reach any .toml).
+        validate_dataset_name(&set.name)?;
+        if let Some(old) = replacing {
+            validate_dataset_name(old)?;
+        }
         let file = self.parameter_file(&set.name);
         let renamed = replacing.is_some_and(|old| old != set.name);
         if (replacing.is_none() || renamed) && file.exists() {
@@ -1654,6 +1659,13 @@ mod tests {
         let mut clash = renamed;
         clash.name = "other".into();
         assert!(ws.save_parameter_set(&clash, Some("longer")).is_err());
+
+        // The old name can't reach a .toml outside parameters/ (it would be read, then deleted)
+        let outside = ws.training_dir().join("victim.toml");
+        fs::write(&outside, toml::to_string(&ParameterSet::new("victim")).unwrap()).unwrap();
+        assert!(ws.save_parameter_set(&ParameterSet::new("stolen"), Some("../victim")).is_err());
+        assert!(outside.is_file());
+        assert!(!ws.parameters_dir().join("stolen.toml").exists());
 
         // A broken file is reported, not fatal
         fs::write(ws.parameters_dir().join("broken.toml"), "not = [toml").unwrap();

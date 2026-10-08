@@ -242,8 +242,8 @@ impl Workspace {
     /// Checks continuing stopped run `name` from its last epoch: the run, its
     /// saved parameters (Resume on) and `last.pt`.
     fn resume_plan(&self, name: &str, choice: TrainDevice) -> Result<(TrainPreview, TrainRecord, ParameterSet), crate::Error> {
-        let dir = self.train_dir(name);
         let record = self.train_record(name)?;
+        let dir = self.train_dir(name);
         let set: ParameterSet = toml::from_str(&fs::read_to_string(dir.join(PARAMETERS_FILE)).map_err(|e| format!("{name} has no saved parameters: {e}"))?)?;
         let device = resolve_device(&set, choice);
         let mut preview = TrainPreview { run_dir: dir.display().to_string(), model: record.model.clone(), device: device_label(&device), ..Default::default() };
@@ -353,12 +353,15 @@ impl Workspace {
 
     /// The record of run `name`.
     pub fn train_record(&self, name: &str) -> Result<TrainRecord, crate::Error> {
+        // Only a folder directly inside `training/trains` ("../x" would load any last.pt).
+        crate::validate_dataset_name(name)?;
         let text = fs::read_to_string(self.train_dir(name).join(RECORD_FILE)).map_err(|e| format!("no training named '{name}': {e}"))?;
         Ok(toml::from_str(&text)?)
     }
 
     /// Console output of run `name` from byte `offset` (at most `max` bytes, cut at a line end).
     pub fn train_log(&self, name: &str, offset: u64, max: usize) -> Result<TrainLog, crate::Error> {
+        crate::validate_dataset_name(name)?;
         read_log(&self.train_dir(name).join(CONSOLE_FILE), offset, max)
     }
 }
@@ -669,6 +672,13 @@ mod tests {
         let preview = ws.resume_preview("cars", TrainDevice::Cpu).unwrap();
         assert!(preview.can_run(), "{:?}", preview.problems);
         assert!(preview.notes[0].contains("epoch 12 of 100"));
+        // The same resumable folder by a path: refused, so no other folder's last.pt is ever loaded.
+        for name in ["../trains/cars", "..\\trains\\cars", ".."] {
+            assert!(ws.resume_preview(name, TrainDevice::Cpu).is_err(), "{name}");
+            assert!(ws.prepare_resume(name, TrainDevice::Cpu).is_err(), "{name}");
+            assert!(ws.train_record(name).is_err(), "{name}");
+            assert!(ws.train_log(name, 0, 100).is_err(), "{name}");
+        }
 
         let prepared = ws.prepare_resume("cars", TrainDevice::Cpu).unwrap();
         let config: Value = serde_json::from_slice(&fs::read(&prepared.config).unwrap()).unwrap();

@@ -13,6 +13,8 @@ pub mod edit;
 pub mod explore;
 #[cfg(feature = "server")]
 pub mod files;
+#[cfg(feature = "server")]
+pub mod guard;
 pub mod health;
 pub mod history;
 pub mod import;
