@@ -17,3 +17,5 @@ modeloid/bin/
 __pycache__/
 modeloid/weights/
 modeloid/.ultralytics/
+
+dist/
