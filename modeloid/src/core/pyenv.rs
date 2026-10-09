@@ -1,6 +1,15 @@
-//! The Python environment training runs in. Everything lives under one root
-//! folder (`<repo>/modeloid` in development, `<install>/modeloid` when
-//! installed), so removing Modeloid removes it all:
+//! The Python environment training runs in. Two folders:
+//!
+//! - the **service** (`pyservice/`: pyproject.toml, uv.lock, main.py), part of
+//!   the app, only read: next to the executable when installed, the crate's
+//!   `src/pyservice` in development;
+//! - the **root**, everything setup downloads and writes, in the user's local
+//!   data folder (`%LOCALAPPDATA%\Modeloid`, `~/Library/Application
+//!   Support/Modeloid`, `~/.local/share/modeloid`), never the install folder,
+//!   which apps can't write to (Program Files, a signed .app, an AppImage).
+//!
+//! `MODELOID_HOME=<dir>` puts both in one folder instead (`<dir>/src/pyservice`).
+//! The root:
 //!
 //! ```text
 //! .venv/                    the environment (UV_PROJECT_ENVIRONMENT)
@@ -11,7 +20,6 @@
 //! bin/uv(.exe)              uv itself, bundled or downloaded
 //! weights/                  pretrained weights Ultralytics downloads (shared by every run)
 //! .ultralytics/             Ultralytics' settings and fonts (YOLO_CONFIG_DIR)
-//! src/pyservice/            pyproject.toml, uv.lock, main.py
 //! ```
 //!
 //! Setup never touches a Python the user installed: uv only uses its own
@@ -32,42 +40,57 @@ pub use modeloid_types::pyenv::*;
 pub const PYTHON_VERSION: &str = "3.12";
 /// uv release downloaded when neither `bin/uv` nor a `uv` on PATH exists.
 pub const UV_VERSION: &str = "0.11.26";
-/// Overrides where the root folder is.
+/// Puts the root and the service in this one folder (`<dir>/src/pyservice`).
 pub const HOME_ENV: &str = "MODELOID_HOME";
+/// The root's folder name in the user's local data folder.
+const DATA_DIR: &str = if cfg!(any(windows, target_os = "macos")) { "Modeloid" } else { "modeloid" };
+/// The service's folder next to the executable when installed.
+const SERVICE_DIR: &str = "pyservice";
 const ENV_FILE: &str = "modeloid-env.json";
 const PYTHON_FILE: &str = "modeloid-python.txt";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PyEnv {
+    /// Everything setup writes.
     root: PathBuf,
+    /// pyproject.toml, uv.lock, main.py; only read.
+    service: PathBuf,
 }
 
 impl PyEnv {
-    /// An environment rooted at `root` (the folder holding `src/pyservice`).
+    /// An environment with everything in `root`, the service in `root/src/pyservice`.
     pub fn at(root: impl Into<PathBuf>) -> Self {
-        PyEnv { root: root.into() }
+        let root = root.into();
+        let service = root.join("src").join("pyservice");
+        PyEnv { root, service }
     }
 
-    /// Finds the root: `MODELOID_HOME`, then `modeloid/` next to the
-    /// executable (installed), then the `modeloid` crate folder (development).
+    /// The service from `MODELOID_HOME`, else `pyservice/` next to the
+    /// executable (installed), else the crate's (development builds only, so
+    /// release builds don't carry the builder's folder); the root in the
+    /// user's local data folder.
     pub fn locate() -> Result<Self, crate::Error> {
-        let has_service = |dir: &Path| dir.join("src").join("pyservice").join("pyproject.toml").is_file();
+        let has_service = |dir: &Path| dir.join("pyproject.toml").is_file();
         if let Some(home) = env::var_os(HOME_ENV).filter(|v| !v.is_empty()) {
-            let root = PathBuf::from(home);
-            return if has_service(&root) {
-                Ok(PyEnv::at(root))
+            let env = PyEnv::at(PathBuf::from(home));
+            return if has_service(&env.service) {
+                Ok(env)
             } else {
-                Err(format!("{HOME_ENV} is set to {}, but src/pyservice/pyproject.toml isn't there", root.display()).into())
+                Err(format!("{HOME_ENV} is set to {}, but src/pyservice/pyproject.toml isn't there", env.root.display()).into())
             };
         }
-        let installed = env::current_exe().ok().and_then(|exe| exe.parent().map(|dir| dir.join("modeloid")));
-        let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        installed
+        let installed = env::current_exe().ok().and_then(|exe| exe.parent().map(|dir| dir.join(SERVICE_DIR)));
+        #[cfg(debug_assertions)]
+        let dev = Some(Path::new(env!("CARGO_MANIFEST_DIR")).join("src").join("pyservice"));
+        #[cfg(not(debug_assertions))]
+        let dev = None;
+        let service = installed
             .into_iter()
-            .chain([dev])
+            .chain(dev)
             .find(|dir| has_service(dir))
-            .map(PyEnv::at)
-            .ok_or_else(|| "Modeloid's Python files (modeloid/src/pyservice) weren't found next to the app".into())
+            .ok_or("Modeloid's Python files (pyservice) weren't found next to the app")?;
+        let root = dirs::data_local_dir().ok_or("This system has no folder for app data")?.join(DATA_DIR);
+        Ok(PyEnv { root, service })
     }
 
     pub fn root(&self) -> &Path {
@@ -84,7 +107,7 @@ impl PyEnv {
     }
 
     pub fn pyservice(&self) -> PathBuf {
-        self.root.join("src").join("pyservice")
+        self.service.clone()
     }
 
     pub fn python_dir(&self) -> PathBuf {
@@ -151,8 +174,9 @@ impl PyEnv {
         fs::read(self.pyservice().join("uv.lock")).map(|bytes| format!("{:016x}", fnv1a(&bytes))).unwrap_or_default()
     }
 
-    /// Whether files can be created in the root folder.
+    /// Whether files can be created in the root folder (made if missing).
     fn writable(&self) -> bool {
+        let _ = fs::create_dir_all(&self.root);
         let probe = self.root.join(".modeloid-write-test");
         let ok = fs::write(&probe, b"").is_ok();
         let _ = fs::remove_file(&probe);
@@ -743,11 +767,23 @@ mod tests {
     }
 
     #[test]
-    fn locates_the_dev_root() {
-        // Without MODELOID_HOME (not set in tests) the crate folder is found.
+    fn locates_the_dev_service_and_user_root() {
+        // Without MODELOID_HOME (not set in tests): the crate's service, the
+        // root in the user's local data folder, apart from each other.
         if env::var_os(HOME_ENV).is_none() {
             let env = PyEnv::locate().unwrap();
             assert!(env.pyservice().join("pyproject.toml").is_file());
+            assert_eq!(env.root(), dirs::data_local_dir().unwrap().join(DATA_DIR));
+            assert!(!env.pyservice().starts_with(env.root()));
         }
+    }
+
+    #[test]
+    fn home_holds_root_and_service() {
+        let tmp = TempRoot::new("home");
+        let env = PyEnv::at(&tmp.0);
+        assert_eq!(env.root(), tmp.0);
+        assert_eq!(env.pyservice(), tmp.0.join("src").join("pyservice"));
+        assert_eq!(env.venv(), tmp.0.join(".venv"));
     }
 }

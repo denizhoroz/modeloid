@@ -1,15 +1,13 @@
 # Python side of Modeloid: training and inference with Ultralytics / PyTorch.
 #
 # Not installed by hand: Modeloid's "Python environment" setup (Settings →
-# Python environment) runs uv with this project, putting the venv in
-# modeloid/.venv and a uv-managed Python in modeloid/python.
+# Training Device) runs uv with this project, putting the venv and a
+# uv-managed Python in the user's local data folder (%LOCALAPPDATA%\Modeloid,
+# ~/Library/Application Support/Modeloid, ~/.local/share/modeloid).
 #
 # Ultralytics, Optuna, Albumentations and huggingface_hub are always installed. PyTorch comes in two builds,
 # chosen by extra: `cpu` (the default) or `cu130` (NVIDIA GPU, CUDA 13.0).
 # Exactly one is installed; switching builds only swaps torch and torchvision.
-#
-# Development:
-#   UV_PROJECT_ENVIRONMENT=../../.venv uv sync --extra cu130   (or --extra cpu)
 
 [project]
 name = "modeloid-pyservice"

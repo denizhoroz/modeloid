@@ -8,7 +8,8 @@
 .schematic/
 
 *Cargo.lock
-# Python environment (created by Modeloid's setup; see modeloid/src/pyservice)
+# Python environment, only when MODELOID_HOME points here (normally it's in the
+# user's local data folder; see modeloid/src/core/pyenv.rs)
 modeloid/.venv/
 modeloid/python/
 modeloid/.uv-cache/

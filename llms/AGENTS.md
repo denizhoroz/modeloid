@@ -72,7 +72,7 @@ modeloid/                       repo root (Cargo workspace)
 └─ llms/AGENTS.md               this file
 ```
 
-Ignored by git (created at runtime): `target/`, `.env*`, `modeloid/.venv/`, `modeloid/python/`, `modeloid/.uv-cache/`, `modeloid/bin/`, `modeloid/weights/`, `modeloid/.ultralytics/`. The maintainer also keeps private planning notes in an ignored `.schematic/` folder; you won't have it, and everything you need from it is in this file.
+Ignored by git: `target/`, `.env*`, and the Python environment folders in case `MODELOID_HOME` points into the repo (`modeloid/.venv/`, `python/`, `.uv-cache/`, `bin/`, `weights/`, `.ultralytics/`). Normally the environment lives outside the repo (§7). The maintainer also keeps private planning notes in an ignored `.schematic/` folder; you won't have it, and everything you need from it is in this file.
 
 ---
 
@@ -244,17 +244,20 @@ Rules:
 
 Rust never imports Python; it runs `python main.py <command> <config.json>` as a child process inside the managed venv and reads its stdout.
 
-**Environment root** (`PyEnv::locate`): `MODELOID_HOME`, else `<exe dir>/modeloid`, else the crate folder (`<repo>/modeloid` in development). Deleting that folder removes everything:
+Two folders, kept apart (`PyEnv::locate`), because installed apps can't write to their own folder (Program Files, a signed macOS .app, an AppImage):
+
+- **Service** (only read, part of the app): `pyproject.toml`, `uv.lock` (committed), `main.py`. `pyservice/` next to the executable when installed; `modeloid/src/pyservice` in development (debug builds only, so release binaries don't carry the builder's path).
+- **Root** (everything setup writes), in the user's local data folder: `%LOCALAPPDATA%\Modeloid` (Windows), `~/Library/Application Support/Modeloid` (macOS), `~/.local/share/modeloid` (Linux), also in development. Deleting it removes the environment; the next launch sets it up again.
+- `MODELOID_HOME=<dir>` puts both in one folder (`<dir>/src/pyservice` + the root's folders), e.g. for a scratch environment.
 
 ```
-modeloid/
+<root>/
 ├─ .venv/                 the environment; .venv/modeloid-env.json records what was installed
 ├─ python/                uv-managed CPython 3.12
 ├─ .uv-cache/             uv's cache (cleaned after installs)
 ├─ bin/uv(.exe)           bundled, else `uv` on PATH, else downloaded (pinned version, SHA-256 checked)
 ├─ weights/               Python's working dir: pretrained weights download here
-├─ .ultralytics/          YOLO_CONFIG_DIR
-└─ src/pyservice/         pyproject.toml, uv.lock (committed), main.py
+└─ .ultralytics/          YOLO_CONFIG_DIR
 ```
 
 - Setup runs automatically on launch when needed (`pending_install()`): Python + Ultralytics + Optuna + Albumentations + huggingface_hub + the **CPU** PyTorch build. Half-finished setups are repaired, outdated ones (changed `uv.lock`) updated.
@@ -412,7 +415,7 @@ These hold for every page, old and new. Check your UI change against them.
 - Local only: `IP=0.0.0.0` serving to other machines is refused by the guard, and native dialogs open on the server machine.
 - Kaggle downloads aren't tested live. Cancelling a Roboflow fork while Roboflow is still copying can't delete the copy.
 - Augmentation: no SAHI-style tiling, no sample preview yet.
-- Release packaging isn't set up: `modeloid/src/pyservice/` must ship next to the executable, in a writable folder (not Program Files); `bin/uv` should not be shipped (downloaded on demand).
+- Release packaging isn't set up: `modeloid/src/pyservice/` must ship as `pyservice/` next to the executable; `bin/uv` is not shipped (downloaded on demand into the root).
 - Model evaluations (`evals/`) not started.
 
 ---

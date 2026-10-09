@@ -1,6 +1,7 @@
 """Modeloid's Python service.
 
-Modeloid runs `python main.py <command> [args]` inside modeloid/.venv.
+Modeloid runs `python main.py <command> [args]` inside its environment's .venv
+(in the user's local data folder, see modeloid/src/core/pyenv.rs).
 
 Commands:
   check           Versions of Python and the ML packages, and which devices
