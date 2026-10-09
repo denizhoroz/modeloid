@@ -3,6 +3,8 @@ use dioxus::prelude::*;
 mod api;
 mod components;
 #[cfg(feature = "server")]
+mod launcher;
+#[cfg(feature = "server")]
 mod main_thread;
 mod nav;
 mod pages;
@@ -20,6 +22,13 @@ const MAIN_CSS: Asset = asset!("/assets/main.css");
 const THEMES_CSS: Asset = asset!("/assets/themes.css");
 
 fn main() {
+    // Outside `dx serve`: one copy per user, on a free port; a second launch
+    // only opens the browser on the running one.
+    #[cfg(feature = "server")]
+    if launcher::prepare() == launcher::Launch::AlreadyRunning {
+        return;
+    }
+
     // Threads, connections and the other system settings saved on this computer.
     #[cfg(feature = "server")]
     modeloid::Settings::load_default().apply_system();
@@ -32,6 +41,7 @@ fn main() {
         dioxus::serve(|| async move {
             Ok(dioxus::server::router(App)
                 .merge(api::files::routes())
+                .merge(launcher::routes())
                 .layer(dioxus::server::axum::middleware::from_fn(api::guard::local_only)))
         })
     });

@@ -60,6 +60,7 @@ modeloid/                       repo root (Cargo workspace)
 │  ├─ assets/                   main.css (tokens + rules), themes.css (colour tokens), fonts/, favicon
 │  └─ src/
 │     ├─ main.rs                launch, server router, request guard
+│     ├─ launcher.rs            (server) single instance, free port, opens the browser
 │     ├─ main_thread.rs         (server) native dialogs on the main thread (macOS)
 │     ├─ routes.rs              the Route enum
 │     ├─ nav.rs                 sidebar structure (NAV); tool pages are looked up here
@@ -192,6 +193,8 @@ mod backend {
 **State** (`state.rs`, context): `WorkspaceState` (workspace info, `selected_datasets` as a `Vec` in selection order, `datasets_version`, selected parameters / models and their versions), `AppearanceState`, `ActivityState`. Single-item pages use the **last** selected item (`use_primary_dataset`, `use_primary_parameters`). Bump a `*_version` signal to make tables and pages reload.
 
 **Files**: images are served by plain GET routes in `api/files.rs` (`/files/thumb/{id}/{index}`, `/files/image/{id}/{index}`, `/files/run/{name}/{*path}`), restricted to the workspace's own dataset / run folders.
+
+**Launching and quitting**: outside `dx serve` (`DIOXUS_CLI_ENABLED` unset), `launcher.rs` runs before the server: one copy per user (`<config dir>/modeloid/instance` holds port + token, `GET /api/instance` answers the token, so a second launch only opens the browser on the running copy), port = `PORT` env, else the last run's, else 8080, else a free one; the browser opens once the port listens. The app runs in its console window; closing it stops the app. Python jobs stop with it through a lifeline: `pyenv::stream` keeps the child's stdin open and `main.py` exits when it closes (`MODELOID_LIFELINE=1`), so keep running main.py commands through `service_command` + `stream`.
 
 **Native dialogs**: the browser can't give folder paths, so file/folder pickers open on the server side with `rfd` (`api/dialogs.rs`), brought to the front, run through `main_thread::run` (macOS needs the main thread; the server runs on a side thread there).
 

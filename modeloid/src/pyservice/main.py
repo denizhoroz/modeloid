@@ -42,6 +42,10 @@ Commands:
                   the repo paths written).
 
 Errors exit non-zero; `check` prints {"error": "..."}, the others an error event.
+
+With MODELOID_LIFELINE=1 (always, when Modeloid runs it), the commands other
+than `check` exit as soon as stdin closes: Modeloid keeps it open while it
+runs, so a closed or crashed Modeloid never leaves training running.
 """
 
 import json
@@ -507,8 +511,29 @@ def hf_download(config_path):
     event("done", files=[s.rfilename for s in files])
 
 
+def exit_with_modeloid():
+    """Stops this process when Modeloid stops, however it stops (console
+    closed, crash, killed): Modeloid holds our stdin open and never writes to
+    it, and the system closes it when Modeloid's process ends. Only with
+    MODELOID_LIFELINE=1, so running main.py by hand isn't affected."""
+    if os.environ.get("MODELOID_LIFELINE") != "1":
+        return
+    import threading
+
+    def watch():
+        try:
+            while sys.stdin.buffer.read(1024):
+                pass
+        except (OSError, ValueError):
+            pass
+        os._exit(1)
+
+    threading.Thread(target=watch, name="modeloid-lifeline", daemon=True).start()
+
+
 def main(argv):
     command = argv[1] if len(argv) > 1 else ""
+    exit_with_modeloid()
     if command == "check":
         try:
             check()

@@ -102,7 +102,10 @@ impl PyEnv {
     }
 
     /// `python main.py <args>` in the environment, set up for training:
-    /// unbuffered UTF-8 output, Ultralytics' folders under the root.
+    /// unbuffered UTF-8 output, Ultralytics' folders under the root. Run it
+    /// with [`stream`]: with `MODELOID_LIFELINE` set, main.py exits when its
+    /// stdin closes, which happens however Modeloid stops (console closed,
+    /// crash, killed), so no training is left running on its own.
     pub fn service_command<I, S>(&self, args: I) -> Result<Command, crate::Error>
     where
         I: IntoIterator<Item = S>,
@@ -116,7 +119,8 @@ impl PyEnv {
             .current_dir(self.weights_dir())
             .env("PYTHONUNBUFFERED", "1")
             .env("PYTHONIOENCODING", "utf-8")
-            .env("YOLO_CONFIG_DIR", self.ultralytics_dir());
+            .env("YOLO_CONFIG_DIR", self.ultralytics_dir())
+            .env("MODELOID_LIFELINE", "1");
         Ok(cmd)
     }
 
@@ -445,13 +449,18 @@ pub enum Output {
 /// Runs `cmd`, handing stdout and stderr to `on_output` as they come, split
 /// into finished lines and in-place progress updates. Kills it when
 /// `progress` is cancelled. Errors when it exits with a failure.
+///
+/// The child's stdin is a pipe that stays open, never written, until this
+/// returns: the lifeline main.py watches (see [`PyEnv::service_command`]).
+/// If Modeloid stops some other way, the system closes it.
 pub fn stream(mut cmd: Command, progress: &dyn Progress, mut on_output: impl FnMut(Output)) -> Result<(), crate::Error> {
     use std::sync::mpsc;
 
-    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
     hide_window(&mut cmd);
     let program = cmd.get_program().to_string_lossy().into_owned();
     let mut child = cmd.spawn().map_err(|e| format!("couldn't start {program}: {e}"))?;
+    let _lifeline = child.stdin.take();
 
     let (tx, rx) = mpsc::channel::<Output>();
     let readers: Vec<_> = [
