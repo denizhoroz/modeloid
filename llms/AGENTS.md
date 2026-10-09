@@ -47,7 +47,6 @@ Platforms: Windows, macOS, Linux. The main developer works on Windows; keep ever
 ```
 modeloid/                       repo root (Cargo workspace)
 ├─ Cargo.toml                   workspace + release size profiles (release, server-release, wasm-release)
-├─ .env.example                 copy to .env for local dev keys (never commit .env)
 ├─ modeloid-types/              plain shared types + input rules (serde only, builds for WASM)
 ├─ modeloid/                    the core library: all logic, all disk / network / process work
 │  └─ src/
@@ -69,11 +68,10 @@ modeloid/                       repo root (Cargo workspace)
 │     ├─ api/                   server functions: thin layer over the core
 │     ├─ components/            shared UI components (table, charts, sliders, tips, …)
 │     └─ pages/                 one module per page / tool
-├─ weights/                     pretrained weights used in development (not part of releases)
 └─ llms/AGENTS.md               this file
 ```
 
-Ignored by git (created at runtime): `target/`, `.env`, `modeloid/.venv/`, `modeloid/python/`, `modeloid/.uv-cache/`, `modeloid/bin/`, `modeloid/weights/`, `modeloid/.ultralytics/`. The maintainer also keeps private planning notes in an ignored `.schematic/` folder; you won't have it, and everything you need from it is in this file.
+Ignored by git (created at runtime): `target/`, `.env*`, `modeloid/.venv/`, `modeloid/python/`, `modeloid/.uv-cache/`, `modeloid/bin/`, `modeloid/weights/`, `modeloid/.ultralytics/`. The maintainer also keeps private planning notes in an ignored `.schematic/` folder; you won't have it, and everything you need from it is in this file.
 
 ---
 
@@ -110,7 +108,7 @@ Notes:
 - `default-members = ["modeloid-gui"]`: a bare `cargo run` / `cargo check` targets the GUI with only the `web` feature. Server code is behind `--features server`; **a change that compiles for one side may not compile for the other**. Check both.
 - The Python environment is created by the app itself on first launch (Settings → Training Device). You don't need Python installed. Tests that need it are `#[ignore]`d (`core/transform.rs`), as is the one touching the OS credential store (`models/settings.rs`).
 - Core tests make their own folders under `std::env::temp_dir()` named `modeloid-<area>-<name>-<pid>` and remove them. Follow that pattern; never write test data into the repo.
-- `.env` (from `.env.example`) can hold `ROBOFLOW_API_KEY` etc. for development; the app also reads env vars as fallbacks (`ROBOFLOW_KEY_ENV`, `HF_TOKEN_ENV`, `KAGGLE_*` in `models/settings.rs`).
+- API keys for development: save them in Settings → API Keys (OS credential store), or set them as environment variables before launching (`ROBOFLOW_API_KEY`, `HF_TOKEN`, `KAGGLE_API_TOKEN` / `KAGGLE_USERNAME` + `KAGGLE_KEY`; names in `models/settings.rs`). The app doesn't read `.env` files.
 - `MODELOID_HOME` overrides where the Python environment root lives (see §7).
 
 ---
