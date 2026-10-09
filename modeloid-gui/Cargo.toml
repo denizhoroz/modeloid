@@ -54,3 +54,7 @@ server = ["dioxus/server", "dep:modeloid", "dep:rfd", "dep:tokio", "dep:futures-
 
 [dev-dependencies]
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time"] }
+
+# Puts the app icon into the Windows exe (see build.rs)
+[build-dependencies]
+winresource = "0.1.31"
