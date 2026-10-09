@@ -5,7 +5,6 @@ use dioxus::prelude::*;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum IconName {
-    Logo,
     FolderOpen,
     Plus,
     Database,
@@ -64,6 +63,34 @@ pub fn TitleIcon(name: IconName) -> Element {
     rsx! { Icon { name, size: 15, class: "title-icon" } }
 }
 
+/// Modeloid's logo, drawn from `assets/modeloid-ico.svg`: the bars take the
+/// text colour (`currentColor`) and the arc the theme accent, so it shows on
+/// every theme (the file's near-black bars would vanish on dark ones).
+#[component]
+pub fn BrandMark(#[props(default = 20)] size: u32) -> Element {
+    let bar = "M446.343 121.73h50.013v509.567h-50.013z";
+    rsx! {
+        svg {
+            class: "brand-mark",
+            width: "{size}",
+            height: "{size}",
+            view_box: "0 0 720 720",
+            fill: "currentColor",
+            "aria-hidden": "true",
+            "focusable": "false",
+            g { transform: "matrix(1.342543,0,0,1.238296,-169.410277,-108.770512)", path { d: bar } }
+            g { transform: "matrix(0.949321,-0.949321,0.408154,0.408154,-250.377554,588.628988)", path { d: bar } }
+            g { transform: "matrix(-0.949321,-0.949321,0.408154,-0.408154,644.54752,1151.440627)", path { d: bar } }
+            g { transform: "matrix(1.826396,0,0,1.826396,-171.64361,-428.60497)",
+                path {
+                    fill: "var(--color-accent)",
+                    d: "M247.153,391.059C227.267,410.946 216.094,437.918 216.094,466.042C216.094,494.166 227.267,521.138 247.153,541.025L284.645,503.533C274.701,493.59 269.115,480.104 269.115,466.042C269.115,451.98 274.701,438.494 284.645,428.55L247.153,391.059Z",
+                }
+            }
+        }
+    }
+}
+
 /// Decorative icon, hidden from screen readers. Pair it with visible text
 /// or put an `aria_label` on the surrounding button.
 #[component]
@@ -92,11 +119,6 @@ pub fn Icon(
 
 fn shapes(name: IconName) -> Element {
     match name {
-        IconName::Logo => rsx! {
-            path { d: "M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" }
-            path { d: "m3.3 7 8.7 5 8.7-5" }
-            path { d: "M12 22V12" }
-        },
         IconName::FolderOpen => rsx! {
             path { d: "m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2" }
         },

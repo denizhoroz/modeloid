@@ -37,7 +37,7 @@ pub use datasets_panel::DatasetsPanel;
 pub use fonts::Fonts;
 pub use format_select::{FormatSelect, FormatUse, OTHER_FORMAT};
 pub use history::{HistoryButton, HistoryLayer, HistoryOpen};
-pub use icon::{Icon, IconName, TitleIcon};
+pub use icon::{BrandMark, Icon, IconName, TitleIcon};
 pub use info_tip::InfoTip;
 pub use job_progress::{set_if_newer, use_job, JobProgress};
 pub use layout::{AppLayout, PanelWidth, PANEL_MIN_WIDTH};

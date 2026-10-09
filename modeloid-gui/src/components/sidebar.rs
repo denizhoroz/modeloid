@@ -1,6 +1,6 @@
 use dioxus::prelude::*;
 
-use crate::components::{HistoryButton, Icon, IconName, WorkspaceCard};
+use crate::components::{BrandMark, HistoryButton, Icon, IconName, WorkspaceCard};
 use crate::nav::{NavCategory, NAV};
 use crate::routes::Route;
 
@@ -20,7 +20,7 @@ pub fn Sidebar(open: bool, on_navigate: EventHandler<()>) -> Element {
 
             Link { class: "sidebar-brand", to: Route::Home {},
                 onclick: move |_| on_navigate.call(()),
-                Icon { name: IconName::Logo, size: 18, class: "brand-mark" }
+                BrandMark { size: 18 }
                 span { "Modeloid" }
             }
 

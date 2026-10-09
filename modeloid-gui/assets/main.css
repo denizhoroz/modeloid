@@ -511,7 +511,8 @@ button {
 }
 
 .brand-mark {
-    color: var(--color-accent);
+    flex-shrink: 0;
+    color: var(--color-fg);
 }
 
 /* Current workspace box */
