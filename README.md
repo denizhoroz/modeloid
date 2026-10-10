@@ -2,12 +2,11 @@
 
 <a id="readme-top"></a>
 
-[Contributors][contributors-url]
-[Forks][forks-url]
-[Stargazers][stars-url]
-[Issues][issues-url]
-[project_license][license-url]
-[LinkedIn][linkedin-url]
+[![Contributors][contributors-shield]][contributors-url]
+[![Forks][forks-shield]][forks-url]
+[![Stargazers][stars-shield]][stars-url]
+[![Issues][issues-shield]][issues-url]
+[![License][license-shield]][license-url]
 
 <!-- PROJECT LOGO -->
 
@@ -16,6 +15,18 @@
   <a href="https://github.com/denizhoroz/modeloid">
     insert logo here
   </a>
+
+<h3 align="center">Modeloid - A Local Computer Vision Workbench</h3>
+
+  <p align="center">
+    Modeloid is a local computer vision workbench that helps you from preparing datasets to training models and reviewing them.
+    <br />
+    <br />
+    <a href="https://github.com/denizhoroz/modeloid/issues/new?labels=bug&template=bug-report---.md">Report Bug</a>
+    &middot;
+    <a href="https://github.com/denizhoroz/modeloid/issues/new?labels=enhancement&template=feature-request---.md">Request Feature</a>
+  </p>
+</div>
 
 <!-- TABLE OF CONTENTS -->
 
@@ -69,9 +80,9 @@ and many more. Everything runs locally on your machine, in your browser, with 16
 
 ### Built With
 
-* [Rust][Rust-url]
-* [Dioxus][Dioxus-url]
-* [Python][Python-url]
+* [![Rust][Rust-badge]][Rust-url]
+* [![Dioxus][Dioxus-badge]][Dioxus-url]
+* [![Python][Python-badge]][Python-url]
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
@@ -218,8 +229,6 @@ Project Link: [https://github.com/denizhoroz/modeloid](https://github.com/denizh
 [issues-url]: https://github.com/denizhoroz/modeloid/issues
 [license-shield]: https://img.shields.io/github/license/denizhoroz/modeloid.svg?style=for-the-badge
 [license-url]: https://github.com/denizhoroz/modeloid/blob/main/LICENSE
-[linkedin-shield]: https://img.shields.io/badge/-LinkedIn-black.svg?style=for-the-badge&logo=linkedin&colorB=555
-[linkedin-url]: https://linkedin.com/in/linkedin_username
 [product-screenshot]: images/screenshot.png
 [Rust-badge]: https://img.shields.io/badge/Rust-000000?style=for-the-badge&logo=rust&logoColor=white
 [Rust-url]: https://www.rust-lang.org/
