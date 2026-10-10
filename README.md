@@ -133,6 +133,9 @@ A typical project, from raw images to a trained model:
 6. **Choose your training device.** In **Settings → Training Device**, pick CPU or GPU. Modeloid installs the Python environment it needs.
 7. **Train.** In **Training → Parameters**, create a parameter set (model, epochs, augmentation…), then start a run in **Train Model** and watch it live.
 8. **Review and improve.** **Performance** shows each run's metrics, curves and training plots. **Tune Hyperparameters** searches for better settings with Optuna.
+9. **Make it yours (optional).** In **Settings → Appearance**, pick one of 16 dark and light themes, a font and a text size.
+
+<!-- insert appearance screenshot here -->
 
 <!-- insert screenshots here -->
 
