@@ -13,7 +13,7 @@
 <br />
 <div align="center">
   <a href="https://github.com/denizhoroz/modeloid">
-    insert logo here
+    <img width="1600" height="400" alt="banner" src="https://github.com/user-attachments/assets/a4b4dd38-7c9c-4669-bc16-c341423a9c20" />
   </a>
 
 <h3 align="center">Modeloid - A Local Computer Vision Workbench</h3>
@@ -59,7 +59,8 @@
 
 ## About The Project
 
-[![Product Name Screen Shot][product-screenshot]](https://example.com)
+<img width="1920" height="917" alt="site-content0" src="https://github.com/user-attachments/assets/c1b74edb-8aae-4c9f-911c-c21ab269e34e" />
+<br><br/>
 
 Modeloid provides many features for your computer vision projects:
 
@@ -122,6 +123,9 @@ Modeloid runs in its console window and opens `http://localhost:8080` (or anothe
 <!-- USAGE EXAMPLES -->
 
 ## Usage
+
+<img width="1917" height="912" alt="site-content1" src="https://github.com/user-attachments/assets/b1d998e8-967f-4f6d-b7a3-304b24f6456a" />
+<br><br/>
 
 A typical project, from raw images to a trained model:
 
