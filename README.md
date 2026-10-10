@@ -139,9 +139,8 @@ A typical project, from raw images to a trained model:
 8. **Review and improve.** **Performance** shows each run's metrics, curves and training plots. **Tune Hyperparameters** searches for better settings with Optuna.
 9. **Make it yours (optional).** In **Settings → Appearance**, pick one of 16 dark and light themes, a font and a text size.
 
-<!-- insert appearance screenshot here -->
+<img width="1920" height="917" alt="appearance" src="https://github.com/user-attachments/assets/b38315c7-fba6-4078-a9d8-f17812e5eacb" />
 
-<!-- insert screenshots here -->
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
