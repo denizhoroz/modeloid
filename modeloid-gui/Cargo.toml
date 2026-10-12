@@ -1,6 +1,6 @@
 [package]
 name = "modeloid-gui"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["denizhoroz <denizhoroz.ofcl@gmail.com>"]
 edition = "2021"
 
