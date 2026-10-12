@@ -95,7 +95,7 @@ Modeloid ships as a ready-to-run app. Download it from the [Releases](https://gi
 
 ### Prerequisites
 
-* Windows 10/11 (x64)
+* Windows 10/11 (x64), macOS 11+ (Apple Silicon) or Linux (x64, glibc 2.35+)
 * A modern browser (Chrome, Edge or Firefox)
 * An internet connection the first time you train, tune or augment. Modeloid then sets up its own Python environment (about 1 GB for CPU, about 3.4 GB for GPU). You don't need to install Python yourself.
 * Optional: an NVIDIA GPU (compute capability 7.5 or newer, driver 580 or newer) for faster training
@@ -117,6 +117,25 @@ Modeloid ships as a ready-to-run app. Download it from the [Releases](https://gi
 3. Run `Modeloid.exe`
 
 Modeloid runs in its console window and opens `http://localhost:8080` (or another free port) in your browser. Closing the window stops the app.
+
+#### macOS (Apple Silicon)
+
+1. Download `Modeloid-<version>-macos-arm64.zip` from [Releases](https://github.com/denizhoroz/modeloid/releases) and unzip it
+2. Move `Modeloid.app` to Applications
+3. The app isn't signed by Apple yet, so allow it once in Terminal:
+   ```sh
+   xattr -dr com.apple.quarantine /Applications/Modeloid.app
+   ```
+4. Open Modeloid. It runs in a Terminal window; closing that window stops the app.
+
+#### Linux (x64)
+
+1. Download `Modeloid-<version>-linux-x64.tar.gz` from [Releases](https://github.com/denizhoroz/modeloid/releases)
+2. Extract it anywhere: `tar xf Modeloid-<version>-linux-x64.tar.gz`
+3. Run `./modeloid` from the extracted folder
+4. Optional: `./install.sh` adds Modeloid to your application menu (`./install.sh --remove` takes it out)
+
+Needs GTK 3 (for file dialogs), present on most desktop distributions.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 

@@ -1,0 +1,6 @@
+# Scripts and files run on Linux / macOS keep LF endings, even when checked
+# out on Windows.
+*.sh text eol=lf
+*.desktop text eol=lf
+*.plist text eol=lf
+*.yml text eol=lf

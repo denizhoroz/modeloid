@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Modeloid
+Comment=Manage datasets and train YOLO models
+Exec=modeloid
+Icon=modeloid
+Terminal=true
+Categories=Development;Science;Graphics;
