@@ -174,7 +174,7 @@ The build needs about 10–20 GB of free space. Once you've copied the app out o
 
 ## Usage
 
-<img width="1917" height="912" alt="site-content1" src="https://github.com/user-attachments/assets/b1d998e8-967f-4f6d-b7a3-304b24f6456a" />
+<img width="1920" height="917" alt="screenshot-2026-10-10-183329" src="https://github.com/user-attachments/assets/0669f6bc-595c-4a56-b2b1-9f7362bb4b21" />
 <br><br/>
 
 A typical project, from raw images to a trained model:
