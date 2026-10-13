@@ -23,7 +23,7 @@ What the user can do:
 
 Not started yet: model evaluations (`evals/` folder exists), release packaging / installer.
 
-Platforms: Windows, macOS, Linux. The main developer works on Windows; keep everything cross-platform (paths, processes, file locking, dialogs).
+Platforms: Windows, macOS, Linux. Only Windows gets release downloads (`release.yml`); Linux and macOS users build with `installer/package.sh` (README "Building from source"). The main developer works on Windows; keep everything cross-platform (paths, processes, file locking, dialogs).
 
 ---
 

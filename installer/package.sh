@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Builds Modeloid's release files for one platform into dist/.
+# Builds Modeloid's release files for one platform into dist/. Only Windows
+# is released (by .github/workflows/release.yml); Linux and macOS users run
+# this themselves (README: "Building from source").
 #
 #   bash installer/package.sh windows-x64   (Git Bash; also needs Inno Setup 6)
 #   bash installer/package.sh linux-x64     (needs rsvg-convert for the icon)

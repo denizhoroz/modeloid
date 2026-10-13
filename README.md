@@ -91,13 +91,15 @@ and many more. Everything runs locally on your machine, in your browser, with 16
 
 ## Getting Started
 
-Modeloid ships as a ready-to-run app. Download it from the [Releases](https://github.com/denizhoroz/modeloid/releases) page, start it, and it opens in your default browser.
+Modeloid ships as a ready-to-run app for **Windows**. Download it from the [Releases](https://github.com/denizhoroz/modeloid/releases) page, start it, and it opens in your default browser.
+
+**Linux and macOS have no prebuilt downloads.** Modeloid runs on both, but you need to build it yourself (see [Building from source](#building-from-source-linux-and-macos)).
 
 ### Prerequisites
 
-* Windows 10/11 (x64), macOS 11+ (Apple Silicon) or Linux (x64, glibc 2.35+)
+* Windows 10/11 (x64), or Linux (x64) / macOS (Apple Silicon) if you build it yourself
 * A modern browser (Chrome, Edge or Firefox)
-* An internet connection the first time you train, tune or augment. Modeloid then sets up its own Python environment (about 1 GB for CPU, about 3.4 GB for GPU). You don't need to install Python yourself.
+* An internet connection the first time you train, tune or augment. Modeloid then sets up its own Python environment (about 1 GB for CPU, about 3.4 GB for GPU). You don't need to install Python yourself, and Modeloid doesn't use a Python you already have.
 * Optional: an NVIDIA GPU (compute capability 7.5 or newer, driver 580 or newer) for faster training
 
 ### Installation
@@ -118,24 +120,53 @@ Modeloid ships as a ready-to-run app. Download it from the [Releases](https://gi
 
 Modeloid runs in its console window and opens `http://localhost:8080` (or another free port) in your browser. Closing the window stops the app.
 
-#### macOS (Apple Silicon)
+#### Building from source (Linux and macOS)
 
-1. Download `Modeloid-<version>-macos-arm64.zip` from [Releases](https://github.com/denizhoroz/modeloid/releases) and unzip it
-2. Move `Modeloid.app` to Applications
-3. The app isn't signed by Apple yet, so allow it once in Terminal:
-   ```sh
-   xattr -dr com.apple.quarantine /Applications/Modeloid.app
-   ```
-4. Open Modeloid. It runs in a Terminal window; closing that window stops the app.
+Linux and macOS builds aren't tested or supported the way the Windows release is. If something breaks, please [open an issue](https://github.com/denizhoroz/modeloid/issues) with the error.
 
-#### Linux (x64)
+**1. Install the build tools**
 
-1. Download `Modeloid-<version>-linux-x64.tar.gz` from [Releases](https://github.com/denizhoroz/modeloid/releases)
-2. Extract it anywhere: `tar xf Modeloid-<version>-linux-x64.tar.gz`
-3. Run `./modeloid` from the extracted folder
-4. Optional: `./install.sh` adds Modeloid to your application menu (`./install.sh --remove` takes it out)
+Linux (Debian/Ubuntu; use your distribution's equivalents elsewhere):
 
-Needs GTK 3 (for file dialogs), present on most desktop distributions.
+```sh
+sudo apt install -y build-essential pkg-config libgtk-3-dev libdbus-1-dev libssl-dev librsvg2-bin
+```
+
+macOS:
+
+```sh
+xcode-select --install
+brew install librsvg
+```
+
+**2. Install Rust and the Dioxus CLI**
+
+Use these exact versions: newer Rust releases break the browser app build.
+
+```sh
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source ~/.cargo/env
+rustup toolchain install 1.98.1 --target wasm32-unknown-unknown --component llvm-tools
+rustup default 1.98.1
+cargo install dioxus-cli@0.7.10 --locked
+```
+
+Building the Dioxus CLI takes a while and uses a lot of memory. If it stalls or your system freezes, run it again with fewer parallel jobs: `cargo install dioxus-cli@0.7.10 --locked -j 2`.
+
+**3. Build Modeloid**
+
+```sh
+git clone https://github.com/denizhoroz/modeloid
+cd modeloid
+bash installer/package.sh linux-x64     # or: macos-arm64
+```
+
+The result is in `dist/`:
+
+* **Linux:** `dist/Modeloid-<version>-linux-x64/`. Move the folder anywhere and run `./modeloid` from it. `./install.sh` adds Modeloid to your application menu (`./install.sh --remove` takes it out). File dialogs need GTK 3, present on most desktop distributions.
+* **macOS:** `dist/Modeloid.app`. Move it to Applications and open it. It runs in a Terminal window; closing that window stops the app. The build isn't signed, so if macOS blocks it, run `xattr -dr com.apple.quarantine /Applications/Modeloid.app` once.
+
+The build needs about 10–20 GB of free space. Once you've copied the app out of `dist/`, you can delete the `modeloid` folder.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
